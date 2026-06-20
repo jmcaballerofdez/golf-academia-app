@@ -6775,7 +6775,7 @@ const ADMIN_TABS=[
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENTE: CAMPANA DE NOTIFICACIONES
 // ═══════════════════════════════════════════════════════════════════
-function NotifBell({notifs, db, pendientesCount=0}){
+function NotifBell({notifs, pendientesCount=0}){
   const [open, setOpen] = useState(false);
   const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount);
 
@@ -6862,7 +6862,7 @@ function NotifBell({notifs, db, pendientesCount=0}){
 // ═══════════════════════════════════════════════════════════════════
 // MÓDULO: REGISTROS PENDIENTES DE ACTIVACIÓN
 // ═══════════════════════════════════════════════════════════════════
-function ModRegistrosPendientes({data, setData, db, notifs}){
+function ModRegistrosPendientes({data, setData, notifs}){
   const [pendientes, setPendientes] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -6973,7 +6973,7 @@ function ModRegistrosPendientes({data, setData, db, notifs}){
   </div>;
 }
 
-function AdminShell({data,setData,onLogout,savedFlash,notifs,db,pendientesCount}){
+function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount}){
   const [tab,setTab]=useState("calendario");
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand,color:G.ink}}>
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
@@ -6988,7 +6988,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,db,pendientesCount}
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>Panel del Profesor</div>
             </div>
           </div>
-          <NotifBell notifs={notifs} db={db} pendientesCount={pendientesCount}/>
+          <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
           <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
@@ -7005,7 +7005,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,db,pendientesCount}
       </h2>
       {tab==="calendario"&&<ModCalendario data={data} setData={setData}/>}
       {tab==="alumnos"&&<ModAlumnos data={data} setData={setData}/>}
-      {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} db={db} notifs={notifs}/>}
+      {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
       {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
       {tab==="clases"&&<ModClases data={data} setData={setData}/>}
       {tab==="estadisticas"&&<ModEstadisticas data={data} setData={setData}/>}
