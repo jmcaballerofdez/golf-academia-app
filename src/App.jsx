@@ -842,9 +842,10 @@ function LoginScreen({data,onLogin}){
 
   return (
     <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${G.fairway} 0%,#0f3518 100%)`,
-      display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
       <div style={{background:G.white,borderRadius:24,padding:"32px 28px",width:"100%",
-        maxWidth:340,textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+        maxWidth:340,textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
+        margin:"auto"}}>
 
         {/* Logos */}
         <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:14,marginBottom:16}}>
@@ -886,13 +887,17 @@ function LoginScreen({data,onLogin}){
         <div style={{fontSize:11,color:"#ccc",marginTop:12}}>
           El PIN te identifica automáticamente como profesor o alumno
         </div>
-        <div style={{borderTop:"1px solid rgba(255,255,255,.1)",marginTop:16,paddingTop:16}}>
+        <div style={{borderTop:"1px solid #e0e0e0",marginTop:16,paddingTop:16}}>
           <button onClick={()=>setMostrarRegistro(true)}
-            style={{width:"100%",background:"rgba(255,255,255,.1)",color:"white",
-              border:"1px solid rgba(255,255,255,.25)",borderRadius:10,
-              padding:"10px 0",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            style={{width:"100%",background:G.fairway,color:"white",
+              border:"none",borderRadius:10,
+              padding:"12px 0",fontSize:14,fontWeight:700,cursor:"pointer",
+              boxShadow:"0 4px 12px rgba(26,92,42,.3)"}}>
             📝 Inscribirme en la Escuela de Golf
           </button>
+          <div style={{fontSize:11,color:G.soft,marginTop:8}}>
+            ¿Primera vez? Regístrate aquí
+          </div>
         </div>
       </div>
     </div>
