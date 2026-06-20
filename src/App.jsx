@@ -400,8 +400,9 @@ function exportarExcel(data){
 function PantallaRegistro({onVolver}){
   const [step,   setStep]  = useState(1); // 1=datos, 2=legal, 3=ok
   const [form,   setForm]  = useState({
-    nombre:"", fechaNacimiento:"", telefono:"", email:"",
-    alergias:"", intolerancias:"", lesiones:"",
+    nombre:"", fechaNacimiento:"", telefono:"", email:"", dniAlumno:"",
+    alergias:"", intolerancias:"", lesiones:"", medicacion:"",
+    diasPreferencia:[], horarioPreferencia:"",
     tutorNombre:"", tutorDni:"", tutorTelefono:"", tutorEmail:"", tutorRelacion:"",
     rgpdAceptado:false, imagenAutorizada:false, aceptaCondiciones:false,
     pinElegido:"",
@@ -575,11 +576,53 @@ function PantallaRegistro({onVolver}){
               color:esMenor?"#2e5fa3":G.fairway}}>
               {esMenor?"🧒 Escuela Infantil (menor de 18 años)":"🏌️ Escuela de Adultos"} · {edad} años
             </div>}
-            <Field label="Teléfono">
-              <Input value={form.telefono} onChange={v=>setForm(f=>({...f,telefono:v}))} placeholder="Teléfono de contacto"/>
+            {!esMenor&&<Field label="DNI / NIE">
+              <Input value={form.dniAlumno} onChange={v=>setForm(f=>({...f,dniAlumno:v}))} placeholder="DNI o NIE del alumno"/>
+            </Field>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <Field label="Teléfono">
+                <Input value={form.telefono} onChange={v=>setForm(f=>({...f,telefono:v}))} placeholder="Teléfono"/>
+              </Field>
+              <Field label="Email">
+                <Input value={form.email} onChange={v=>setForm(f=>({...f,email:v}))} placeholder="Email"/>
+              </Field>
+            </div>
+
+            {/* Días y horario preferencia */}
+            <Field label="📅 Días de clase preferidos">
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
+                {["Miércoles","Jueves","Sábado","Domingo"].map(dia=>(
+                  <label key={dia} style={{display:"flex",alignItems:"center",gap:8,
+                    background:form.diasPreferencia.includes(dia)?"#e8f5eb":"#f8f8f8",
+                    borderRadius:8,padding:"8px 10px",cursor:"pointer",
+                    border:form.diasPreferencia.includes(dia)?"2px solid #1a5c2a":"2px solid #eee",
+                    fontWeight:form.diasPreferencia.includes(dia)?700:400,
+                    fontSize:14,color:form.diasPreferencia.includes(dia)?"#1a5c2a":"#555"}}>
+                    <input type="checkbox"
+                      checked={form.diasPreferencia.includes(dia)}
+                      onChange={e=>setForm(f=>({...f,
+                        diasPreferencia:e.target.checked
+                          ?[...f.diasPreferencia,dia]
+                          :f.diasPreferencia.filter(d=>d!==dia)
+                      }))}
+                      style={{width:16,height:16}}/>
+                    {dia}
+                  </label>
+                ))}
+              </div>
             </Field>
-            <Field label="Email">
-              <Input value={form.email} onChange={v=>setForm(f=>({...f,email:v}))} placeholder="Email"/>
+            <Field label="⏰ Horario preferido">
+              <select value={form.horarioPreferencia}
+                onChange={e=>setForm(f=>({...f,horarioPreferencia:e.target.value}))}
+                style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+                  padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+                <option value="">Seleccionar horario...</option>
+                <option value="Mañana (9:00-12:00)">Mañana (9:00-12:00)</option>
+                <option value="Mediodía (12:00-15:00)">Mediodía (12:00-15:00)</option>
+                <option value="Tarde (15:00-18:00)">Tarde (15:00-18:00)</option>
+                <option value="Tarde-noche (18:00-21:00)">Tarde-noche (18:00-21:00)</option>
+                <option value="Sin preferencia">Sin preferencia</option>
+              </select>
             </Field>
           </Card>
 
@@ -596,6 +639,10 @@ function PantallaRegistro({onVolver}){
             <Field label="🩹 Lesiones / Condiciones físicas">
               <Textarea value={form.lesiones} onChange={v=>setForm(f=>({...f,lesiones:v}))}
                 rows={2} placeholder="Lesiones, asma, epilepsia... (déjalo en blanco si no aplica)"/>
+            </Field>
+            <Field label="💊 Medicación habitual o de emergencia">
+              <Textarea value={form.medicacion||""} onChange={v=>setForm(f=>({...f,medicacion:v}))}
+                rows={2} placeholder="Inhalador, adrenalina (EpiPen), insulina... (déjalo en blanco si no aplica)"/>
             </Field>
           </Card>
 
@@ -6898,6 +6945,12 @@ function ModRegistrosPendientes({data, setData, db, notifs}){
                     {reg.alergias&&<span style={{background:"#FFF3E0",color:"#E65100",borderRadius:8,padding:"2px 8px",fontSize:11}}>🤧 {reg.alergias}</span>}
                     {reg.intolerancias&&<span style={{background:"#F3E5F5",color:"#6A1B9A",borderRadius:8,padding:"2px 8px",fontSize:11}}>🥛 {reg.intolerancias}</span>}
                     {reg.lesiones&&<span style={{background:"#FCE4EC",color:"#880E4F",borderRadius:8,padding:"2px 8px",fontSize:11}}>🩹 {reg.lesiones}</span>}
+                  </div>}
+                  {(reg.diasPreferencia?.length>0||reg.horarioPreferencia)&&<div style={{marginTop:6,fontSize:12,color:"#555",background:"#e8f5fb",borderRadius:8,padding:"4px 10px"}}>
+                    📅 {reg.diasPreferencia?.join(", ")} {reg.horarioPreferencia&&"· "+reg.horarioPreferencia}
+                  </div>}
+                  {reg.medicacion&&<div style={{marginTop:4,fontSize:12,color:"#1B5E20",background:"#E8F5E9",borderRadius:8,padding:"4px 10px"}}>
+                    💊 {reg.medicacion}
                   </div>}
                   {reg.tutores?.[0]&&<div style={{marginTop:6,fontSize:12,color:"#555",background:"#f0f0f0",borderRadius:8,padding:"4px 10px"}}>
                     👨‍👩‍👦 Tutor: {reg.tutores[0].nombre} ({reg.tutores[0].relacion}) · {reg.tutores[0].telefono}
