@@ -6623,7 +6623,7 @@ function ModTareas({data,setData}){
 const ADMIN_TABS=[
   {id:"calendario",label:"Calendario",icon:"🗓️"},
   {id:"alumnos",label:"Alumnos",icon:"👤"},
-  {id:"pendientes",label:pendientesCount>0?`Pendientes (${pendientesCount})`:"Pendientes",icon:"🔔"},
+  {id:"pendientes",label:"Pendientes",icon:"🔔"},
   {id:"programas",label:"Programas",icon:"📚"},
   {id:"clases",label:"Clases",icon:"📅"},
   {id:"estadisticas",label:"Estadísticas",icon:"📊"},
@@ -6993,8 +6993,8 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,db,pendientesCount}
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
           {ADMIN_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
-            style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-            {t.icon} {t.label}
+            style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
+            {t.icon} {t.label}{t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
           </button>)}
         </div>
       </div>
