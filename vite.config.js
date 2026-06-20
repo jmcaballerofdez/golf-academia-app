@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  base: '/golf-academia-app/',
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 3000,
