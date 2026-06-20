@@ -6623,7 +6623,7 @@ function ModTareas({data,setData}){
 const ADMIN_TABS=[
   {id:"calendario",label:"Calendario",icon:"🗓️"},
   {id:"alumnos",label:"Alumnos",icon:"👤"},
-  {id:"pendientes",label:"Pendientes",icon:"🔔"},
+  {id:"pendientes",label:pendientesCount>0?`Pendientes (${pendientesCount})`:"Pendientes",icon:"🔔"},
   {id:"programas",label:"Programas",icon:"📚"},
   {id:"clases",label:"Clases",icon:"📅"},
   {id:"estadisticas",label:"Estadísticas",icon:"📊"},
@@ -6775,9 +6775,9 @@ const ADMIN_TABS=[
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENTE: CAMPANA DE NOTIFICACIONES
 // ═══════════════════════════════════════════════════════════════════
-function NotifBell({notifs, db}){
+function NotifBell({notifs, db, pendientesCount=0}){
   const [open, setOpen] = useState(false);
-  const noLeidas = (notifs||[]).filter(n=>!n.leida).length;
+  const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount);
 
   async function marcarLeida(id){
     try {
@@ -6973,7 +6973,7 @@ function ModRegistrosPendientes({data, setData, db, notifs}){
   </div>;
 }
 
-function AdminShell({data,setData,onLogout,savedFlash,notifs,db}){
+function AdminShell({data,setData,onLogout,savedFlash,notifs,db,pendientesCount}){
   const [tab,setTab]=useState("calendario");
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand,color:G.ink}}>
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
@@ -6988,7 +6988,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,db}){
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>Panel del Profesor</div>
             </div>
           </div>
-          <NotifBell notifs={notifs} db={db}/>
+          <NotifBell notifs={notifs} db={db} pendientesCount={pendientesCount}/>
           <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
@@ -7029,6 +7029,7 @@ export default function App(){
   const [savedFlash,setSavedFlash] = useState(false);
   const [fbReady,setFbReady]= useState(false);
   const [notifs,setNotifs]  = useState([]);
+  const [pendientesCount,setPendientesCount] = useState(0);
 
   // ── Conectar Firebase al arrancar ──
   useEffect(()=>{
@@ -7058,7 +7059,13 @@ export default function App(){
           snap=>setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))),
           err=>console.warn("Notif error:", err)
         );
-        return ()=>{ unsub(); unsubN(); };
+        // Escuchar registros pendientes para el contador
+        const unsubP = onSnapshot(
+          collection(db,"registros_pendientes"),
+          snap=>setPendientesCount(snap.docs.length),
+          err=>console.warn("Pendientes error:", err)
+        );
+        return ()=>{ unsub(); unsubN(); unsubP(); };
       })
       .catch(err=>{ console.warn("Firebase error:", err); setFbReady(true); });
   },[]);
