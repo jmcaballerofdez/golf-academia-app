@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
-         addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy
+         addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
 } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
 
@@ -202,7 +202,7 @@ const DEFAULT_LABELS = {
   // ── Estadísticas de juego
   campo_golpes:"Golpes", campo_fairways:"Fairways (%)", campo_gir:"GIR (%)",
   campo_putts:"Putts", campo_bunkers:"Bunkers", campo_handicap:"Hándicap",
-  campo_hoyos:"Hoyos", campo_palo_ref:"Palo de referencia", campo_distancia:"Distancia (m)",
+  campo_hoyos:"Hoyos", campo_distancia:"Distancia (m)",
   // ── Clases
   campo_tipo_clase:"Tipo de clase", campo_zona:"Zona",
   campo_duracion:"Duración", campo_contenido:"Contenido / Objetivo", campo_asistio:"Asistencia",
@@ -433,7 +433,7 @@ function PantallaRegistro({onVolver}){
   }
 
   async function enviarRegistro(){
-    // Validaciones
+    // Validaciones básicas
     if(!form.nombre.trim()){setError("El nombre es obligatorio.");return;}
     if(!form.fechaNacimiento){setError("La fecha de nacimiento es obligatoria.");return;}
     if(form.pinElegido.length<4){setError("El PIN debe tener al menos 4 dígitos.");return;}
@@ -442,6 +442,21 @@ function PantallaRegistro({onVolver}){
 
     setLoading(true);
     setError("");
+
+    // Validación duplicados en Firebase
+    try {
+      const pendSnap = await getDocs(collection(db,"registros_pendientes"));
+      const pendientes = pendSnap.docs.map(d=>d.data());
+      const yaExiste = pendientes.some(p=>
+        (form.email&&p.email&&p.email.toLowerCase()===form.email.toLowerCase()) ||
+        (form.telefono&&p.telefono&&p.telefono===form.telefono)
+      );
+      if(yaExiste){
+        setError("Ya existe una solicitud de inscripción con ese email o teléfono. Si no has recibido confirmación, contacta con el profesor.");
+        setLoading(false);
+        return;
+      }
+    } catch(e){ console.warn("Duplicate check error:", e); }
     try {
       const nuevoAlumno = {
         id: uid(),
@@ -1912,15 +1927,7 @@ function ModEstadisticas({data,setData}){
 
       {/* Palo referencia y distancia */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
-        <Field label="Palo de referencia">
-          <select value={form.palo||"7-hierro"} onChange={e=>setForm(f=>({...f,palo:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
-              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-            {(PALO_OPTIONS||["Driver","3-madera","5-hierro","7-hierro","9-hierro","PW","SW"]).map(p=>(
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-        </Field>
+        
         <Field label="Distancia media (m)">
           <Input type="number" value={form.distancia||""} onChange={v=>setForm(f=>({...f,distancia:v}))} placeholder="—"/>
         </Field>
@@ -3331,12 +3338,28 @@ const EJERCICIOS_CURSO = [
 // MÓDULO: MENSAJERÍA Y ARCHIVOS
 // ═══════════════════════════════════════════════════════════════════
 function ModMensajeria({data,setData}){
+  const [fbMensajes,setFbMensajes]=React.useState([]);
+  React.useEffect(()=>{
+    const unsub=onSnapshot(
+      query(collection(db,"mensajes"),orderBy("timestamp","desc")),
+      snap=>setFbMensajes(snap.docs.map(d=>({...d.data(),_fbId:d.id}))),
+      err=>console.warn("Mensajes Firebase error:",err)
+    );
+    return ()=>unsub();
+  },[]);
   const [tab,setTab]=useState("recibidos");
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
   const [verMsg,setVerMsg]=useState(null);
 
-  const mensajes=data.mensajes||[];
+  const localMensajes=data.mensajes||[];
+  // Merge Firebase messages with local, deduplicate by id
+  const mensajes=React.useMemo(()=>{
+    const all=[...localMensajes,...fbMensajes];
+    const seen=new Set();
+    return all.filter(m=>{if(seen.has(m.id))return false;seen.add(m.id);return true;})
+      .sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  },[localMensajes,fbMensajes]);
   const alumnos=data.alumnos||[];
 
   function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
@@ -3347,6 +3370,9 @@ function ModMensajeria({data,setData}){
 
   function marcarLeido(id){
     setData({...data,mensajes:mensajes.map(m=>m.id===id?{...m,leido:true}:m)});
+    // Also update in Firebase
+    const fbMsg=fbMensajes.find(m=>m.id===id);
+    if(fbMsg?._fbId) updateDoc(doc(db,"mensajes",fbMsg._fbId),{leido:true}).catch(e=>console.warn(e));
   }
 
   function eliminarMsg(id){
@@ -3374,6 +3400,9 @@ function ModMensajeria({data,setData}){
       adjuntoNombre:form.adjuntoNombre||null,
       fecha, leido:false,
     }));
+    // Guardar en Firebase para sincronización entre dispositivos
+    Promise.all(nuevos.map(msg=>addDoc(collection(db,"mensajes"),{...msg,timestamp:serverTimestamp()}))).catch(e=>console.warn("Firebase msg error:",e));
+    // También en localStorage como backup
     setData({...data,mensajes:[...mensajes,...nuevos]});
     setModal(null);
     alert(`✅ Mensaje enviado a ${nuevos.length} alumno${nuevos.length!==1?"s":""}.`);
@@ -3581,6 +3610,9 @@ function ModMensajeriaAlumno({data,setData,alumnoId}){
 
   function marcarLeido(id){
     setData({...data,mensajes:mensajes.map(m=>m.id===id?{...m,leido:true}:m)});
+    // Also update in Firebase
+    const fbMsg=fbMensajes.find(m=>m.id===id);
+    if(fbMsg?._fbId) updateDoc(doc(db,"mensajes",fbMsg._fbId),{leido:true}).catch(e=>console.warn(e));
   }
 
   function leerArchivo(e){
@@ -5636,6 +5668,26 @@ function ModProgramas({data, setData}){
         <Field label="Hora">
           <Input value={form.horarioHora||""} onChange={v=>setForm(f=>({...f,horarioHora:v}))}
             placeholder="Ej: 17:00 - 18:30"/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Tipo de programa">
+          <Input value={form.tipoProg||""} onChange={v=>setForm(f=>({...f,tipoProg:v}))}
+            placeholder="Ej: Iniciación, Técnica, Competición, Perfeccionamiento..."/>
+        </Field>
+        <Field label="Duración de cada jornada">
+          <Input value={form.duracionJornada||""} onChange={v=>setForm(f=>({...f,duracionJornada:v}))}
+            placeholder="Ej: 60 min, 90 min, 2 horas..."/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Nº de jornadas totales">
+          <Input type="number" value={form.numJornadas||""} onChange={v=>setForm(f=>({...f,numJornadas:v}))}
+            placeholder="Ej: 12"/>
+        </Field>
+        <Field label="Nº de alumnos máximo">
+          <Input type="number" value={form.maxAlumnos||""} onChange={v=>setForm(f=>({...f,maxAlumnos:v}))}
+            placeholder="Ej: 6"/>
         </Field>
       </div>
       <Field label="Descripción / Objetivos generales">
