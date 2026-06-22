@@ -598,6 +598,7 @@ function PantallaRegistro({onVolver}){
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
       display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div style={{background:"white",borderRadius:20,padding:32,maxWidth:380,width:"100%",textAlign:"center"}}>
+        <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:80,marginBottom:16,objectFit:"contain"}}/>
         <div style={{fontSize:56,marginBottom:12}}>✅</div>
         <h2 style={{color:G.fairway,marginBottom:12}}>¡Registro enviado!</h2>
         <p style={{color:"#555",fontSize:14,lineHeight:1.6,marginBottom:20}}>
@@ -892,20 +893,24 @@ function LoginScreen({data,onLogin}){
   const [mostrarRegistro,setMostrarRegistro]=useState(false);
   const [recordar,setRecordar]=useState(()=>localStorage.getItem("gcr_recordar")==="1");
 
-  // Auto-login si hay PIN guardado
+  // Auto-login si hay PIN guardado (se re-ejecuta cuando cargan los datos)
+  const [autoLoginHecho,setAutoLoginHecho]=useState(false);
   useEffect(()=>{
+    if(autoLoginHecho) return;
+    const recordar = localStorage.getItem("gcr_recordar")==="1";
     const pinGuardado = localStorage.getItem("gcr_pin_saved");
-    if(pinGuardado && data){
+    if(recordar && pinGuardado && data){
       // Comprobar admin
       if(pinGuardado===(data.adminPin||DEFAULT_ADMIN_PIN)){
+        setAutoLoginHecho(true);
         onLogin({role:"admin"});
         return;
       }
       // Comprobar alumnos activos
       const alumno=(data.alumnos||[]).find(a=>a.activo&&a.pin===pinGuardado);
-      if(alumno){ onLogin({role:"alumno",alumnoId:alumno.id}); }
+      if(alumno){ setAutoLoginHecho(true); onLogin({role:"alumno",alumnoId:alumno.id}); }
     }
-  },[]);
+  },[data,autoLoginHecho]);
   const [error,setError]=useState("");
   const [intentando,setIntentando]=useState(false);
 
@@ -3182,6 +3187,142 @@ const EJERCICIOS_BIBLIOTECA = [
     kpis:["Equilibrio mantenido","% contacto central"],
     erroresComunes:["Balanceo lateral","Perder el equilibrio"],
     tags:["swing","equilibrio","contacto"] },
+  // ── PUTT (más) ────────────────────────────────────────────────────
+  { id:"ej037", categoria:"Putt", nivel:"Intermedio", nombre:"Reloj de Putts",
+    objetivo:"Dominar putts cortos desde todos los ángulos.", duracion:"20 min", emoji:"🕐",
+    material:"Putter, bola, 12 tees",
+    descripcion:"Coloca 12 bolas en círculo alrededor del hoyo a 1 metro, como las horas de un reloj. Embócalas todas seguidas. Si fallas una, vuelves a empezar.",
+    progresion:["Completar el círculo a 1m","Ampliar a 1,5m","Ampliar a 2m"],
+    kpis:["Putts consecutivos embocados","% acierto por distancia"],
+    erroresComunes:["No leer la caída","Golpe inconsistente"],
+    tags:["putt","cortos","precisión"] },
+  { id:"ej038", categoria:"Putt", nivel:"Avanzado", nombre:"La Puerta",
+    objetivo:"Mejorar la línea de salida del putt.", duracion:"15 min", emoji:"🚪",
+    material:"Putter, bola, 2 tees",
+    descripcion:"Coloca dos tees ligeramente más anchos que la bola, a 30 cm del putter. La bola debe pasar entre ellos sin tocarlos. Asegura una salida recta.",
+    progresion:["Puerta ancha","Puerta estrecha","Aumentar distancia al hoyo"],
+    kpis:["% bolas que pasan limpias","Línea de salida"],
+    erroresComunes:["Cara abierta o cerrada","Trayectoria del putter"],
+    tags:["putt","línea","técnica"] },
+  { id:"ej039", categoria:"Putt", nivel:"Intermedio", nombre:"Lag Putting",
+    objetivo:"Controlar la distancia en putts largos.", duracion:"20 min", emoji:"🎯",
+    material:"Putter, bolas",
+    descripcion:"Desde 10-15 metros, intenta dejar la bola en un círculo de 1 metro alrededor del hoyo. El objetivo es no dejar nunca un segundo putt largo.",
+    progresion:["Círculo de 1m a 10m","A 15m","A 20m"],
+    kpis:["% bolas en zona","Distancia del segundo putt"],
+    erroresComunes:["Golpe corto por miedo","No calibrar la velocidad del green"],
+    tags:["putt","largos","distancia"] },
+  // ── DRIVE (más) ───────────────────────────────────────────────────
+  { id:"ej040", categoria:"Drive", nivel:"Avanzado", nombre:"Draw y Fade a Voluntad",
+    objetivo:"Aprender a curvar la bola de forma controlada.", duracion:"30 min", emoji:"🌀",
+    material:"Driver, bolas, conos",
+    descripcion:"Practica 5 drives buscando draw (curva a la izquierda) y 5 buscando fade (curva a la derecha). Aprende a ajustar el stance y la cara del palo.",
+    progresion:["Identificar la curva natural","Provocar draw","Provocar fade"],
+    kpis:["% curvas conseguidas","Control de la forma"],
+    erroresComunes:["Manipular demasiado las manos","Stance incorrecto"],
+    tags:["drive","draw","fade","control"] },
+  { id:"ej041", categoria:"Drive", nivel:"Iniciación", nombre:"Tempo 1-2-3",
+    objetivo:"Mejorar el ritmo del swing con el driver.", duracion:"20 min", emoji:"🎵",
+    material:"Driver, bolas",
+    descripcion:"Cuenta '1-2' en la subida y '3' en la bajada. Mantén un tempo suave y constante. Evita acelerar bruscamente en la bajada.",
+    progresion:["Swing lento","Añadir bola","Mantener tempo con potencia"],
+    kpis:["Consistencia de tempo","Contacto centrado"],
+    erroresComunes:["Bajada brusca","Pérdida de equilibrio"],
+    tags:["drive","tempo","ritmo"] },
+  // ── HIERROS (más) ─────────────────────────────────────────────────
+  { id:"ej042", categoria:"Hierros", nivel:"Avanzado", nombre:"Banderas a Distintas Alturas",
+    objetivo:"Controlar la trayectoria alta y baja con hierros.", duracion:"25 min", emoji:"📐",
+    material:"Hierros, bolas",
+    descripcion:"Practica golpear bolas altas (bola adelantada) y bajas (bola atrasada) con el mismo hierro. Útil para jugar con viento.",
+    progresion:["Trayectoria normal","Bola baja","Bola alta"],
+    kpis:["Control de altura","Distancia mantenida"],
+    erroresComunes:["No ajustar la posición de la bola","Cambiar el swing"],
+    tags:["hierros","trayectoria","viento"] },
+  { id:"ej043", categoria:"Hierros", nivel:"Intermedio", nombre:"El Punto Exacto",
+    objetivo:"Mejorar la precisión direccional con hierros medios.", duracion:"25 min", emoji:"🎯",
+    material:"Hierro 7, dianas o banderas",
+    descripcion:"Elige una diana pequeña a 130m. Golpea 10 bolas intentando acercarte lo máximo posible. Mide la distancia media al objetivo.",
+    progresion:["Diana grande","Diana mediana","Diana pequeña"],
+    kpis:["Distancia media a bandera","Dispersión"],
+    erroresComunes:["No comprometerse con el objetivo","Alineación pobre"],
+    tags:["hierros","precisión","dirección"] },
+  // ── APPROACH (más) ────────────────────────────────────────────────
+  { id:"ej044", categoria:"Approach", nivel:"Intermedio", nombre:"Los Tres Aros",
+    objetivo:"Controlar distancias de approach a tres profundidades.", duracion:"30 min", emoji:"⭕",
+    material:"Wedge, 3 aros o marcas, bolas",
+    descripcion:"Coloca 3 aros a 20, 30 y 40 metros. Lanza 5 bolas a cada uno. Aprende qué swing necesitas para cada distancia.",
+    progresion:["3 distancias","Reducir tamaño del aro","Distancias aleatorias"],
+    kpis:["% bolas en aro","Control de distancia"],
+    erroresComunes:["Mismo swing para todas","Desaceleración"],
+    tags:["approach","distancia","wedge"] },
+  // ── BUNKER (más) ──────────────────────────────────────────────────
+  { id:"ej045", categoria:"Bunker", nivel:"Intermedio", nombre:"Salida Larga de Bunker",
+    objetivo:"Aprender a sacar la bola lejos desde el bunker.", duracion:"25 min", emoji:"🏖️",
+    material:"Sand wedge, bunker, bolas",
+    descripcion:"Practica salidas de bunker de más de 20 metros. Abre menos la cara del palo y toma más arena. Busca que la bola vuele y ruede hacia el green.",
+    progresion:["Salida corta","Salida media","Salida larga +20m"],
+    kpis:["Distancia conseguida","% bolas en green"],
+    erroresComunes:["Demasiada arena","Cara muy abierta para distancia larga"],
+    tags:["bunker","distancia","arena"] },
+  { id:"ej046", categoria:"Bunker", nivel:"Avanzado", nombre:"Bunker con Bola Enterrada",
+    objetivo:"Resolver la difícil situación de bola semienterrada.", duracion:"20 min", emoji:"🥚",
+    material:"Sand wedge, bunker, bolas",
+    descripcion:"Entierra ligeramente la bola en la arena (huevo frito). Cierra la cara del palo y golpea con fuerza justo detrás de la bola para sacarla.",
+    progresion:["Bola apoyada","Bola semienterrada","Bola enterrada"],
+    kpis:["% bolas fuera","Control del resultado"],
+    erroresComunes:["Cara abierta (no sale)","Falta de fuerza"],
+    tags:["bunker","enterrada","avanzado"] },
+  // ── CHIP (más) ────────────────────────────────────────────────────
+  { id:"ej047", categoria:"Chip", nivel:"Avanzado", nombre:"Chip con Efecto",
+    objetivo:"Aprender a dar efecto de retroceso al chip.", duracion:"25 min", emoji:"🔄",
+    material:"Wedge de 56-60°, bolas nuevas",
+    descripcion:"Con un wedge de alto loft y golpe descendente y limpio, practica chips que boten y frenen rápido. Requiere contacto perfecto bola-cara.",
+    progresion:["Contacto limpio","Conseguir freno","Controlar el retroceso"],
+    kpis:["Cantidad de freno","Consistencia"],
+    erroresComunes:["Golpe gordo","Bola vieja sin spin"],
+    tags:["chip","efecto","spin","avanzado"] },
+  { id:"ej048", categoria:"Chip", nivel:"Iniciación", nombre:"El Putt-Chip",
+    objetivo:"Aprender el chip básico con posición de putt.", duracion:"15 min", emoji:"🏑",
+    material:"Hierro 8 o 9, bolas",
+    descripcion:"Adopta una posición similar a la del putt pero con un hierro. Haz un movimiento de péndulo para sacar la bola del borde del green y dejarla rodar.",
+    progresion:["Movimiento de péndulo","Controlar fuerza","Variar distancia"],
+    kpis:["Proximidad al hoyo","Consistencia de contacto"],
+    erroresComunes:["Usar muñecas","Intentar levantar la bola"],
+    tags:["chip","iniciación","básico"] },
+  // ── SWING / TÉCNICA (más) ─────────────────────────────────────────
+  { id:"ej049", categoria:"Swing", nivel:"Intermedio", nombre:"Pausa en el Top",
+    objetivo:"Mejorar la transición y secuencia del swing.", duracion:"20 min", emoji:"⏸️",
+    material:"Hierro 7, bolas",
+    descripcion:"Sube el palo y haz una pausa de 1 segundo en lo alto del backswing antes de bajar. Mejora la coordinación y evita la precipitación.",
+    progresion:["Pausa exagerada","Pausa breve","Transición fluida"],
+    kpis:["Secuencia correcta","Contacto mejorado"],
+    erroresComunes:["Bajar desde arriba con los brazos","Perder el ángulo"],
+    tags:["swing","transición","tempo"] },
+  { id:"ej050", categoria:"Swing", nivel:"Iniciación", nombre:"Swing de Medio Cuerpo",
+    objetivo:"Aprender el movimiento básico del swing.", duracion:"20 min", emoji:"🔆",
+    material:"Hierro 7, bolas",
+    descripcion:"Practica swings llevando el palo solo hasta la altura de la cintura, tanto en la subida como en la bajada. Construye el swing desde lo simple.",
+    progresion:["Medio swing","Tres cuartos","Swing completo"],
+    kpis:["Contacto centrado","Equilibrio"],
+    erroresComunes:["Querer pegar fuerte","Perder postura"],
+    tags:["swing","iniciación","fundamentos"] },
+  // ── ESTRATEGIA (más) ──────────────────────────────────────────────
+  { id:"ej051", categoria:"Estrategia", nivel:"Avanzado", nombre:"Juega el Campo en la Mente",
+    objetivo:"Aprender a planificar cada hoyo antes de jugarlo.", duracion:"30 min", emoji:"🧠",
+    material:"Tarjeta del campo, lápiz",
+    descripcion:"Antes de una vuelta, dibuja la estrategia de cada hoyo: dónde dejar el drive, qué zonas evitar, dónde fallar si fallas. Juega según el plan.",
+    progresion:["Planificar 9 hoyos","18 hoyos","Ajustar según resultados"],
+    kpis:["% hoyos jugados según plan","Reducción de errores graves"],
+    erroresComunes:["Jugar sin pensar","Atacar banderas peligrosas"],
+    tags:["estrategia","planificación","mental"] },
+  { id:"ej052", categoria:"Mental", nivel:"Intermedio", nombre:"Rutina Pre-Golpe",
+    objetivo:"Crear una rutina constante antes de cada golpe.", duracion:"20 min", emoji:"🧘",
+    material:"Palos, bolas",
+    descripcion:"Diseña una rutina fija: visualizar el golpe, un par de swings de práctica, alinearse, respirar y golpear. Repítela en cada bola para ganar consistencia.",
+    progresion:["Diseñar la rutina","Repetirla en prácticas","Aplicarla en el campo"],
+    kpis:["Consistencia de la rutina","Mejora bajo presión"],
+    erroresComunes:["Saltarse pasos","Rutina demasiado larga"],
+    tags:["mental","rutina","concentración"] },
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3255,11 +3396,13 @@ const TESTS_BANCO = {
 const CATS = ["Todos","Putt","Juego Corto","Juego Largo","Estrategia","Reglas","Mental","Fitness Golf"];
 const CAT_COLORS = {
   "Putt":"green","Juego Corto":"gold","Juego Largo":"blue",
-  "Estrategia":"orange","Reglas":"red","Mental":"purple","Fitness Golf":"teal"
+  "Estrategia":"orange","Reglas":"red","Mental":"purple","Fitness Golf":"teal",
+  "Drive":"blue","Hierros":"gray","Approach":"gold","Bunker":"orange","Chip":"green","Swing":"purple"
 };
 const CAT_ICONS = {
   "Putt":"🎯","Juego Corto":"⛳","Juego Largo":"🏌️",
-  "Estrategia":"🧠","Reglas":"📋","Mental":"💭","Fitness Golf":"💪"
+  "Estrategia":"🧠","Reglas":"📋","Mental":"💭","Fitness Golf":"💪",
+  "Drive":"🚀","Hierros":"⚙️","Approach":"🎪","Bunker":"🏖️","Chip":"🏑","Swing":"🔄"
 };
 
 
