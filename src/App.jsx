@@ -6,6 +6,53 @@ import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
 import { getAuth, signInAnonymously } from "firebase/auth";
 
 // ─── Firebase Config ──────────────────────────────────────────────
+// ── EmailJS Configuración ─────────────────────────────────────────
+const EMAILJS_CONFIG = {
+  serviceId: "service_4vak30q",
+  templateProfesor: "template_2dwd6gs",
+  templateAlumno: "template_1npsgx8",
+  publicKey: "_ylIbA5NuK_OsByYY",
+};
+
+// Cargar el SDK de EmailJS dinámicamente
+function cargarEmailJS(){
+  if(window.emailjs) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js";
+    s.onload=()=>{
+      try{ window.emailjs.init({publicKey:EMAILJS_CONFIG.publicKey}); }catch(e){console.warn("EmailJS init:",e);}
+      resolve();
+    };
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+
+// Enviar emails de un nuevo registro
+async function enviarEmailsRegistro(datos){
+  try{
+    await cargarEmailJS();
+    if(!window.emailjs) return;
+    // Email al profesor
+    await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
+      nombre_alumno: datos.nombre||"",
+      email_alumno: datos.email||"",
+      telefono_alumno: datos.telefono||"",
+      tipo_escuela: datos.tipoEscuela||"",
+      dias_preferencia: (datos.diasPreferencia||[]).join(", "),
+      horario_preferencia: datos.horarioPreferencia||"",
+    }).catch(e=>console.warn("Email profesor:",e));
+    // Email de bienvenida al alumno (solo si tiene email)
+    if(datos.email){
+      await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
+        nombre_alumno: datos.nombre||"",
+        email_alumno: datos.email,
+      }).catch(e=>console.warn("Email alumno:",e));
+    }
+  }catch(e){ console.warn("Error enviando emails:", e); }
+}
+
 const firebaseConfig = {
   apiKey: "AIzaSyDQMYwKTt05hfSPW-Trl7NYPGyDFKA76dQ",
   authDomain: "golf-ciudad-real-50819.firebaseapp.com",
@@ -530,6 +577,9 @@ function PantallaRegistro({onVolver}){
         ...nuevoAlumno,
         tipo: esMenor ? "nuevo_registro" : "nuevo_alumno_adulto",
       });
+
+      // Enviar emails automáticos (aviso al profesor + bienvenida al alumno)
+      enviarEmailsRegistro(nuevoAlumno);
 
       setStep(3);
     } catch(e){
