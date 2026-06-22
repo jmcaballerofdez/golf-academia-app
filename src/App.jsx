@@ -7189,6 +7189,23 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount}){
       </div>
     </div>
     <div style={{maxWidth:920,margin:"0 auto",padding:"22px 14px 60px"}}>
+      {pendientesCount>0&&tab!=="pendientes"&&<div onClick={()=>setTab("pendientes")}
+        style={{background:"linear-gradient(135deg,#c0392b,#e74c3c)",color:"white",
+          borderRadius:14,padding:"16px 20px",marginBottom:18,cursor:"pointer",
+          display:"flex",alignItems:"center",gap:14,boxShadow:"0 4px 16px rgba(192,57,43,.3)",
+          animation:"pulse 2s infinite"}}>
+        <div style={{fontSize:32}}>🔔</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:16}}>
+            ¡Tienes {pendientesCount} {pendientesCount===1?"nueva inscripción":"nuevas inscripciones"} pendiente{pendientesCount===1?"":"s"}!
+          </div>
+          <div style={{fontSize:13,opacity:.9,marginTop:2}}>
+            Pulsa aquí para revisar y activar {pendientesCount===1?"al nuevo alumno":"a los nuevos alumnos"}
+          </div>
+        </div>
+        <div style={{fontSize:20}}>→</div>
+        <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}`}</style>
+      </div>}
       <h2 style={{margin:"0 0 18px",color:G.fairway,fontSize:19,fontWeight:800}}>
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
