@@ -1244,12 +1244,262 @@ function GrupoBadge({a}){
   return g?<span style={{background:g.color,color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>{g.emoji} {g.nombre}</span>:null;
 }
 
+function EstructuraInfantil({data, setData, alumnos}){
+  const [subtab, setSubtab] = useState("categorias"); // categorias | grupos
+  const [modalGrupo, setModalGrupo] = useState(null);
+  const [formGrupo, setFormGrupo] = useState({});
+
+  const gruposCurso = data.gruposCurso || [];
+  // Solo categorías infantiles (no adultos)
+  const CATS_INFANTIL = GRUPOS_EDAD.filter(g=>!g.id.startsWith("adulto")&&!["clase_individual","bono_5","bono_10","curso_hcp10"].includes(g.id));
+
+  function calcEdad(fn){ return calcularEdad(fn); }
+
+  // Agrupar alumnos por categoría
+  const porCategoria = {};
+  CATS_INFANTIL.forEach(c=>{ porCategoria[c.id] = []; });
+  porCategoria["sin"] = [];
+  alumnos.forEach(a=>{
+    const cat = a.nivel && porCategoria[a.nivel]!==undefined ? a.nivel : "sin";
+    porCategoria[cat].push(a);
+  });
+
+  function abrirNuevoGrupo(){
+    setFormGrupo({ id:"", nombre:"", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:"" });
+    setModalGrupo("new");
+  }
+  function abrirEditarGrupo(g){ setFormGrupo({...g}); setModalGrupo(g.id); }
+
+  function guardarGrupo(){
+    if(!formGrupo.nombre.trim()) return;
+    const reg = {...formGrupo, id: formGrupo.id || uid()};
+    const updated = gruposCurso.some(g=>g.id===reg.id)
+      ? gruposCurso.map(g=>g.id===reg.id?reg:g)
+      : [...gruposCurso, reg];
+    setData({...data, gruposCurso: updated});
+    setModalGrupo(null);
+  }
+  function borrarGrupo(id){
+    setData({...data, gruposCurso: gruposCurso.filter(g=>g.id!==id)});
+  }
+  function toggleAlumnoEnGrupo(aid){
+    setFormGrupo(f=>({...f,
+      alumnoIds: (f.alumnoIds||[]).includes(aid)
+        ? f.alumnoIds.filter(x=>x!==aid)
+        : [...(f.alumnoIds||[]), aid]
+    }));
+  }
+
+  return <div>
+    {/* Subpestañas */}
+    <div style={{display:"flex",gap:8,marginBottom:16}}>
+      <button onClick={()=>setSubtab("categorias")}
+        style={{flex:1,background:subtab==="categorias"?G.fairway:"#f0f0f0",
+          color:subtab==="categorias"?"#fff":"#555",border:"none",borderRadius:10,
+          padding:"10px 0",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+        📋 Alumnos por categoría
+      </button>
+      <button onClick={()=>setSubtab("grupos")}
+        style={{flex:1,background:subtab==="grupos"?G.fairway:"#f0f0f0",
+          color:subtab==="grupos"?"#fff":"#555",border:"none",borderRadius:10,
+          padding:"10px 0",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+        🗓️ Grupos del curso 2026-2027
+      </button>
+    </div>
+
+    {/* ── VISTA: ALUMNOS POR CATEGORÍA ── */}
+    {subtab==="categorias"&&<div>
+      <div style={{background:"#e8f0fb",borderRadius:10,padding:"8px 14px",marginBottom:14,
+        fontSize:12,color:"#3a7abf",fontWeight:600}}>
+        📋 Alumnos infantiles agrupados automáticamente por categoría según su edad. Total: {alumnos.length} alumnos.
+      </div>
+      {CATS_INFANTIL.map(cat=>{
+        const lista = porCategoria[cat.id]||[];
+        return <Card key={cat.id} style={{marginBottom:12,borderLeft:`4px solid ${cat.color}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:lista.length?10:0}}>
+            <span style={{fontSize:20}}>{cat.emoji}</span>
+            <span style={{fontWeight:800,fontSize:15,color:cat.color}}>{cat.nombre}</span>
+            <span style={{fontSize:12,color:G.soft}}>({cat.rango})</span>
+            <span style={{marginLeft:"auto",background:cat.color,color:"#fff",borderRadius:12,
+              padding:"2px 10px",fontSize:12,fontWeight:700}}>{lista.length}</span>
+          </div>
+          {lista.length>0&&<div style={{display:"grid",gap:6}}>
+            {lista.map(a=>(
+              <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,
+                background:"#f8f8f8",borderRadius:8,padding:"6px 10px"}}>
+                <FotoAlumno foto={a.foto} nombre={a.nombre} size={28}/>
+                <span style={{fontWeight:600,fontSize:13,color:G.ink}}>{a.nombre}</span>
+                {a.fechaNacimiento&&<span style={{fontSize:11,color:G.soft}}>{calcEdad(a.fechaNacimiento)} años</span>}
+                {!a.activo&&<span style={{fontSize:10,background:"#eee",color:"#999",borderRadius:6,padding:"1px 6px"}}>Inactivo</span>}
+              </div>
+            ))}
+          </div>}
+        </Card>;
+      })}
+      {/* Sin categoría */}
+      {porCategoria["sin"].length>0&&<Card style={{marginBottom:12,borderLeft:"4px solid #ccc"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+          <span style={{fontSize:20}}>❓</span>
+          <span style={{fontWeight:800,fontSize:15,color:"#888"}}>Sin categoría asignada</span>
+          <span style={{marginLeft:"auto",background:"#ccc",color:"#fff",borderRadius:12,
+            padding:"2px 10px",fontSize:12,fontWeight:700}}>{porCategoria["sin"].length}</span>
+        </div>
+        <div style={{display:"grid",gap:6}}>
+          {porCategoria["sin"].map(a=>(
+            <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,
+              background:"#f8f8f8",borderRadius:8,padding:"6px 10px"}}>
+              <FotoAlumno foto={a.foto} nombre={a.nombre} size={28}/>
+              <span style={{fontWeight:600,fontSize:13,color:G.ink}}>{a.nombre}</span>
+              {a.fechaNacimiento&&<span style={{fontSize:11,color:G.soft}}>{calcEdad(a.fechaNacimiento)} años</span>}
+            </div>
+          ))}
+        </div>
+      </Card>}
+    </div>}
+
+    {/* ── VISTA: GRUPOS DEL CURSO ── */}
+    {subtab==="grupos"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <div style={{background:"#e8f5eb",borderRadius:10,padding:"8px 14px",
+          fontSize:12,color:G.fairway,fontWeight:600,flex:1,minWidth:200}}>
+          🗓️ Crea los grupos del curso con su horario y asigna alumnos a cada uno.
+        </div>
+        <Btn onClick={abrirNuevoGrupo}>+ Nuevo grupo</Btn>
+      </div>
+
+      {gruposCurso.length===0
+        ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
+            <div style={{fontSize:28,marginBottom:8}}>🗓️</div>
+            <div style={{fontWeight:700}}>Aún no has creado ningún grupo</div>
+            <div style={{fontSize:13,marginTop:4}}>Pulsa "+ Nuevo grupo" para crear el primero (ej: Grupo A — Miércoles 16:30-17:30).</div>
+          </div>
+        : <div style={{display:"grid",gap:12}}>
+            {gruposCurso.map(g=>{
+              const alumnosGrupo = (g.alumnoIds||[]).map(id=>alumnos.find(a=>a.id===id)).filter(Boolean);
+              const catInfo = GRUPOS_EDAD.find(c=>c.id===g.categoria);
+              return <Card key={g.id} style={{borderLeft:`4px solid ${catInfo?.color||G.fairway}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                      <span style={{fontWeight:800,fontSize:16,color:G.fairway}}>{g.nombre}</span>
+                      {catInfo&&<span style={{background:catInfo.color,color:"#fff",borderRadius:10,
+                        padding:"2px 8px",fontSize:11,fontWeight:700}}>{catInfo.emoji} {catInfo.nombre}</span>}
+                    </div>
+                    <div style={{fontSize:13,color:G.soft,marginBottom:8}}>
+                      {g.dia&&<span style={{fontWeight:600,color:G.ink}}>📅 {g.dia}</span>}
+                      {g.horaIni&&g.horaFin&&<span> · ⏰ {g.horaIni} - {g.horaFin}</span>}
+                      {g.maxAlumnos&&<span> · 👥 máx. {g.maxAlumnos}</span>}
+                    </div>
+                    <div style={{fontSize:12,color:G.soft,marginBottom:4,fontWeight:600}}>
+                      Alumnos asignados ({alumnosGrupo.length}):
+                    </div>
+                    {alumnosGrupo.length>0
+                      ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                          {alumnosGrupo.map(a=>(
+                            <span key={a.id} style={{display:"flex",alignItems:"center",gap:5,
+                              background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 4px",fontSize:12}}>
+                              <FotoAlumno foto={a.foto} nombre={a.nombre} size={22}/>
+                              {a.nombre}
+                            </span>
+                          ))}
+                        </div>
+                      : <span style={{fontSize:12,color:"#bbb",fontStyle:"italic"}}>Ningún alumno asignado todavía</span>
+                    }
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:5,flexShrink:0}}>
+                    <Btn small color="secondary" onClick={()=>abrirEditarGrupo(g)}>Editar</Btn>
+                    <Btn small color="danger" onClick={()=>borrarGrupo(g.id)}>🗑 Borrar</Btn>
+                  </div>
+                </div>
+              </Card>;
+            })}
+          </div>
+      }
+    </div>}
+
+    {/* ── MODAL CREAR/EDITAR GRUPO ── */}
+    {modalGrupo&&<Modal title={modalGrupo==="new"?"🗓️ Nuevo grupo del curso":"✏️ Editar grupo"} onClose={()=>setModalGrupo(null)} wide>
+      <Field label="Nombre del grupo *">
+        <Input value={formGrupo.nombre||""} onChange={v=>setFormGrupo(f=>({...f,nombre:v}))}
+          placeholder="Ej: Grupo A, Grupo Benjamines Sábado..."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Día de la semana">
+          <select value={formGrupo.dia||""} onChange={e=>setFormGrupo(f=>({...f,dia:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Día...</option>
+            <option value="Lunes">Lunes</option>
+            <option value="Martes">Martes</option>
+            <option value="Miércoles">Miércoles</option>
+            <option value="Jueves">Jueves</option>
+            <option value="Viernes">Viernes</option>
+            <option value="Sábado">Sábado</option>
+            <option value="Domingo">Domingo</option>
+          </select>
+        </Field>
+        <Field label="Hora inicio">
+          <Input type="time" value={formGrupo.horaIni||""} onChange={v=>setFormGrupo(f=>({...f,horaIni:v}))}/>
+        </Field>
+        <Field label="Hora fin">
+          <Input type="time" value={formGrupo.horaFin||""} onChange={v=>setFormGrupo(f=>({...f,horaFin:v}))}/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Categoría principal del grupo">
+          <select value={formGrupo.categoria||""} onChange={e=>setFormGrupo(f=>({...f,categoria:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Mixto / Sin categoría fija</option>
+            {CATS_INFANTIL.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.nombre} ({c.rango})</option>)}
+          </select>
+        </Field>
+        <Field label="Máximo de alumnos">
+          <Input type="number" value={formGrupo.maxAlumnos||""} onChange={v=>setFormGrupo(f=>({...f,maxAlumnos:v}))}
+            placeholder="Ej: 8"/>
+        </Field>
+      </div>
+
+      {/* Asignar alumnos */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        👥 Asignar alumnos a este grupo ({(formGrupo.alumnoIds||[]).length} seleccionados)
+      </div>
+      <div style={{maxHeight:240,overflowY:"auto",border:"1px solid #eee",borderRadius:10,padding:8}}>
+        {alumnos.length===0
+          ? <div style={{textAlign:"center",color:G.soft,padding:20,fontSize:13}}>No hay alumnos infantiles inscritos todavía.</div>
+          : alumnos.map(a=>{
+              const sel = (formGrupo.alumnoIds||[]).includes(a.id);
+              const catA = GRUPOS_EDAD.find(c=>c.id===a.nivel);
+              return <label key={a.id} style={{display:"flex",alignItems:"center",gap:10,
+                background:sel?"#e8f5eb":"#fff",borderRadius:8,padding:"8px 10px",marginBottom:4,cursor:"pointer",
+                border:sel?"2px solid #1a5c2a":"2px solid #f0f0f0"}}>
+                <input type="checkbox" checked={sel} onChange={()=>toggleAlumnoEnGrupo(a.id)}
+                  style={{width:16,height:16}}/>
+                <FotoAlumno foto={a.foto} nombre={a.nombre} size={28}/>
+                <span style={{fontWeight:600,fontSize:13,color:G.ink,flex:1}}>{a.nombre}</span>
+                {a.fechaNacimiento&&<span style={{fontSize:11,color:G.soft}}>{calcularEdad(a.fechaNacimiento)} años</span>}
+                {catA&&<span style={{fontSize:10,background:catA.color,color:"#fff",borderRadius:6,padding:"1px 6px"}}>{catA.emoji} {catA.nombre}</span>}
+              </label>;
+            })
+        }
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:16}}>
+        <Btn color="secondary" onClick={()=>setModalGrupo(null)}>Cancelar</Btn>
+        <Btn onClick={guardarGrupo} disabled={!formGrupo.nombre?.trim()}>💾 Guardar grupo</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function ModAlumnos({data,setData}){
   const [modal,         setModal]         = useState(null);
   const [form,          setForm]          = useState({});
   const [tabTipo,       setTabTipo]       = useState("infantil");
   const [buscar,        setBuscar]        = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null); // alumno a eliminar
+  const [vistaEstructura, setVistaEstructura] = useState(false); // ver estructura/grupos
 
   const alumnos = data.alumnos||[];
 
@@ -1361,20 +1611,27 @@ function ModAlumnos({data,setData}){
         placeholder="🔍 Buscar alumno..."
         style={{flex:1,minWidth:150,border:"1.5px solid #d0e0d0",borderRadius:8,
           padding:"8px 12px",fontSize:14,fontFamily:"inherit"}}/>
+      {tabTipo==="infantil"&&<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
+        {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
+      </Btn>}
       <Btn onClick={openNew}>+ Nuevo alumno</Btn>
     </div>
 
+    {/* Vista de estructura de grupos */}
+    {tabTipo==="infantil"&&vistaEstructura&&<EstructuraInfantil
+      data={data} setData={setData} alumnos={alumnosInfantil}/>}
+
     {/* Info de la escuela seleccionada */}
-    <div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
+    {!(tabTipo==="infantil"&&vistaEstructura)&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
       padding:"8px 14px",marginBottom:14,fontSize:12,
       color:tabTipo==="infantil"?"#3a7abf":G.fairway,fontWeight:600}}>
       {tabTipo==="infantil"
         ? "🧒 Escuela Infantil — menores de 18 años · Requiere autorización de padres/tutores y RGPD"
         : "🏌️ Escuela Adultos — mayores de 18 años · RGPD obligatorio"}
-    </div>
+    </div>}
 
     {/* Lista de alumnos */}
-    {alumnosMostrar.length===0
+    {!(tabTipo==="infantil"&&vistaEstructura)&&(alumnosMostrar.length===0
       ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
           <div style={{fontSize:28,marginBottom:8}}>{tabTipo==="infantil"?"🧒":"🏌️"}</div>
           <div style={{fontWeight:700}}>Sin alumnos en {tabTipo==="infantil"?"la Escuela Infantil":"la Escuela de Adultos"}</div>
@@ -1443,7 +1700,7 @@ function ModAlumnos({data,setData}){
             </Card>;
           })}
         </div>
-    }
+    )}
 
     {/* ══ CONFIRMAR BORRADO ══ */}
     {confirmDelete&&<ConfirmModal
