@@ -1134,7 +1134,9 @@ function ModCalendario({data,setData}){
         setGcalReady(true);
         const clases=(data.clases||[]).filter(c=>c.fecha);
         let ok=0;
-        for(const c of clases){
+        const clasesExportadas=new Set((data.clases||[]).filter(c=>c.gcalExportado).map(c=>c.id));
+        const clasesPendientes=clases.filter(c=>!clasesExportadas.has(c.id));
+        for(const c of clasesPendientes){
           const alumno=(data.alumnos||[]).find(a=>a.id===c.alumnoId);
           const titulo="🏌️ Clase golf"+(alumno?" — "+alumno.nombre:"");
           const [y,m,d]=c.fecha.split("-");
@@ -1153,10 +1155,12 @@ function ModCalendario({data,setData}){
                 colorId:"2",
               }
             });
+            // Marcar como exportada en la app para no duplicar
+            setData(d=>({...d,clases:(d.clases||[]).map(x=>x.id===c.id?{...x,gcalExportado:true}:x)}));
             ok++;
           }catch(e){}
         }
-        setGcalMsg("✅ "+ok+" clases exportadas a Google Calendar");
+        setGcalMsg(ok>0?"✅ "+ok+" clases exportadas a Google Calendar":"✅ Todo ya estaba exportado");
         setGcalSyncing(false);
       });
       tc.requestAccessToken({prompt:gcalReady?"":"consent"});
@@ -1175,7 +1179,7 @@ function ModCalendario({data,setData}){
           calendarId:"primary",timeMin:ahora.toISOString(),timeMax:en30d.toISOString(),
           maxResults:50,singleEvents:true,orderBy:"startTime"
         });
-        const evts=(r.result.items||[]).filter(e=>e.summary?.toLowerCase().includes("golf"));
+        const evts=(r.result.items||[]);
         const existentes=new Set((data.clases||[]).map(c=>c.id));
         const nuevas=evts.map(e=>({
           id:"gcal_"+e.id, gcalId:e.id, alumnoId:null,
