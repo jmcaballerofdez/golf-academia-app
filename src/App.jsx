@@ -1093,6 +1093,33 @@ function ModCalendario({data,setData}){
   const [form,setForm]=useState({});
   const [verReservas,setVerReservas]=useState(null);
 
+  function exportarICS(){
+    const clases=(data.clases||[]).filter(c=>c.fecha);
+    if(clases.length===0){ alert("No hay clases para exportar."); return; }
+    const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Golf Ciudad Real//Academia//ES","CALSCALE:GREGORIAN"];
+    clases.forEach(c=>{
+      const alumno=(data.alumnos||[]).find(a=>a.id===c.alumnoId);
+      const titulo="Clase golf"+(alumno?" - "+alumno.nombre:"");
+      const [y,m,d]=c.fecha.split("-");
+      const hi=(c.horaInicio||"10:00").replace(":","");
+      const hEnd=c.horaFin?c.horaFin.replace(":",""): String(Number(hi.slice(0,2))+1).padStart(2,"0")+hi.slice(2);
+      const dt=y+m.padStart(2,"0")+d.padStart(2,"0");
+      lines.push("BEGIN:VEVENT");
+      lines.push("UID:"+c.id+"@golfciudadreal");
+      lines.push("DTSTART;TZID=Europe/Madrid:"+dt+"T"+hi+"00");
+      lines.push("DTEND;TZID=Europe/Madrid:"+dt+"T"+hEnd+"00");
+      lines.push("SUMMARY:"+titulo);
+      lines.push("DESCRIPTION:Academia Golf Ciudad Real"+(c.notas?" - "+c.notas:""));
+      lines.push("END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    const blob=new Blob([lines.join("\r\n")],{type:"text/calendar"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="clases-golf.ics"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
 
   function cargarGapi(){
     if(window.gapi) return Promise.resolve();
