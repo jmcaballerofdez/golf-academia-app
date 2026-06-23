@@ -109,6 +109,34 @@ async function notificarNuevoRegistro(alumno) {
   } catch(e) { console.warn("Notificacion error:", e); }
 }
 
+// ─── Sincronizar clase individual en subcolección (para Make/Google Calendar) ─
+async function sincronizarClaseFirestore(clase, alumnos) {
+  try {
+    const alumno = (alumnos||[]).find(a => a.id === clase.alumnoId);
+    await setDoc(doc(db, "academia_clases", clase.id), {
+      id: clase.id,
+      fecha: clase.fecha || "",
+      horaInicio: clase.hora || clase.horaInicio || "10:00",
+      duracion: clase.duracion || "60",
+      tipo: clase.tipo || "",
+      zona: clase.zona || "",
+      contenido: clase.contenido || "",
+      asistio: clase.asistio || false,
+      alumnoId: clase.alumnoId || null,
+      alumnoNombre: alumno?.nombre || "",
+      alumnoEmail: alumno?.email || "",
+      gcalEventId: clase.gcalEventId || null,
+      gcalSyncAt: serverTimestamp(),
+    });
+  } catch(e) { console.warn("Sync clase error:", e); }
+}
+
+async function eliminarClaseFirestore(claseId) {
+  try {
+    await deleteDoc(doc(db, "academia_clases", claseId));
+  } catch(e) { console.warn("Delete clase error:", e); }
+}
+
 // ─── Palette ─────────────────────────────────────────────────────────────────
 const G = {
   fairway:"#1a5c2a", grass:"#2e7d3c", mist:"#e8f5eb", sand:"#f5f0e8",
@@ -2180,8 +2208,11 @@ function ModClases({data,setData}){
   function openNew(){setForm({alumnoId:alumnos[0]?.id||"",fecha:hoy,hora:"10:00",duracion:"60",tipo:"Individual",zona:"Campo de prácticas",contenido:"",asistio:false});setModal("new");}
   function save(){
     if(!form.alumnoId||!form.fecha) return;
-    const updated=modal==="new"?[...clases,{...form,id:uid()}]:clases.map(c=>c.id===modal?{...form}:c);
-    setData({...data,clases:updated});setModal(null);
+    const claseGuardada = modal==="new" ? {...form,id:uid()} : {...form};
+    const updated=modal==="new"?[...clases,claseGuardada]:clases.map(c=>c.id===modal?claseGuardada:c);
+    setData({...data,clases:updated});
+    sincronizarClaseFirestore(claseGuardada, alumnos);
+    setModal(null);
   }
   function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
   const CC=({c})=><Card style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:8}}>
@@ -2197,8 +2228,8 @@ function ModClases({data,setData}){
     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
       <Badge color={c.asistio?"green":"gold"}>{c.asistio?"Asistió":"Pendiente"}</Badge>
       <Btn small color="secondary" onClick={()=>{setForm({...c});setModal(c.id);}}>✎</Btn>
-      <Btn small color={c.asistio?"secondary":"sky"} onClick={()=>setData({...data,clases:clases.map(x=>x.id===c.id?{...x,asistio:!x.asistio}:x)})}>{c.asistio?"↩":"✔"}</Btn>
-      <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,clases:clases.filter(x=>x.id!==c.id)});}}>✕</Btn>
+      <Btn small color={c.asistio?"secondary":"sky"} onClick={()=>{const updated={...c,asistio:!c.asistio};setData({...data,clases:clases.map(x=>x.id===c.id?updated:x)});sincronizarClaseFirestore(updated,alumnos);}}>{c.asistio?"↩":"✔"}</Btn>
+      <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?")){setData({...data,clases:clases.filter(x=>x.id!==c.id)});eliminarClaseFirestore(c.id);}}}> ✕</Btn>
     </div>
   </Card>;
 
