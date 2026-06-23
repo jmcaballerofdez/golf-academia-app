@@ -137,6 +137,25 @@ async function eliminarClaseFirestore(claseId) {
   } catch(e) { console.warn("Delete clase error:", e); }
 }
 
+// u2500u2500u2500 Sincronizar informe publicado en subcoleccion (para Make/Gmail) u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+async function publicarInformeFirestore(informe, alumno) {
+  try {
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/?informe=${informe.id}`;
+    await setDoc(doc(db, "academia_informes", informe.id), {
+      id: informe.id,
+      titulo: informe.titulo || "",
+      alumnoId: informe.alumnoId || "",
+      alumnoNombre: alumno?.nombre || "",
+      alumnoEmail: alumno?.email || "",
+      fechaCreacion: informe.fechaCreacion || "",
+      fechaDesde: informe.fechaDesde || "",
+      fechaHasta: informe.fechaHasta || "",
+      enlace,
+      publicadoAt: serverTimestamp(),
+    });
+  } catch(e) { console.warn("Publish informe error:", e); }
+}
+
 // ─── Palette ─────────────────────────────────────────────────────────────────
 const G = {
   fairway:"#1a5c2a", grass:"#2e7d3c", mist:"#e8f5eb", sand:"#f5f0e8",
@@ -3055,6 +3074,56 @@ function CambiarPinAlumno({data,setData,alumnoId}){
   </div>;
 }
 
+// ── Vista simplificada del informe para el alumno ────────────────
+function InformePreviewAlumno({rpt, data}){
+  const [abierto, setAbierto] = useState(false);
+
+  function descargarPDF(){
+    const el = document.getElementById("informe-alumno-"+rpt.id);
+    if(!el) return;
+    const style = document.createElement("style");
+    style.textContent = `@media print { body > *:not(#pdf-wrap-alumno) { display:none!important; } #pdf-wrap-alumno { display:block!important; } }`;
+    document.head.appendChild(style);
+    const wrap = document.createElement("div");
+    wrap.id = "pdf-wrap-alumno";
+    wrap.style.cssText = "position:fixed;top:0;left:0;width:100%;z-index:99999;background:#fff;padding:20px;";
+    wrap.innerHTML = el.innerHTML;
+    document.body.appendChild(wrap);
+    window.print();
+    document.body.removeChild(wrap);
+    document.head.removeChild(style);
+  }
+
+  return <div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <Btn small color="sky" onClick={()=>setAbierto(!abierto)}>{abierto?"▲ Cerrar":"👁 Ver informe"}</Btn>
+      <Btn small color="secondary" onClick={descargarPDF}>⬇️ Descargar PDF</Btn>
+    </div>
+    {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12,padding:16,background:G.mist,borderRadius:10,fontSize:13}}>
+      <div style={{fontWeight:800,fontSize:16,color:G.fairway,marginBottom:8}}>{rpt.titulo}</div>
+      {rpt.resumenTexto&&<div style={{marginBottom:10}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📝 Resumen</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.resumenTexto}</p>
+      </div>}
+      {rpt.objetivosLogrados&&<div style={{marginBottom:8}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>✅ Objetivos logrados</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
+      </div>}
+      {rpt.objetivosProximos&&<div style={{marginBottom:8}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>🎯 Próximos objetivos</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
+      </div>}
+      {rpt.planTrabajo&&<div style={{marginBottom:8}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📋 Plan de trabajo</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
+      </div>}
+      <div style={{marginTop:12,borderTop:"1px solid #ccc",paddingTop:8,fontSize:12,color:G.soft}}>
+        {rpt.firmaTexto?.split("\n").map((l,i)=><div key={i}>{l}</div>)}
+      </div>
+    </div>}
+  </div>;
+}
+
 function PortalAlumno({data,setData,alumnoId,onLogout}){
   const [tab,setTab]=useState("inicio");
   const alumno=data.alumnos.find(a=>a.id===alumnoId);
@@ -3089,11 +3158,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
   const bonoActivo=bonos.find(b=>b.usadas<Number(b.clases));
   const stars=n=>"★".repeat(Number(n||0))+"☆".repeat(5-Number(n||0));
 
+  const misInformes = (data.informes||[]).filter(r=>r.alumnoId===alumnoId&&r.publicado).sort((a,b)=>(b.fechaCreacion||"").localeCompare(a.fechaCreacion||""));
+
   const ATABS=[
     {id:"inicio",label:"Inicio",icon:"🏠"},
     {id:"reservas",label:"Clases",icon:"📅"},
     {id:"analisis",label:"Análisis",icon:"🎬"},
     {id:"stats",label:"Estadísticas",icon:"📊"},
+    {id:"informes",label:"Informes",icon:"📋"},
     {id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
     {id:"mensajes",label:"Mensajes",icon:"✉️"},
     {id:"miperfil",label:"Mi PIN",icon:"🔐"},
@@ -3172,6 +3244,29 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
       {/* RESERVAS */}
       {/* MENSAJERÍA ALUMNO */}
       {tab==="mensajes"&&<ModMensajeriaAlumno data={data} setData={setData} alumnoId={alumnoId}/>}
+
+      {/* INFORMES DEL ALUMNO */}
+      {tab==="informes"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>📋 Mis informes</h3>
+        {misInformes.length===0
+          ?<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:12}}>
+            <div style={{fontSize:28,marginBottom:8}}>📋</div>
+            <div>Todavía no tienes informes disponibles.</div>
+          </div>
+          :<div style={{display:"grid",gap:12}}>
+            {misInformes.map(r=>(
+              <Card key={r.id} style={{borderLeft:`4px solid ${G.purple}`}}>
+                <div style={{fontWeight:800,fontSize:15,color:G.ink,marginBottom:4}}>{r.titulo}</div>
+                <div style={{fontSize:13,color:G.soft,marginBottom:10}}>
+                  Generado: {r.fechaCreacion}
+                  {r.fechaDesde&&r.fechaHasta&&` · Período: ${r.fechaDesde} → ${r.fechaHasta}`}
+                </div>
+                <InformePreviewAlumno rpt={r} data={data}/>
+              </Card>
+            ))}
+          </div>
+        }
+      </div>}
 
       {/* CAMBIAR PIN ALUMNO */}
       {tab==="miperfil"&&<div>
@@ -7015,6 +7110,32 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
   const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
     (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
   const secs = rpt.secciones||[];
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+
+  async function handlePublicar(){
+    setEnviando(true);
+    await publicarInformeFirestore(rpt, alumno);
+    onPublicar();
+    setEnviado(true);
+    setEnviando(false);
+  }
+
+  function descargarPDF(){
+    const el = document.getElementById("informe-preview-content");
+    if(!el){ alert("No se pudo generar el PDF."); return; }
+    const style = document.createElement("style");
+    style.textContent = `@media print { body > *:not(#informe-pdf-wrap) { display:none!important; } #informe-pdf-wrap { display:block!important; } }`;
+    document.head.appendChild(style);
+    const wrap = document.createElement("div");
+    wrap.id = "informe-pdf-wrap";
+    wrap.style.cssText = "position:fixed;top:0;left:0;width:100%;z-index:99999;background:#fff;";
+    wrap.innerHTML = el.innerHTML;
+    document.body.appendChild(wrap);
+    window.print();
+    document.body.removeChild(wrap);
+    document.head.removeChild(style);
+  }
 
   const SecTitle=({children,color=G.fairway})=><div style={{
     background:`linear-gradient(135deg,${color},${color}dd)`,
@@ -7034,11 +7155,16 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
       <button onClick={onBack} style={{background:G.mist,color:G.fairway,border:"none",
         borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>← Volver</button>
       <Btn color="secondary" onClick={onEdit}>✎ Editar</Btn>
-      {!rpt.publicado&&<Btn color="primary" onClick={onPublicar}>📤 Marcar como publicado</Btn>}
-      {rpt.publicado&&<span style={{background:G.mist,color:G.grass,borderRadius:8,
-        padding:"7px 14px",fontSize:13,fontWeight:600}}>✅ Publicado</span>}
+      <Btn color="sky" onClick={descargarPDF}>⬇️ Descargar PDF</Btn>
+      {!rpt.publicado&&!enviado&&<Btn color="primary" onClick={handlePublicar} disabled={enviando}>
+        {enviando?"Enviando...":"📤 Publicar y enviar al alumno"}
+      </Btn>}
+      {(rpt.publicado||enviado)&&<span style={{background:G.mist,color:G.grass,borderRadius:8,
+        padding:"7px 14px",fontSize:13,fontWeight:600}}>✅ Publicado y enviado</span>}
     </div>
 
+    {/* ── CONTENIDO DEL INFORME (para PDF) ── */}
+    <div id="informe-preview-content">
     {/* ── PORTADA ── */}
     {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
       borderRadius:14,padding:"30px 24px",marginBottom:4,textAlign:"center",color:"#fff"}}>
@@ -7227,6 +7353,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
       </SecBody>
     </>}
 
+    </div>{/* fin informe-preview-content */}
     <div style={{height:30}}/>
   </div>;
 }
