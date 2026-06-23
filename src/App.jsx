@@ -488,7 +488,7 @@ function PantallaRegistro({onVolver}){
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)){setError("El email no es válido. Revísalo, por favor.");return;}
     if(!form.diasPreferencia||form.diasPreferencia.length===0){setError("Selecciona al menos un día de clase preferido.");return;}
     if(!form.horarioPreferencia){setError("Selecciona un horario preferido.");return;}
-    if(form.pinElegido.length<4){setError("El PIN debe tener al menos 4 dígitos.");return;}
+    if(form.pinElegido.length<6){setError("La clave debe tener al menos 6 caracteres.");return;}
     if(!form.rgpdAceptado){setError("Debes aceptar la política de protección de datos.");return;}
     if(esMenor){
       if(!form.tutorNombre||!form.tutorNombre.trim()){setError("El nombre del tutor legal es obligatorio.");return;}
@@ -767,16 +767,19 @@ function PantallaRegistro({onVolver}){
           </Card>}
 
           <Card style={{marginBottom:16}}>
-            <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>🔐 Elige tu PIN de acceso</h3>
+            <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>🔐 Elige tu clave de acceso</h3>
             <p style={{fontSize:13,color:G.soft,margin:"0 0 10px"}}>
-              Este PIN lo usarás para entrar a la app. Mínimo 4 dígitos. Puedes cambiarlo después.
+              Esta clave la usarás para entrar a la app. Mínimo 6 caracteres. Puede contener letras, números y símbolos para mayor seguridad. Puedes cambiarla después.
             </p>
-            <Field label="PIN (4-6 dígitos numéricos)">
+            <Field label="Clave de acceso (mínimo 6 caracteres)">
               <Input type="password" value={form.pinElegido}
-                onChange={v=>setForm(f=>({...f,pinElegido:v.replace(/\D/g,"").slice(0,6)}))}
-                placeholder="Elige tu PIN" maxLength={6}/>
+                onChange={v=>setForm(f=>({...f,pinElegido:v.slice(0,20)}))}
+                placeholder="Ej: Golf2026!" maxLength={20}/>
             </Field>
-            <PinDots val={form.pinElegido}/>
+            <div style={{fontSize:12,marginTop:6}}>
+              {form.pinElegido.length>0&&form.pinElegido.length<6&&<span style={{color:"#c0392b"}}>⚠ Mínimo 6 caracteres</span>}
+              {form.pinElegido.length>=6&&<span style={{color:"#1a5c2a"}}>✓ Clave válida</span>}
+            </div>
           </Card>
 
           {error&&<div style={{background:"#fdecea",color:"#c0392b",borderRadius:8,
@@ -917,36 +920,30 @@ function LoginScreen({data,onLogin}){
   const PinDot=({filled})=><div style={{width:16,height:16,borderRadius:"50%",
     background:filled?G.fairway:"#d0e0d0",transition:"background .15s"}}/>;
 
-  function pressNum(n){
-    if(pin.length>=6) return;
-    const newPin = pin+n;
-    setPin(newPin);
+  function intentarAcceso(p){
+    if(!p||p.length===0) return;
     setError("");
-    // Auto-check when 4+ digits entered after brief delay
-    if(newPin.length>=4) checkPin(newPin);
-  }
-
-  function delNum(){setPin(p=>p.slice(0,-1));setError("");}
-
-  function checkPin(p){
-    // Check if it's the admin PIN
+    // Comprobar clave de administrador
     if(p===(data.adminPin||DEFAULT_ADMIN_PIN)){
       setIntentando(true);
+      // Guardar para recordar acceso
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
       setTimeout(()=>{ onLogin({role:"admin"}); setIntentando(false); },300);
       return;
     }
-    // Check all active alumnos
+    // Comprobar alumnos activos
     const alumno = (data.alumnos||[]).find(a=>a.activo&&a.pin===p);
     if(alumno){
       setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
       setTimeout(()=>{ onLogin({role:"alumno",alumnoId:alumno.id}); setIntentando(false); },300);
       return;
     }
-    // If 6 digits and still nothing, show error
-    if(p.length>=6){
-      setError("PIN incorrecto. Inténtalo de nuevo.");
-      setPin("");
-    }
+    // Clave incorrecta
+    setError("Clave incorrecta. Inténtalo de nuevo.");
+    setPin("");
   }
 
   if(mostrarRegistro) return <PantallaRegistro onVolver={()=>setMostrarRegistro(false)}/>;
@@ -971,37 +968,40 @@ function LoginScreen({data,onLogin}){
         <div style={{fontSize:12,color:G.soft,marginBottom:6}}>Golf Ciudad Real C.D.</div>
         <div style={{fontSize:11,color:"#aaa",marginBottom:24}}>🏫 Escuela de Golf · Curso 2026/2027</div>
 
-        {/* PIN dots */}
+        {/* Campo de clave */}
         <div style={{fontSize:13,color:G.soft,marginBottom:12,fontWeight:600}}>
-          {intentando?"✔ Identificado…":"Introduce tu PIN"}
-        </div>
-        <div style={{display:"flex",justifyContent:"center",gap:12,marginBottom:16}}>
-          {[0,1,2,3,4,5].map(i=><PinDot key={i} filled={i<pin.length}/>)}
+          {intentando?"✔ Identificado…":"Introduce tu clave de acceso"}
         </div>
 
         {error&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,
           padding:"8px 12px",fontSize:13,marginBottom:12}}>{error}</div>}
 
-        {/* Teclado numérico */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:8}}>
-          {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((n,i)=>(
-            <button key={i} onClick={()=>n==="⌫"?delNum():n!==""?pressNum(String(n)):null}
-              style={{background:n===""?"transparent":n==="⌫"?"#f0f0f0":G.mist,
-                color:G.ink,border:"none",borderRadius:12,padding:"16px 0",fontSize:20,
-                fontWeight:700,cursor:n===""?"default":"pointer",opacity:n===""?0:1,
-                transition:"background .1s"}}>
-              {n}
-            </button>
-          ))}
+        <div style={{marginBottom:14}}>
+          <input type="password" value={pin}
+            onChange={e=>setPin(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter"&&pin.length>0)intentarAcceso(pin);}}
+            placeholder="Tu clave de acceso"
+            autoComplete="current-password"
+            style={{width:"100%",boxSizing:"border-box",border:"2px solid #d0e0d0",
+              borderRadius:12,padding:"14px 16px",fontSize:18,textAlign:"center",
+              fontFamily:"inherit",letterSpacing:2}}/>
         </div>
+        <button onClick={()=>intentarAcceso(pin)} disabled={pin.length===0}
+          style={{width:"100%",background:G.fairway,color:"white",border:"none",
+            borderRadius:12,padding:"14px 0",fontSize:16,fontWeight:700,
+            cursor:pin.length===0?"default":"pointer",opacity:pin.length===0?0.5:1,
+            boxShadow:"0 4px 12px rgba(26,92,42,.3)"}}>
+          🔓 Entrar
+        </button>
 
-        <div style={{fontSize:11,color:"#ccc",marginTop:12}}>
-          El PIN te identifica automáticamente como profesor o alumno
+        <div style={{fontSize:11,color:"#ccc",marginTop:14}}>
+          Tu clave te identifica automáticamente como profesor o alumno
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,justifyContent:"center"}}>
           <input type="checkbox" id="recordar" checked={recordar}
             onChange={e=>{setRecordar(e.target.checked);
-              if(!e.target.checked){localStorage.removeItem("gcr_pin_saved");localStorage.setItem("gcr_recordar","0");}
+              if(e.target.checked){localStorage.setItem("gcr_recordar","1");if(pin)localStorage.setItem("gcr_pin_saved",pin);}
+              else{localStorage.removeItem("gcr_pin_saved");localStorage.setItem("gcr_recordar","0");}
             }}
             style={{width:16,height:16,cursor:"pointer"}}/>
           <label htmlFor="recordar" style={{fontSize:12,color:"#ccc",cursor:"pointer"}}>
@@ -2330,16 +2330,16 @@ function PinAlumnoRow({alumno, data, setData}){
   const [np,setNp]=useState(alumno.pin||"");
   const [ok,setOk]=useState(false);
   function guardar(){
-    if(np.length<4) return;
+    if(np.length<6) return;
     setData({...data,alumnos:(data.alumnos||[]).map(x=>x.id===alumno.id?{...x,pin:np}:x)});
     setOk(true); setTimeout(()=>setOk(false),2000);
   }
   return <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
     <div style={{minWidth:150,fontWeight:600,color:G.ink,fontSize:14}}>{alumno.nombre}</div>
     <div style={{flex:1,minWidth:120}}>
-      <Input value={np} onChange={v=>setNp(v.replace(/\D/g,"").slice(0,6))} placeholder="Nuevo PIN" maxLength={6}/>
+      <Input type="password" value={np} onChange={v=>setNp(v.slice(0,20))} placeholder="Nueva clave" maxLength={20}/>
     </div>
-    <Btn small onClick={guardar} disabled={np.length<4}>Guardar</Btn>
+    <Btn small onClick={guardar} disabled={np.length<6}>Guardar</Btn>
     {ok&&<span style={{color:G.grass,fontSize:12}}>✔</span>}
   </div>;
 }
@@ -2439,12 +2439,12 @@ function ModAjustes({data,setData,onLogout}){
     {/* ── ACCESO / PINs ── */}
     {tabAj==="pin"&&<div>
       <Card style={{marginBottom:16}}>
-        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 PIN del Profesor</h3>
-        <Field label="PIN nuevo (4-6 dígitos)">
-          <Input value={pin} onChange={v=>setPin(v.replace(/\D/g,"").slice(0,6))} placeholder="PIN numérico" maxLength={6}/>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 Clave del Profesor</h3>
+        <Field label="Clave nueva (mínimo 6 caracteres, letras/números/símbolos)">
+          <Input type="password" value={pin} onChange={v=>setPin(v.slice(0,20))} placeholder="Ej: Golf2026!" maxLength={20}/>
         </Field>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <Btn onClick={savePin} disabled={pin.length<4}>Guardar PIN</Btn>
+          <Btn onClick={savePin} disabled={pin.length<6}>Guardar clave</Btn>
           {saved&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
         </div>
       </Card>
