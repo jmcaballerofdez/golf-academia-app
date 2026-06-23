@@ -1092,9 +1092,7 @@ function ModCalendario({data,setData}){
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
   const [verReservas,setVerReservas]=useState(null);
-  const [gcalReady,setGcalReady]=useState(false);
-  const [gcalSyncing,setGcalSyncing]=useState(false);
-  const [gcalMsg,setGcalMsg]=useState("");
+
 
   function cargarGapi(){
     if(window.gapi) return Promise.resolve();
@@ -1274,29 +1272,27 @@ function ModCalendario({data,setData}){
       ))}
     </div>
 
-    {/* ── Google Calendar sync panel ── */}
-    <div style={{background:gcalReady?"#e8f5eb":"#f8f8f8",borderRadius:12,
-      padding:"12px 16px",marginBottom:16,display:"flex",flexWrap:"wrap",
-      alignItems:"center",gap:10}}>
+    {/* ── Google Calendar panel ── */}
+    <div style={{background:"#f8f8f8",borderRadius:12,padding:"12px 16px",
+      marginBottom:16,display:"flex",flexWrap:"wrap",alignItems:"center",gap:10}}>
       <div style={{fontSize:20}}>📅</div>
       <div style={{flex:1,minWidth:160}}>
-        <div style={{fontWeight:700,fontSize:13,color:gcalReady?G.fairway:"#555"}}>
-          {gcalReady?"✅ Conectado a Google Calendar":"🔗 Sincronizar con Google Calendar"}
+        <div style={{fontWeight:700,fontSize:13,color:G.fairway}}>Google Calendar</div>
+        <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+          Exporta tus clases como archivo .ics para importarlas en Google Calendar
         </div>
-        {gcalMsg&&<div style={{fontSize:12,color:G.soft,marginTop:2}}>{gcalMsg}</div>}
       </div>
-      <button onClick={exportarClases} disabled={gcalSyncing}
+      <button onClick={exportarICS}
         style={{background:G.fairway,color:"#fff",border:"none",borderRadius:8,
-          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:gcalSyncing?"default":"pointer",
-          opacity:gcalSyncing?0.6:1}}>
-        {gcalSyncing?"⏳ Espera...":"⬆️ Exportar clases"}
+          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        ⬇️ Exportar clases (.ics)
       </button>
-      <button onClick={importarEventos} disabled={gcalSyncing}
+      <a href="https://calendar.google.com" target="_blank" rel="noreferrer"
         style={{background:"#4285f4",color:"#fff",border:"none",borderRadius:8,
-          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:gcalSyncing?"default":"pointer",
-          opacity:gcalSyncing?0.6:1}}>
-        {gcalSyncing?"⏳ Espera...":"⬇️ Importar de Google"}
-      </button>
+          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",
+          textDecoration:"none"}}>
+        📅 Abrir Google Calendar
+      </a>
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
