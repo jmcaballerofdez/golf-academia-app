@@ -62,14 +62,15 @@ async function generarPDFClase(clase, alumnoNombre){
   // Datos de la clase
   doc.setTextColor(30,30,30);
   doc.setFontSize(11);
+  const fmtISO2 = (iso) => { if(!iso) return ""; const p=iso.split("-"); return p.length===3?p[2]+"/"+p[1]+"/"+p[0]:iso; };
   const filas = [
-    ["Alumno", alumnoNombre],
-    ["Fecha", clase.fecha || "—"],
-    ["Hora", clase.horaInicio || clase.hora || "—"],
-    ["Duración", (clase.duracion||"60")+" min"],
-    ["Tipo", clase.tipo || "—"],
-    ["Zona", clase.zona || "—"],
-    ["Asistencia", clase.asistio ? "✓ Asistió" : "Pendiente"],
+    ["Alumno:", alumnoNombre],
+    ["Fecha:", fmtISO2(clase.fecha) || "—"],
+    ["Hora:", clase.horaInicio || clase.hora || "—"],
+    ["Duracion:", (clase.duracion||"60")+" min"],
+    ["Tipo:", clase.tipo || "—"],
+    ["Zona:", clase.zona || "—"],
+    ["Asistencia:", clase.asistio ? "Asistio" : "Pendiente"],
   ];
   filas.forEach(([k,v])=>{
     doc.setFont("helvetica","bold"); doc.text(k+":", 15, y);
@@ -138,13 +139,21 @@ async function generarPDFInforme(rpt, alumnoNombre){
   doc.text(tituloLines, W/2, y+2, {align:"center"});
   y += 28;
 
-  // Datos del alumno en tabla compacta
+  // Helper para formatear fechas ISO a dd/mm/yyyy
+  const fmtISO = (iso) => {
+    if(!iso) return "";
+    const p = iso.split("-");
+    if(p.length===3) return p[2]+"/"+p[1]+"/"+p[0];
+    return iso;
+  };
+
+  // Datos del alumno en tabla compacta (sin emojis para jsPDF)
   const datosRows = [
-    ["👤 Alumno", alumnoNombre],
-    ["📅 Fecha de emisión", rpt.fechaCreacion || ""],
+    ["Alumno:", alumnoNombre],
+    ["Fecha de emision:", fmtISO(rpt.fechaCreacion)],
   ];
   if(rpt.fechaDesde && rpt.fechaHasta){
-    datosRows.push(["📆 Período evaluado", rpt.fechaDesde + " → " + rpt.fechaHasta]);
+    datosRows.push(["Periodo evaluado:", fmtISO(rpt.fechaDesde) + " a " + fmtISO(rpt.fechaHasta)]);
   }
 
   doc.setFontSize(10);
@@ -154,7 +163,7 @@ async function generarPDFInforme(rpt, alumnoNombre){
     doc.setFont("helvetica","bold"); doc.setTextColor(26, 92, 42);
     doc.text(k, 18, y+1);
     doc.setFont("helvetica","normal"); doc.setTextColor(30, 30, 30);
-    doc.text(String(v), 80, y+1);
+    doc.text(String(v), 75, y+1);
     y += 9;
   });
 
@@ -162,10 +171,10 @@ async function generarPDFInforme(rpt, alumnoNombre){
 
   // ── SECCIONES ────────────────────────────────────────────────────
   const secciones = [
-    { titulo: "📝 Resumen del período", texto: rpt.resumenTexto, color: [26,92,42] },
-    { titulo: "✅ Objetivos logrados", texto: rpt.objetivosLogrados, color: [39,174,96] },
-    { titulo: "🎯 Próximos objetivos", texto: rpt.objetivosProximos, color: [52,152,219] },
-    { titulo: "📋 Plan de trabajo", texto: rpt.planTrabajo, color: [142,68,173] },
+    { titulo: "RESUMEN DEL PERIODO", texto: rpt.resumenTexto, color: [26,92,42] },
+    { titulo: "OBJETIVOS LOGRADOS", texto: rpt.objetivosLogrados, color: [39,174,96] },
+    { titulo: "PROXIMOS OBJETIVOS", texto: rpt.objetivosProximos, color: [52,152,219] },
+    { titulo: "PLAN DE TRABAJO", texto: rpt.planTrabajo, color: [142,68,173] },
   ];
 
   secciones.forEach(({titulo, texto, color}) => {
