@@ -1422,10 +1422,9 @@ function ModCalendario({data,setData}){
         c.asistio?"Asistió":"Pendiente",
       ]);
     });
-    const sep="	";
-    const csv=rows.map(r=>r.map(v=>String(v).replace(/	/g," ")).join(sep)).join("
-");
-    const blob=new Blob(["﻿"+csv],{type:"text/tab-separated-values;charset=utf-8"});
+    const sep="\t";
+    const csv=rows.map(r=>r.map(v=>String(v).replace(/\t/g," ")).join(sep)).join("\n");
+    const blob=new Blob(["\uFEFF"+csv],{type:"text/tab-separated-values;charset=utf-8"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
     a.href=url; a.download="clases-golf.xls"; a.click();
