@@ -7505,6 +7505,8 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
   const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
     (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
   const secs = rpt.secciones||[];
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
   const [reenviando, setRenviando] = useState(false);
   const [reenviado, setRenviado] = useState(false);
 
