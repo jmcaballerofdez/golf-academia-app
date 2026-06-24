@@ -1683,7 +1683,7 @@ function ModCalendario({data,setData}){
       <div style={{flex:1,minWidth:160}}>
         <div style={{fontWeight:700,fontSize:13,color:G.fairway}}>Google Calendar</div>
         <div style={{fontSize:12,color:G.soft,marginTop:2}}>
-          Exporta tus clases como archivo .ics para importarlas en Google Calendar
+          Exporta tus clases en Excel o PDF
         </div>
       </div>
       <button onClick={exportarClasesExcel}
@@ -3582,6 +3582,18 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
           <div style={{fontSize:12,color:G.soft,marginTop:4}}>{Number(bonoActivo.clases)-bonoActivo.usadas} clases restantes de {bonoActivo.clases}</div>
         </Card>}
 
+        {/* Banner huecos disponibles */}
+        {slotsDisponibles.length>0&&<div
+          onClick={()=>setTab("reservas")}
+          style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:14,display:"flex",gap:12,alignItems:"center",cursor:"pointer"}}>
+          <div style={{fontSize:26}}>🔔</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:14}}>¡{slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
+            <div style={{fontSize:12,opacity:.85,marginTop:2}}>Tu profesor ha abierto nuevos huecos. Pulsa para reservar.</div>
+          </div>
+          <div style={{fontSize:20}}>→</div>
+        </div>}
+
         {/* Próxima clase */}
         {misReservas.length>0&&(()=>{
           const r=misReservas.map(r=>({...r,slot:slots.find(s=>s.id===r.slotId)})).filter(r=>r.slot&&r.slot.fecha>=today()).sort((a,b)=>a.slot.fecha.localeCompare(b.slot.fecha))[0];
@@ -3630,6 +3642,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
       </div>}
 
       {tab==="reservas"&&<div>
+        {slotsDisponibles.length>0&&<div style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
+          <div style={{fontSize:24}}>🔔</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:14}}>¡Tienes {slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
+            <div style={{fontSize:12,opacity:.85,marginTop:2}}>Tu profesor ha abierto nuevos huecos. Reserva tu plaza.</div>
+          </div>
+          <div style={{background:"rgba(255,255,255,.2)",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700}}>↓ Ver abajo</div>
+        </div>}
         <h3 style={{margin:"0 0 14px",color:G.fairway}}>📅 Mis clases reservadas</h3>
         {misReservas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10,marginBottom:20}}>Sin clases reservadas.</div>}
         {misReservas.map(r=>{
