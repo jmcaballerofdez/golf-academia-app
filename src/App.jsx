@@ -36,28 +36,35 @@ async function generarPDFClase(clase, alumnoNombre){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
   const W = doc.internal.pageSize.getWidth();
-  let y = 20;
+  const H = doc.internal.pageSize.getHeight();
+  let y = 0;
 
-  // Cabecera
-  doc.setFillColor(26, 92, 42);
-  doc.rect(0, 0, W, 30, "F");
-  doc.setTextColor(255,255,255);
-  doc.setFontSize(16); doc.setFont("helvetica","bold");
-  doc.text("Golf Ciudad Real C.D.", W/2, 13, {align:"center"});
-  doc.setFontSize(10); doc.setFont("helvetica","normal");
-  doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 21, {align:"center"});
-  y = 40;
+  // Paleta GCR + PGA
+  const VERDE = [15, 80, 30];
+  const AZUL  = [0, 48, 87];
+  const DORADO= [180, 140, 60];
+  const BLANCO= [255, 255, 255];
+  const GRIS  = [240, 242, 244];
 
-  // Título
-  doc.setTextColor(26, 92, 42);
-  doc.setFontSize(14); doc.setFont("helvetica","bold");
-  doc.text("Resumen de Clase", W/2, y, {align:"center"});
-  y += 10;
+  // Cabecera azul marino
+  doc.setFillColor(...AZUL);
+  doc.rect(0, 0, W, 35, "F");
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 35, W, 3, "F");
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 38, W, 16, "F");
 
-  // Línea separadora
-  doc.setDrawColor(26, 92, 42);
-  doc.line(15, y, W-15, y);
-  y += 8;
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(18); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 14, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 22, {align:"center"});
+  doc.setFontSize(8);
+  doc.text("José Manuel Caballero Fernández  ·  Instructor Nº 1908P", W/2, 29, {align:"center"});
+  doc.setFontSize(12); doc.setFont("helvetica","bold");
+  doc.text("RESUMEN DE CLASE", W/2, 50, {align:"center"});
+
+  y = 62;
 
   // Datos de la clase
   doc.setTextColor(30,30,30);
@@ -72,9 +79,16 @@ async function generarPDFClase(clase, alumnoNombre){
     ["Zona:", clase.zona || "—"],
     ["Asistencia:", clase.asistio ? "Asistio" : "Pendiente"],
   ];
-  filas.forEach(([k,v])=>{
-    doc.setFont("helvetica","bold"); doc.text(k+":", 15, y);
-    doc.setFont("helvetica","normal"); doc.text(String(v), 60, y);
+  filas.forEach(([k,v],i)=>{
+    const even = i%2===0;
+    doc.setFillColor(...(even ? [240,242,244] : [255,255,255]));
+    doc.rect(15, y-4, W-30, 7, "F");
+    doc.setFillColor(180,140,60);
+    doc.rect(15, y-4, 2, 7, "F");
+    doc.setFont("helvetica","bold"); doc.setTextColor(0,48,87);
+    doc.text(k, 20, y+0.5);
+    doc.setFont("helvetica","normal"); doc.setTextColor(30,30,30);
+    doc.text(String(v), 65, y+0.5);
     y += 7;
   });
 
@@ -88,12 +102,14 @@ async function generarPDFClase(clase, alumnoNombre){
     y += lines.length * 5 + 4;
   }
 
-  // Pie
-  doc.setFillColor(26, 92, 42);
-  doc.rect(0, 285, W, 12, "F");
-  doc.setTextColor(255,255,255);
-  doc.setFontSize(8);
-  doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy", W/2, 293, {align:"center"});
+  // Pie de página
+  doc.setFillColor(...DORADO);
+  doc.rect(0, H-13, W, 2, "F");
+  doc.setFillColor(...AZUL);
+  doc.rect(0, H-11, W, 11, "F");
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(7); doc.setFont("helvetica","normal");
+  doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
 
   doc.save("clase-" + (clase.fecha||"golf") + "-" + alumnoNombre.replace(/\s+/g,"_") + ".pdf");
 }
@@ -106,23 +122,37 @@ async function generarPDFInforme(rpt, alumnoNombre){
   const H = doc.internal.pageSize.getHeight();
   let y = 0;
 
-  // ── PORTADA ──────────────────────────────────────────────────────
-  // Franja verde oscuro superior
-  doc.setFillColor(26, 92, 42);
-  doc.rect(0, 0, W, 50, "F");
+  // Paleta: verde GCR + azul marino PGA + dorado PGA
+  const VERDE = [15, 80, 30];      // Verde oscuro Golf Ciudad Real
+  const AZUL  = [0, 48, 87];       // Azul marino PGA España
+  const DORADO= [180, 140, 60];    // Dorado PGA España
+  const BLANCO= [255, 255, 255];
+  const GRIS  = [240, 242, 244];
 
-  // Franja verde claro decorativa
-  doc.setFillColor(46, 125, 60);
-  doc.rect(0, 50, W, 6, "F");
+  // ── CABECERA ─────────────────────────────────────────────────────
+  // Franja azul marino PGA
+  doc.setFillColor(...AZUL);
+  doc.rect(0, 0, W, 38, "F");
 
-  // Logo texto
-  doc.setTextColor(255,255,255);
-  doc.setFontSize(22); doc.setFont("helvetica","bold");
-  doc.text("Golf Ciudad Real C.D.", W/2, 20, {align:"center"});
-  doc.setFontSize(10); doc.setFont("helvetica","normal");
-  doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 29, {align:"center"});
-  doc.setFontSize(9);
-  doc.text("Academia de Golf · Formación Personalizada", W/2, 37, {align:"center"});
+  // Franja dorada decorativa
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 38, W, 3, "F");
+
+  // Franja verde GCR
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 41, W, 18, "F");
+
+  // Texto cabecera
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(20); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 16, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 25, {align:"center"});
+  doc.setFontSize(8);
+  doc.text("José Manuel Caballero Fernández  ·  Instructor Nº 1908P", W/2, 33, {align:"center"});
+
+  doc.setFontSize(13); doc.setFont("helvetica","bold");
+  doc.text("INFORME DE SEGUIMIENTO", W/2, 53, {align:"center"});
 
   y = 70;
 
@@ -171,72 +201,87 @@ async function generarPDFInforme(rpt, alumnoNombre){
 
   // ── SECCIONES ────────────────────────────────────────────────────
   const secciones = [
-    { titulo: "RESUMEN DEL PERIODO", texto: rpt.resumenTexto, color: [26,92,42] },
-    { titulo: "OBJETIVOS LOGRADOS", texto: rpt.objetivosLogrados, color: [39,174,96] },
-    { titulo: "PROXIMOS OBJETIVOS", texto: rpt.objetivosProximos, color: [52,152,219] },
-    { titulo: "PLAN DE TRABAJO", texto: rpt.planTrabajo, color: [142,68,173] },
+    { titulo: "RESUMEN DEL PERIODO", texto: rpt.resumenTexto, color: VERDE },
+    { titulo: "OBJETIVOS LOGRADOS", texto: rpt.objetivosLogrados, color: [0, 100, 60] },
+    { titulo: "PROXIMOS OBJETIVOS", texto: rpt.objetivosProximos, color: AZUL },
+    { titulo: "PLAN DE TRABAJO", texto: rpt.planTrabajo, color: [80, 40, 120] },
   ];
 
   secciones.forEach(({titulo, texto, color}) => {
     if(!texto) return;
     if(y > 240){ doc.addPage(); y = 20; }
 
-    // Cabecera de sección
+    // Cabecera de sección con franja dorada izquierda
     doc.setFillColor(...color);
     doc.roundedRect(15, y-5, W-30, 9, 2, 2, "F");
-    doc.setTextColor(255,255,255);
-    doc.setFontSize(11); doc.setFont("helvetica","bold");
-    doc.text(titulo, 19, y+1);
-    y += 11;
+    doc.setFillColor(...DORADO);
+    doc.rect(15, y-5, 3, 9, "F");
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(10); doc.setFont("helvetica","bold");
+    doc.text(titulo, 22, y+1);
+    y += 13;
 
-    // Contenido
-    doc.setTextColor(40,40,40);
-    doc.setFontSize(10); doc.setFont("helvetica","normal");
+    // Contenido con fondo gris suave
+    doc.setFillColor(...GRIS);
     const lines = doc.splitTextToSize(texto, W-34);
+    const h = lines.length * 5.5 + 6;
+    doc.rect(15, y-4, W-30, h, "F");
+    doc.setTextColor(30,30,30);
+    doc.setFontSize(10); doc.setFont("helvetica","normal");
     lines.forEach(line => {
       if(y > 270){ doc.addPage(); y = 20; }
-      doc.text(line, 17, y);
+      doc.text(line, 18, y);
       y += 5.5;
     });
-    y += 6;
+    y += 8;
   });
 
   // ── FIRMA ────────────────────────────────────────────────────────
   if(y > 250) { doc.addPage(); y = 20; }
   y += 4;
 
-  doc.setFillColor(240, 248, 240);
-  doc.rect(15, y-4, W-30, 22, "F");
-  doc.setDrawColor(26,92,42);
-  doc.setLineWidth(0.3);
-  doc.rect(15, y-4, W-30, 22, "S");
+  // Caja firma con borde dorado
+  doc.setFillColor(...GRIS);
+  doc.rect(15, y-4, W-30, 24, "F");
+  doc.setDrawColor(...DORADO);
+  doc.setLineWidth(0.8);
+  doc.rect(15, y-4, W-30, 24, "S");
 
-  doc.setTextColor(26, 92, 42);
+  // Franja superior dorada
+  doc.setFillColor(...DORADO);
+  doc.rect(15, y-4, W-30, 3, "F");
+
+  doc.setTextColor(...AZUL);
   doc.setFontSize(10); doc.setFont("helvetica","bold");
   const firma0 = rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández";
-  doc.text(firma0, 20, y+3);
-  doc.setFont("helvetica","normal"); doc.setTextColor(80,80,80); doc.setFontSize(9);
+  doc.text(firma0, 20, y+5);
+  doc.setFont("helvetica","normal"); doc.setTextColor(60,60,60); doc.setFontSize(9);
   (rpt.firmaTexto?.split("\n").slice(1)||["PGA España Nº 1908P","Golf Ciudad Real C.D."]).forEach((l,i)=>{
-    doc.text(l, 20, y+9+(i*5));
+    doc.text(l, 20, y+11+(i*4.5));
   });
 
   // Línea de firma a la derecha
-  doc.setDrawColor(150,150,150);
-  doc.line(W-60, y+14, W-18, y+14);
-  doc.setFontSize(8); doc.setTextColor(120,120,120);
-  doc.text("Firma del instructor", W-60+(42/2), y+19, {align:"center"});
+  doc.setDrawColor(...AZUL);
+  doc.setLineWidth(0.5);
+  doc.line(W-62, y+16, W-18, y+16);
+  doc.setFontSize(8); doc.setTextColor(...AZUL);
+  doc.text("Firma del instructor", W-40, y+20, {align:"center"});
 
   // ── PIE DE PÁGINA ─────────────────────────────────────────────────
   const totalPages = doc.internal.getNumberOfPages();
   for(let i=1; i<=totalPages; i++){
     doc.setPage(i);
-    doc.setFillColor(26, 92, 42);
-    doc.rect(0, H-12, W, 12, "F");
-    doc.setTextColor(255,255,255);
+    // Franja dorada
+    doc.setFillColor(...DORADO);
+    doc.rect(0, H-13, W, 2, "F");
+    // Franja azul marino
+    doc.setFillColor(...AZUL);
+    doc.rect(0, H-11, W, 11, "F");
+    doc.setTextColor(...BLANCO);
     doc.setFontSize(7); doc.setFont("helvetica","normal");
-    doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy · Documento confidencial", W/2, H-5, {align:"center"});
+    doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
     if(totalPages>1){
-      doc.text(`Página ${i} de ${totalPages}`, W-15, H-5, {align:"right"});
+      doc.text("Pag. "+i+" / "+totalPages, W-12, H-5, {align:"right"});
     }
   }
 
