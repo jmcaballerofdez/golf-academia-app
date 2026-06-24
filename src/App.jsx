@@ -7505,8 +7505,8 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
   const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
     (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
   const secs = rpt.secciones||[];
-  const [enviando, setEnviando] = useState(false);
-  const [enviado, setEnviado] = useState(false);
+  const [reenviando, setRenviando] = useState(false);
+  const [reenviado, setRenviado] = useState(false);
 
   async function handlePublicar(){
     setEnviando(true);
@@ -7514,6 +7514,14 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
     onPublicar();
     setEnviado(true);
     setEnviando(false);
+  }
+
+  async function handleReenviar(){
+    setRenviando(true);
+    await publicarInformeFirestore(rpt, alumno);
+    setRenviado(true);
+    setRenviando(false);
+    setTimeout(()=>setRenviado(false), 3000);
   }
 
   function descargarPDF(){
@@ -7542,8 +7550,13 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
       {!rpt.publicado&&!enviado&&<Btn color="primary" onClick={handlePublicar} disabled={enviando}>
         {enviando?"Enviando...":"📤 Publicar y enviar al alumno"}
       </Btn>}
-      {(rpt.publicado||enviado)&&<span style={{background:G.mist,color:G.grass,borderRadius:8,
-        padding:"7px 14px",fontSize:13,fontWeight:600}}>✅ Publicado y enviado</span>}
+      {(rpt.publicado||enviado)&&<>
+        <span style={{background:G.mist,color:G.grass,borderRadius:8,
+          padding:"7px 14px",fontSize:13,fontWeight:600}}>✅ Publicado y enviado</span>
+        <Btn color="sky" onClick={handleReenviar} disabled={reenviando}>
+          {reenviando?"Reenviando...":reenviado?"✅ Reenviado":"🔄 Reenviar"}
+        </Btn>
+      </>}
     </div>
 
     {/* ── CONTENIDO DEL INFORME (para PDF) ── */}
