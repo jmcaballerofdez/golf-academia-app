@@ -19,6 +19,186 @@ const EMAILJS_CONFIG = {
   publicKey: "_ylIbA5NuK_OsByYY",
 };
 
+// ─── Cargar jsPDF dinámicamente ──────────────────────────────────
+function cargarJsPDF(){
+  if(window.jspdf) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload=()=>resolve();
+    s.onerror=()=>reject(new Error("jsPDF no cargó"));
+    document.head.appendChild(s);
+  });
+}
+
+async function generarPDFClase(clase, alumnoNombre){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  // Cabecera
+  doc.setFillColor(26, 92, 42);
+  doc.rect(0, 0, W, 30, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.setFont("helvetica","bold");
+  doc.text("Golf Ciudad Real C.D.", W/2, 13, {align:"center"});
+  doc.setFontSize(10); doc.setFont("helvetica","normal");
+  doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 21, {align:"center"});
+  y = 40;
+
+  // Título
+  doc.setTextColor(26, 92, 42);
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("Resumen de Clase", W/2, y, {align:"center"});
+  y += 10;
+
+  // Línea separadora
+  doc.setDrawColor(26, 92, 42);
+  doc.line(15, y, W-15, y);
+  y += 8;
+
+  // Datos de la clase
+  doc.setTextColor(30,30,30);
+  doc.setFontSize(11);
+  const filas = [
+    ["Alumno", alumnoNombre],
+    ["Fecha", clase.fecha || "—"],
+    ["Hora", clase.horaInicio || clase.hora || "—"],
+    ["Duración", (clase.duracion||"60")+" min"],
+    ["Tipo", clase.tipo || "—"],
+    ["Zona", clase.zona || "—"],
+    ["Asistencia", clase.asistio ? "✓ Asistió" : "Pendiente"],
+  ];
+  filas.forEach(([k,v])=>{
+    doc.setFont("helvetica","bold"); doc.text(k+":", 15, y);
+    doc.setFont("helvetica","normal"); doc.text(String(v), 60, y);
+    y += 7;
+  });
+
+  if(clase.contenido){
+    y += 3;
+    doc.setFont("helvetica","bold"); doc.text("Contenido / Notas:", 15, y);
+    y += 6;
+    doc.setFont("helvetica","normal");
+    const lines = doc.splitTextToSize(clase.contenido, W-30);
+    doc.text(lines, 15, y);
+    y += lines.length * 5 + 4;
+  }
+
+  // Pie
+  doc.setFillColor(26, 92, 42);
+  doc.rect(0, 285, W, 12, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(8);
+  doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy", W/2, 293, {align:"center"});
+
+  doc.save("clase-" + (clase.fecha||"golf") + "-" + alumnoNombre.replace(/\s+/g,"_") + ".pdf");
+}
+
+async function generarPDFInforme(rpt, alumnoNombre){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  let y = 20;
+
+  // Cabecera
+  doc.setFillColor(26, 92, 42);
+  doc.rect(0, 0, W, 30, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(16); doc.setFont("helvetica","bold");
+  doc.text("Golf Ciudad Real C.D.", W/2, 13, {align:"center"});
+  doc.setFontSize(10); doc.setFont("helvetica","normal");
+  doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 21, {align:"center"});
+  y = 40;
+
+  // Título del informe
+  doc.setTextColor(26, 92, 42);
+  doc.setFontSize(15); doc.setFont("helvetica","bold");
+  const tituloLines = doc.splitTextToSize(rpt.titulo || "Informe de seguimiento", W-30);
+  doc.text(tituloLines, W/2, y, {align:"center"});
+  y += tituloLines.length * 7 + 4;
+
+  doc.setFontSize(11); doc.setFont("helvetica","normal");
+  doc.setTextColor(80,80,80);
+  doc.text("Alumno: " + alumnoNombre, W/2, y, {align:"center"});
+  y += 6;
+  if(rpt.fechaDesde && rpt.fechaHasta){
+    doc.text("Período: " + rpt.fechaDesde + " → " + rpt.fechaHasta, W/2, y, {align:"center"});
+    y += 6;
+  }
+  doc.text("Fecha: " + (rpt.fechaCreacion||""), W/2, y, {align:"center"});
+  y += 10;
+
+  doc.setDrawColor(26, 92, 42);
+  doc.line(15, y, W-15, y);
+  y += 8;
+
+  const addSection = (titulo, texto) => {
+    if(!texto) return;
+    if(y > 260){ doc.addPage(); y = 20; }
+    doc.setTextColor(26, 92, 42);
+    doc.setFontSize(12); doc.setFont("helvetica","bold");
+    doc.text(titulo, 15, y); y += 7;
+    doc.setTextColor(30,30,30);
+    doc.setFontSize(10); doc.setFont("helvetica","normal");
+    const lines = doc.splitTextToSize(texto, W-30);
+    lines.forEach(line => {
+      if(y > 270){ doc.addPage(); y = 20; }
+      doc.text(line, 15, y); y += 5;
+    });
+    y += 5;
+  };
+
+  addSection("📝 Resumen", rpt.resumenTexto);
+  addSection("✅ Objetivos logrados", rpt.objetivosLogrados);
+  addSection("🎯 Próximos objetivos", rpt.objetivosProximos);
+  addSection("📋 Plan de trabajo", rpt.planTrabajo);
+
+  // Firma
+  if(y > 255) { doc.addPage(); y = 20; }
+  y += 5;
+  doc.setDrawColor(200,200,200);
+  doc.line(15, y, W-15, y); y += 8;
+  doc.setTextColor(26, 92, 42);
+  doc.setFontSize(10); doc.setFont("helvetica","bold");
+  doc.text(rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández", 15, y); y += 5;
+  doc.setFont("helvetica","normal"); doc.setTextColor(80,80,80);
+  (rpt.firmaTexto?.split("\n").slice(1)||[]).forEach(l=>{ doc.text(l, 15, y); y+=5; });
+
+  // Pie
+  doc.setFillColor(26, 92, 42);
+  doc.rect(0, 285, W, 12, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(8);
+  doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy", W/2, 293, {align:"center"});
+
+  doc.save("informe-" + alumnoNombre.replace(/\s+/g,"_") + "-" + (rpt.fechaCreacion||"golf") + ".pdf");
+}
+
+// ─── Notificar clase al alumno por email (via Firestore→Make→Gmail) ──
+async function notificarClaseAlumnoEmail(clase, alumno){
+  if(!alumno?.email) return;
+  try {
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
+    await setDoc(doc(db, "academia_clases_email", clase.id), {
+      id: clase.id,
+      alumnoNombre: alumno.nombre || "",
+      alumnoEmail: alumno.email || "",
+      fecha: clase.fecha || "",
+      horaInicio: clase.horaInicio || clase.hora || "",
+      duracion: clase.duracion || "60",
+      tipo: clase.tipo || "",
+      zona: clase.zona || "",
+      contenido: clase.contenido || "",
+      enlace,
+      enviadoAt: serverTimestamp(),
+    });
+  } catch(e){ console.warn("Notify clase email error:", e); }
+}
+
 // Cargar el SDK de EmailJS dinámicamente
 function cargarEmailJS(){
   if(window.emailjs) return Promise.resolve();
@@ -2231,6 +2411,10 @@ function ModClases({data,setData}){
     const updated=modal==="new"?[...clases,claseGuardada]:clases.map(c=>c.id===modal?claseGuardada:c);
     setData({...data,clases:updated});
     sincronizarClaseFirestore(claseGuardada, alumnos);
+    if(modal==="new"){
+      const alumno = alumnos.find(a=>a.id===form.alumnoId);
+      notificarClaseAlumnoEmail(claseGuardada, alumno);
+    }
     setModal(null);
   }
   function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
@@ -2247,6 +2431,7 @@ function ModClases({data,setData}){
     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
       <Badge color={c.asistio?"green":"gold"}>{c.asistio?"Asistió":"Pendiente"}</Badge>
       <Btn small color="secondary" onClick={()=>{setForm({...c});setModal(c.id);}}>✎</Btn>
+      <Btn small color="sky" onClick={()=>generarPDFClase(c, alumnoNombre(c.alumnoId))}>PDF</Btn>
       <Btn small color={c.asistio?"secondary":"sky"} onClick={()=>{const updated={...c,asistio:!c.asistio};setData({...data,clases:clases.map(x=>x.id===c.id?updated:x)});sincronizarClaseFirestore(updated,alumnos);}}>{c.asistio?"↩":"✔"}</Btn>
       <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?")){setData({...data,clases:clases.filter(x=>x.id!==c.id)});eliminarClaseFirestore(c.id);}}}> ✕</Btn>
     </div>
@@ -3079,19 +3264,8 @@ function InformePreviewAlumno({rpt, data}){
   const [abierto, setAbierto] = useState(false);
 
   function descargarPDF(){
-    const el = document.getElementById("informe-alumno-"+rpt.id);
-    if(!el) return;
-    const style = document.createElement("style");
-    style.textContent = `@media print { body > *:not(#pdf-wrap-alumno) { display:none!important; } #pdf-wrap-alumno { display:block!important; } }`;
-    document.head.appendChild(style);
-    const wrap = document.createElement("div");
-    wrap.id = "pdf-wrap-alumno";
-    wrap.style.cssText = "position:fixed;top:0;left:0;width:100%;z-index:99999;background:#fff;padding:20px;";
-    wrap.innerHTML = el.innerHTML;
-    document.body.appendChild(wrap);
-    window.print();
-    document.body.removeChild(wrap);
-    document.head.removeChild(style);
+    const alumno = (data.alumnos||[]).find(a=>a.id===rpt.alumnoId);
+    generarPDFInforme(rpt, alumno?.nombre||"alumno");
   }
 
   return <div>
@@ -7122,19 +7296,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
   }
 
   function descargarPDF(){
-    const el = document.getElementById("informe-preview-content");
-    if(!el){ alert("No se pudo generar el PDF."); return; }
-    const style = document.createElement("style");
-    style.textContent = `@media print { body > *:not(#informe-pdf-wrap) { display:none!important; } #informe-pdf-wrap { display:block!important; } }`;
-    document.head.appendChild(style);
-    const wrap = document.createElement("div");
-    wrap.id = "informe-pdf-wrap";
-    wrap.style.cssText = "position:fixed;top:0;left:0;width:100%;z-index:99999;background:#fff;";
-    wrap.innerHTML = el.innerHTML;
-    document.body.appendChild(wrap);
-    window.print();
-    document.body.removeChild(wrap);
-    document.head.removeChild(style);
+    generarPDFInforme(rpt, alumno?.nombre||"alumno");
   }
 
   const SecTitle=({children,color=G.fairway})=><div style={{
