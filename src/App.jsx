@@ -3455,6 +3455,9 @@ function InformePreviewAlumno({rpt, data}){
 
 function PortalAlumno({data,setData,alumnoId,onLogout}){
   const [tab,setTab]=useState("inicio");
+  const [modalSolicitud,setModalSolicitud]=useState(false);
+  const [formSolicitud,setFormSolicitud]=useState({fecha:"",hora:"10:00",tipo:"Individual",zona:"Campo de prácticas",notas:""});
+  const [solicitudEnviada,setSolicitudEnviada]=useState(false);
   const alumno=data.alumnos.find(a=>a.id===alumnoId);
   const analisis=(data.analisis||[]).filter(a=>a.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const estadisticas=(data.estadisticas||[]).filter(s=>s.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -3470,6 +3473,27 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
     if(yaReservado) return false;
     return res.length<Number(s.plazas||1);
   }).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora));
+
+  function enviarSolicitudClase(){
+    if(!formSolicitud.fecha) return;
+    const solicitud = {
+      id: uid(),
+      alumnoId,
+      alumnoNombre: alumno?.nombre || "",
+      fecha: formSolicitud.fecha,
+      hora: formSolicitud.hora,
+      tipo: formSolicitud.tipo,
+      zona: formSolicitud.zona,
+      notas: formSolicitud.notas,
+      estado: "pendiente",
+      fechaSolicitud: today(),
+    };
+    const solicitudes = data.solicitudesClase || [];
+    setData({...data, solicitudesClase: [...solicitudes, solicitud]});
+    setSolicitudEnviada(true);
+    setModalSolicitud(false);
+    setTimeout(()=>setSolicitudEnviada(false), 4000);
+  }
 
   function reservar(slotId){
     const slot=slots.find(s=>s.id===slotId);
@@ -3630,8 +3654,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
         })}
 
         <Divider label="HUECOS DISPONIBLES"/>
-        <h3 style={{margin:"0 0 12px",color:G.fairway}}>Reservar nueva clase</h3>
-        {slotsDisponibles.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>No hay huecos disponibles ahora mismo.</div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <h3 style={{margin:0,color:G.fairway}}>Reservar nueva clase</h3>
+          <Btn small color="primary" onClick={()=>setModalSolicitud(true)}>+ Solicitar clase</Btn>
+        </div>
+        {solicitudEnviada&&<div style={{background:"#e8f5eb",border:"1px solid "+G.grass,borderRadius:10,padding:"10px 14px",marginBottom:12,color:G.fairway,fontWeight:600,fontSize:13}}>
+          ✅ Solicitud enviada. Tu profesor la revisará pronto.
+        </div>}
+        {slotsDisponibles.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>No hay huecos disponibles ahora mismo.<br/><span style={{fontSize:12}}>Usa el botón "Solicitar clase" para pedir una cita.</span></div>}
         {slotsDisponibles.slice(0,12).map(s=>{
           const res=reservas.filter(r=>r.slotId===s.id&&r.estado!=="cancelada");
           const libre=Number(s.plazas||1)-res.length;
@@ -3651,6 +3681,22 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
           </Card>;
         })}
       </div>}
+
+      {/* MODAL SOLICITAR CLASE */}
+      {modalSolicitud&&<Modal title="Solicitar clase" onClose={()=>setModalSolicitud(false)}>
+        <div style={{fontSize:13,color:G.soft,marginBottom:12}}>Tu profesor recibirá tu solicitud y te confirmará la clase.</div>
+        <Field label="Fecha preferida *"><Input type="date" value={formSolicitud.fecha} onChange={v=>setFormSolicitud({...formSolicitud,fecha:v})}/></Field>
+        <Field label="Hora preferida"><Input type="time" value={formSolicitud.hora} onChange={v=>setFormSolicitud({...formSolicitud,hora:v})}/></Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Tipo"><Sel value={formSolicitud.tipo} onChange={v=>setFormSolicitud({...formSolicitud,tipo:v})} options={TIPOS_CLASE.map(t=>({value:t.id,label:t.label}))}/></Field>
+          <Field label="Zona"><Sel value={formSolicitud.zona} onChange={v=>setFormSolicitud({...formSolicitud,zona:v})} options={ZONAS.map(z=>({value:z,label:z}))}/></Field>
+        </div>
+        <Field label="Notas (opcional)"><Textarea value={formSolicitud.notas} onChange={v=>setFormSolicitud({...formSolicitud,notas:v})} placeholder="¿Qué quieres trabajar?"/></Field>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+          <Btn color="secondary" onClick={()=>setModalSolicitud(false)}>Cancelar</Btn>
+          <Btn onClick={enviarSolicitudClase} disabled={!formSolicitud.fecha}>Enviar solicitud</Btn>
+        </div>
+      </Modal>}
 
       {/* ANÁLISIS */}
       {tab==="analisis"&&<div>
@@ -8247,6 +8293,43 @@ function ModRegistrosPendientes({data, setData, notifs}){
           ))}
         </div>
     }
+
+    {/* ── SOLICITUDES DE CLASE ── */}
+    {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length > 0 && <>
+      <div style={{marginTop:24,marginBottom:12}}>
+        <h2 style={{margin:"0 0 4px",color:G.sky}}>📩 Solicitudes de clase</h2>
+        <div style={{fontSize:13,color:G.soft}}>Alumnos que han solicitado una clase desde su portal</div>
+      </div>
+      <div style={{display:"grid",gap:10}}>
+        {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").map(s=>(
+          <Card key={s.id} style={{borderLeft:`4px solid ${G.sky}`}}>
+            <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:G.ink,marginBottom:4}}>👤 {s.alumnoNombre}</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:13,color:G.soft}}>
+                  <span>📅 {s.fecha}</span>
+                  <span>🕐 {s.hora}</span>
+                  <span>🏌️ {s.tipo}</span>
+                  <span>📍 {s.zona}</span>
+                </div>
+                {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,background:"#f0f8ff",borderRadius:8,padding:"4px 10px"}}>
+                  💬 {s.notas}
+                </div>}
+                <div style={{fontSize:11,color:G.soft,marginTop:4}}>Solicitado: {s.fechaSolicitud}</div>
+              </div>
+              <div style={{display:"flex",gap:8,flexDirection:"column",flexShrink:0}}>
+                <Btn small color="primary" onClick={()=>{
+                  setData({...data,solicitudesClase:(data.solicitudesClase||[]).map(x=>x.id===s.id?{...x,estado:"aceptada"}:x)});
+                }}>✅ Aceptar</Btn>
+                <Btn small color="danger" onClick={()=>{
+                  setData({...data,solicitudesClase:(data.solicitudesClase||[]).map(x=>x.id===s.id?{...x,estado:"rechazada"}:x)});
+                }}>✕ Rechazar</Btn>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </>}
   </div>;
 }
 
