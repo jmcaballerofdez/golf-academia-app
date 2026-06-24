@@ -102,78 +102,134 @@ async function generarPDFInforme(rpt, alumnoNombre){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
   const W = doc.internal.pageSize.getWidth();
-  let y = 20;
+  const H = doc.internal.pageSize.getHeight();
+  let y = 0;
 
-  // Cabecera
+  // ── PORTADA ──────────────────────────────────────────────────────
+  // Franja verde oscuro superior
   doc.setFillColor(26, 92, 42);
-  doc.rect(0, 0, W, 30, "F");
+  doc.rect(0, 0, W, 50, "F");
+
+  // Franja verde claro decorativa
+  doc.setFillColor(46, 125, 60);
+  doc.rect(0, 50, W, 6, "F");
+
+  // Logo texto
   doc.setTextColor(255,255,255);
-  doc.setFontSize(16); doc.setFont("helvetica","bold");
-  doc.text("Golf Ciudad Real C.D.", W/2, 13, {align:"center"});
+  doc.setFontSize(22); doc.setFont("helvetica","bold");
+  doc.text("Golf Ciudad Real C.D.", W/2, 20, {align:"center"});
   doc.setFontSize(10); doc.setFont("helvetica","normal");
-  doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 21, {align:"center"});
-  y = 40;
+  doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 29, {align:"center"});
+  doc.setFontSize(9);
+  doc.text("Academia de Golf · Formación Personalizada", W/2, 37, {align:"center"});
 
-  // Título del informe
-  doc.setTextColor(26, 92, 42);
-  doc.setFontSize(15); doc.setFont("helvetica","bold");
-  const tituloLines = doc.splitTextToSize(rpt.titulo || "Informe de seguimiento", W-30);
-  doc.text(tituloLines, W/2, y, {align:"center"});
-  y += tituloLines.length * 7 + 4;
+  y = 70;
 
-  doc.setFontSize(11); doc.setFont("helvetica","normal");
-  doc.setTextColor(80,80,80);
-  doc.text("Alumno: " + alumnoNombre, W/2, y, {align:"center"});
-  y += 6;
-  if(rpt.fechaDesde && rpt.fechaHasta){
-    doc.text("Período: " + rpt.fechaDesde + " → " + rpt.fechaHasta, W/2, y, {align:"center"});
-    y += 6;
-  }
-  doc.text("Fecha: " + (rpt.fechaCreacion||""), W/2, y, {align:"center"});
-  y += 10;
-
+  // Caja del título del informe
+  doc.setFillColor(240, 248, 240);
+  doc.roundedRect(15, y-8, W-30, 26, 4, 4, "F");
   doc.setDrawColor(26, 92, 42);
-  doc.line(15, y, W-15, y);
-  y += 8;
+  doc.setLineWidth(0.5);
+  doc.roundedRect(15, y-8, W-30, 26, 4, 4, "S");
 
-  const addSection = (titulo, texto) => {
+  doc.setTextColor(26, 92, 42);
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  const tituloLines = doc.splitTextToSize(rpt.titulo || "Informe de Seguimiento", W-40);
+  doc.text(tituloLines, W/2, y+2, {align:"center"});
+  y += 28;
+
+  // Datos del alumno en tabla compacta
+  const datosRows = [
+    ["👤 Alumno", alumnoNombre],
+    ["📅 Fecha de emisión", rpt.fechaCreacion || ""],
+  ];
+  if(rpt.fechaDesde && rpt.fechaHasta){
+    datosRows.push(["📆 Período evaluado", rpt.fechaDesde + " → " + rpt.fechaHasta]);
+  }
+
+  doc.setFontSize(10);
+  datosRows.forEach(([k, v]) => {
+    doc.setFillColor(245, 250, 245);
+    doc.rect(15, y-4, W-30, 8, "F");
+    doc.setFont("helvetica","bold"); doc.setTextColor(26, 92, 42);
+    doc.text(k, 18, y+1);
+    doc.setFont("helvetica","normal"); doc.setTextColor(30, 30, 30);
+    doc.text(String(v), 80, y+1);
+    y += 9;
+  });
+
+  y += 6;
+
+  // ── SECCIONES ────────────────────────────────────────────────────
+  const secciones = [
+    { titulo: "📝 Resumen del período", texto: rpt.resumenTexto, color: [26,92,42] },
+    { titulo: "✅ Objetivos logrados", texto: rpt.objetivosLogrados, color: [39,174,96] },
+    { titulo: "🎯 Próximos objetivos", texto: rpt.objetivosProximos, color: [52,152,219] },
+    { titulo: "📋 Plan de trabajo", texto: rpt.planTrabajo, color: [142,68,173] },
+  ];
+
+  secciones.forEach(({titulo, texto, color}) => {
     if(!texto) return;
-    if(y > 260){ doc.addPage(); y = 20; }
-    doc.setTextColor(26, 92, 42);
-    doc.setFontSize(12); doc.setFont("helvetica","bold");
-    doc.text(titulo, 15, y); y += 7;
-    doc.setTextColor(30,30,30);
+    if(y > 240){ doc.addPage(); y = 20; }
+
+    // Cabecera de sección
+    doc.setFillColor(...color);
+    doc.roundedRect(15, y-5, W-30, 9, 2, 2, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(11); doc.setFont("helvetica","bold");
+    doc.text(titulo, 19, y+1);
+    y += 11;
+
+    // Contenido
+    doc.setTextColor(40,40,40);
     doc.setFontSize(10); doc.setFont("helvetica","normal");
-    const lines = doc.splitTextToSize(texto, W-30);
+    const lines = doc.splitTextToSize(texto, W-34);
     lines.forEach(line => {
       if(y > 270){ doc.addPage(); y = 20; }
-      doc.text(line, 15, y); y += 5;
+      doc.text(line, 17, y);
+      y += 5.5;
     });
-    y += 5;
-  };
+    y += 6;
+  });
 
-  addSection("📝 Resumen", rpt.resumenTexto);
-  addSection("✅ Objetivos logrados", rpt.objetivosLogrados);
-  addSection("🎯 Próximos objetivos", rpt.objetivosProximos);
-  addSection("📋 Plan de trabajo", rpt.planTrabajo);
+  // ── FIRMA ────────────────────────────────────────────────────────
+  if(y > 250) { doc.addPage(); y = 20; }
+  y += 4;
 
-  // Firma
-  if(y > 255) { doc.addPage(); y = 20; }
-  y += 5;
-  doc.setDrawColor(200,200,200);
-  doc.line(15, y, W-15, y); y += 8;
+  doc.setFillColor(240, 248, 240);
+  doc.rect(15, y-4, W-30, 22, "F");
+  doc.setDrawColor(26,92,42);
+  doc.setLineWidth(0.3);
+  doc.rect(15, y-4, W-30, 22, "S");
+
   doc.setTextColor(26, 92, 42);
   doc.setFontSize(10); doc.setFont("helvetica","bold");
-  doc.text(rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández", 15, y); y += 5;
-  doc.setFont("helvetica","normal"); doc.setTextColor(80,80,80);
-  (rpt.firmaTexto?.split("\n").slice(1)||[]).forEach(l=>{ doc.text(l, 15, y); y+=5; });
+  const firma0 = rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández";
+  doc.text(firma0, 20, y+3);
+  doc.setFont("helvetica","normal"); doc.setTextColor(80,80,80); doc.setFontSize(9);
+  (rpt.firmaTexto?.split("\n").slice(1)||["PGA España Nº 1908P","Golf Ciudad Real C.D."]).forEach((l,i)=>{
+    doc.text(l, 20, y+9+(i*5));
+  });
 
-  // Pie
-  doc.setFillColor(26, 92, 42);
-  doc.rect(0, 285, W, 12, "F");
-  doc.setTextColor(255,255,255);
-  doc.setFontSize(8);
-  doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy", W/2, 293, {align:"center"});
+  // Línea de firma a la derecha
+  doc.setDrawColor(150,150,150);
+  doc.line(W-60, y+14, W-18, y+14);
+  doc.setFontSize(8); doc.setTextColor(120,120,120);
+  doc.text("Firma del instructor", W-60+(42/2), y+19, {align:"center"});
+
+  // ── PIE DE PÁGINA ─────────────────────────────────────────────────
+  const totalPages = doc.internal.getNumberOfPages();
+  for(let i=1; i<=totalPages; i++){
+    doc.setPage(i);
+    doc.setFillColor(26, 92, 42);
+    doc.rect(0, H-12, W, 12, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy · Documento confidencial", W/2, H-5, {align:"center"});
+    if(totalPages>1){
+      doc.text(`Página ${i} de ${totalPages}`, W-15, H-5, {align:"right"});
+    }
+  }
 
   doc.save("informe-" + alumnoNombre.replace(/\s+/g,"_") + "-" + (rpt.fechaCreacion||"golf") + ".pdf");
 }
@@ -1350,6 +1406,99 @@ function ModCalendario({data,setData}){
   }
 
 
+  function exportarClasesExcel(){
+    const clases = (data.clases||[]).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    const rows = [["Fecha","Hora","Duración (min)","Alumno","Tipo","Zona","Contenido","Asistencia"]];
+    clases.forEach(c=>{
+      const alumno = (data.alumnos||[]).find(a=>a.id===c.alumnoId);
+      rows.push([
+        c.fecha||"",
+        c.horaInicio||c.hora||"",
+        c.duracion||"60",
+        alumno?.nombre||"—",
+        c.tipo||"",
+        c.zona||"",
+        c.contenido||"",
+        c.asistio?"Asistió":"Pendiente",
+      ]);
+    });
+    const sep="	";
+    const csv=rows.map(r=>r.map(v=>String(v).replace(/	/g," ")).join(sep)).join("
+");
+    const blob=new Blob(["﻿"+csv],{type:"text/tab-separated-values;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="clases-golf.xls"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportarClasesPDF(){
+    await cargarJsPDF();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+
+    // Cabecera
+    doc.setFillColor(26, 92, 42);
+    doc.rect(0, 0, W, 22, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(14); doc.setFont("helvetica","bold");
+    doc.text("Golf Ciudad Real C.D. — Listado de Clases", W/2, 10, {align:"center"});
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 17, {align:"center"});
+
+    // Tabla
+    const cols = ["Fecha","Hora","Duración","Alumno","Tipo","Zona","Asistencia"];
+    const widths = [25, 18, 22, 50, 30, 45, 22];
+    const clases = (data.clases||[]).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    let y = 28;
+
+    // Cabecera tabla
+    doc.setFillColor(46, 125, 60);
+    doc.rect(10, y-5, W-20, 8, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(8); doc.setFont("helvetica","bold");
+    let x = 10;
+    cols.forEach((col,i)=>{ doc.text(col, x+2, y); x+=widths[i]; });
+    y += 5;
+
+    // Filas
+    clases.forEach((c,idx)=>{
+      if(y > H-15){ doc.addPage(); y=20; }
+      const alumno = (data.alumnos||[]).find(a=>a.id===c.alumnoId);
+      const fila = [
+        c.fecha||"",
+        c.horaInicio||c.hora||"",
+        (c.duracion||"60")+"min",
+        alumno?.nombre||"—",
+        c.tipo||"",
+        c.zona||"",
+        c.asistio?"✓ Asistió":"Pendiente",
+      ];
+      doc.setFillColor(idx%2===0?245:255, idx%2===0?248:255, idx%2===0?245:255);
+      doc.rect(10, y-4, W-20, 7, "F");
+      doc.setTextColor(30,30,30);
+      doc.setFont("helvetica","normal"); doc.setFontSize(8);
+      x = 10;
+      fila.forEach((val,i)=>{
+        const txt = doc.splitTextToSize(String(val), widths[i]-2);
+        doc.text(txt[0]||"", x+2, y);
+        x+=widths[i];
+      });
+      y+=7;
+    });
+
+    // Pie
+    doc.setFillColor(26, 92, 42);
+    doc.rect(0, H-10, W, 10, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(7);
+    doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy · "+new Date().toLocaleDateString("es-ES"), W/2, H-4, {align:"center"});
+
+    doc.save("clases-golf-"+new Date().toISOString().slice(0,10)+".pdf");
+  }
+
   function cargarGapi(){
     if(window.gapi) return Promise.resolve();
     return new Promise((res,rej)=>{
@@ -1538,10 +1687,15 @@ function ModCalendario({data,setData}){
           Exporta tus clases como archivo .ics para importarlas en Google Calendar
         </div>
       </div>
-      <button onClick={exportarICS}
-        style={{background:G.fairway,color:"#fff",border:"none",borderRadius:8,
+      <button onClick={exportarClasesExcel}
+        style={{background:"#217346",color:"#fff",border:"none",borderRadius:8,
           padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-        ⬇️ Exportar clases (.ics)
+        📊 Exportar Excel
+      </button>
+      <button onClick={exportarClasesPDF}
+        style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:8,
+          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📄 Exportar PDF
       </button>
       <a href="https://calendar.google.com" target="_blank" rel="noreferrer"
         style={{background:"#4285f4",color:"#fff",border:"none",borderRadius:8,
