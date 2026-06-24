@@ -183,14 +183,15 @@ async function notificarClaseAlumnoEmail(clase, alumno){
   if(!alumno?.email) return;
   try {
     const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
-    await setDoc(doc(db, "academia_clases_email", clase.id), {
+    await setDoc(doc(db, "academia_emails", "clase_" + clase.id), {
+      tipo: "clase",
       id: clase.id,
       alumnoNombre: alumno.nombre || "",
       alumnoEmail: alumno.email || "",
       fecha: clase.fecha || "",
       horaInicio: clase.horaInicio || clase.hora || "",
       duracion: clase.duracion || "60",
-      tipo: clase.tipo || "",
+      tipoClase: clase.tipo || "",
       zona: clase.zona || "",
       contenido: clase.contenido || "",
       enlace,
@@ -321,7 +322,8 @@ async function eliminarClaseFirestore(claseId) {
 async function publicarInformeFirestore(informe, alumno) {
   try {
     const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/?informe=${informe.id}`;
-    await setDoc(doc(db, "academia_informes", informe.id), {
+    await setDoc(doc(db, "academia_emails", "informe_" + informe.id), {
+      tipo: "informe",
       id: informe.id,
       titulo: informe.titulo || "",
       alumnoId: informe.alumnoId || "",
