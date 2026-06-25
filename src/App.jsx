@@ -1270,7 +1270,13 @@ function LoginScreen({data,onLogin}){
       }
       // Comprobar alumnos activos
       const alumno=(data.alumnos||[]).find(a=>a.activo&&a.pin===pinGuardado);
-      if(alumno){ setAutoLoginHecho(true); onLogin({role:"alumno",alumnoId:alumno.id}); }
+      if(alumno){ setAutoLoginHecho(true); onLogin({role:"alumno",alumnoId:alumno.id}); return; }
+      // Comprobar tutores con PIN propio
+      for(const al of (data.alumnos||[])){
+        if(!al.activo) continue;
+        const tutor=(al.tutores||[]).find(t=>t.pin&&t.pin===pinGuardado);
+        if(tutor){ setAutoLoginHecho(true); onLogin({role:"tutor",alumnoId:al.id,tutorNombre:tutor.nombre}); return; }
+      }
     }
   },[data,autoLoginHecho]);
   const [error,setError]=useState("");
@@ -1299,6 +1305,18 @@ function LoginScreen({data,onLogin}){
       if(recordar) localStorage.setItem("gcr_pin_saved",p);
       setTimeout(()=>{ onLogin({role:"alumno",alumnoId:alumno.id}); setIntentando(false); },300);
       return;
+    }
+    // Comprobar tutores con PIN propio
+    for(const al of (data.alumnos||[])){
+      if(!al.activo) continue;
+      const tutor=(al.tutores||[]).find(t=>t.pin&&t.pin===p);
+      if(tutor){
+        setIntentando(true);
+        const recordar=localStorage.getItem("gcr_recordar")==="1";
+        if(recordar) localStorage.setItem("gcr_pin_saved",p);
+        setTimeout(()=>{ onLogin({role:"tutor",alumnoId:al.id,tutorNombre:tutor.nombre}); setIntentando(false); },300);
+        return;
+      }
     }
     // Clave incorrecta
     setError("Clave incorrecta. Inténtalo de nuevo.");
@@ -2614,7 +2632,13 @@ function ModAlumnos({data,setData}){
             <Field label="Email">
               <Input value={t.email||""} onChange={v=>updTutor(i,"email",v)} placeholder="Email del tutor"/>
             </Field>
+            <Field label="PIN acceso plataforma (4 dígitos)">
+              <Input value={t.pin||""} onChange={v=>updTutor(i,"pin",v.replace(/\D/g,"").slice(0,4))} placeholder="PIN propio del tutor"/>
+            </Field>
           </div>
+          {t.pin&&<div style={{fontSize:11,color:"#1a5c2a",marginTop:4,background:"#e8f4e8",borderRadius:6,padding:"4px 8px"}}>
+            ✅ Este tutor puede acceder a la plataforma con su PIN propio
+          </div>}
         </div>
       ))}
       <button onClick={addTutor}
@@ -4107,7 +4131,7 @@ function InformePreviewAlumno({rpt, data}){
   </div>;
 }
 
-function PortalAlumno({data,setData,alumnoId,onLogout}){
+function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const [tab,setTab]=useState("inicio");
   const [modalSolicitud,setModalSolicitud]=useState(false);
   const [formSolicitud,setFormSolicitud]=useState({fecha:"",hora:"10:00",tipo:"Individual",zona:"Campo de prácticas",notas:""});
@@ -4190,8 +4214,10 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
             <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:32,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:0.95}}/>
             <img src={LOGO_PGA} alt="PGA España" style={{height:30,objectFit:"contain",marginLeft:4}}/>
             <div style={{marginLeft:4}}>
-              <div style={{fontWeight:800,fontSize:15}}>Mi Portal de Golf</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.65)"}}>{alumno?.nombre}</div>
+              <div style={{fontWeight:800,fontSize:15}}>{tutorNombre?"Portal Familiar":"Mi Portal de Golf"}</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.65)"}}>
+                {tutorNombre?<span>👨‍👩‍👦 {tutorNombre} · {alumno?.nombre}</span>:alumno?.nombre}
+              </div>
             </div>
           </div>
           <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
@@ -4210,7 +4236,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout}){
       {/* INICIO */}
       {tab==="inicio"&&<div>
         <div style={{marginBottom:16}}>
-          <h2 style={{margin:"0 0 4px",color:G.fairway}}>Hola, {alumno?.nombre?.split(" ")[0]} 👋</h2>
+          <h2 style={{margin:"0 0 4px",color:G.fairway}}>Hola, {tutorNombre||alumno?.nombre?.split(" ")[0]} 👋</h2>
           <div style={{color:G.soft,fontSize:14}}>Nivel: {alumno?.nivel}</div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:20}}>
@@ -9152,10 +9178,9 @@ export default function App(){
   }
   function onLogin(s){setSession(s);}
   function onLogout(){
-    // Solo borrar PIN guardado si el usuario cierra sesión manualmente
-    if(localStorage.getItem("gcr_recordar")!=="1"){
-      localStorage.removeItem("gcr_pin_saved");
-    }
+    // Siempre limpiar PIN guardado al cerrar sesión manualmente
+    // para evitar que el auto-login entre de nuevo inmediatamente
+    localStorage.removeItem("gcr_pin_saved");
     setSession(null);
   }
 
@@ -9175,7 +9200,8 @@ export default function App(){
 
 
   if(!session) return <LoginScreen data={data} onLogin={onLogin}/>;
-  if(session.role==="alumno") return <PortalAlumno data={data} setData={setData} alumnoId={session.alumnoId} onLogout={onLogout}/>;
+  if(session.role==="alumno"||session.role==="tutor")
+    return <PortalAlumno data={data} setData={setData} alumnoId={session.alumnoId} onLogout={onLogout} tutorNombre={session.tutorNombre||null}/>;
   return <AdminShell data={data} setData={setData} onLogout={onLogout}/>;
 }
 
