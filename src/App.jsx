@@ -2792,12 +2792,53 @@ function ModClases({data,setData}){
   const proximas=sorted.filter(c=>c.fecha>=hoy);
   const pasadas=sorted.filter(c=>c.fecha<hoy).reverse();
 
-  function openNew(){setForm({alumnoId:alumnos[0]?.id||"",fecha:hoy,hora:"10:00",duracion:"60",tipo:"Individual",zona:"Campo de prácticas",contenido:"",asistio:false});setModal("new");}
+  function openNew(){setForm({alumnoId:alumnos[0]?.id||"",fecha:hoy,hora:"10:00",duracion:"60",tipo:"Individual",contenidoEspecifico:"swing_completo",zona:"Campo de prácticas",contenido:"",precio:"",ivaPct:21,retencionPct:0,asistio:false,registradoContablemente:false});setModal("new");}
   function save(){
     if(!form.alumnoId||!form.fecha) return;
-    const claseGuardada = modal==="new" ? {...form,id:uid()} : {...form};
+    const claseId = modal==="new" ? uid() : modal;
+    const claseGuardada = {...form, id:claseId};
     const updated=modal==="new"?[...clases,claseGuardada]:clases.map(c=>c.id===modal?claseGuardada:c);
-    setData({...data,clases:updated});
+
+    // ── Gestión contable automática ──────────────────────────────────
+    let nuevosIngresos = data.ingresos||[];
+    const precio = Number(form.precio||0);
+
+    if(form.asistio && precio > 0) {
+      // Buscar si ya existe ingreso para esta clase
+      const yaRegistrado = (data.ingresos||[]).find(i=>i.claseId===claseId);
+      if(!yaRegistrado){
+        const alumno = alumnos.find(a=>a.id===form.alumnoId);
+        const contenidoLabel = CONTENIDOS_CLASE.find(c=>c.id===form.contenidoEspecifico)?.label || form.contenidoEspecifico || form.tipo;
+        const ivaP = Number(form.ivaPct||21);
+        const retP = Number(form.retencionPct||0);
+        const ivaImp = +(precio * ivaP/100).toFixed(2);
+        const retImp = +(precio * retP/100).toFixed(2);
+        const total  = +(precio + ivaImp - retImp).toFixed(2);
+        const nuevoIngreso = {
+          id: uid(),
+          claseId,
+          fecha: form.fecha,
+          categoria: "Clase individual",
+          concepto: contenidoLabel + (alumno ? " — " + alumno.nombre : ""),
+          alumnoId: form.alumnoId,
+          importeBase: precio,
+          ivaPct: ivaP,
+          ivaImporte: ivaImp,
+          retencionPct: retP,
+          retencionImporte: retImp,
+          importeTotal: total,
+          metodo: form.metodoPago||"Efectivo",
+          generadoAutomatico: true,
+        };
+        nuevosIngresos = [...nuevosIngresos, nuevoIngreso];
+      }
+    }
+    // Si se desmarca asistencia, eliminar el ingreso automático vinculado
+    if(!form.asistio){
+      nuevosIngresos = nuevosIngresos.filter(i=>i.claseId!==claseId||!i.generadoAutomatico);
+    }
+
+    setData({...data, clases:updated, ingresos:nuevosIngresos});
     sincronizarClaseFirestore(claseGuardada, alumnos);
     if(modal==="new"){
       const alumno = alumnos.find(a=>a.id===form.alumnoId);
@@ -2806,7 +2847,9 @@ function ModClases({data,setData}){
     setModal(null);
   }
   function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
-  const CC=({c})=><Card style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:8}}>
+  const CC=({c})=>{
+    const cLabel=CONTENIDOS_CLASE.find(x=>x.id===c.contenidoEspecifico)?.label||"";
+    return <Card style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:8}}>
     <div style={{background:c.asistio?G.mist:"#fff3cd",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
       <div style={{fontSize:11,color:G.soft}}>{c.fecha.slice(5)}</div>
       <div style={{fontSize:15,fontWeight:800,color:G.fairway}}>{c.hora}</div>
@@ -2814,16 +2857,45 @@ function ModClases({data,setData}){
     <div style={{flex:1}}>
       <div style={{fontWeight:700,color:G.ink}}>{alumnoNombre(c.alumnoId)}</div>
       <div style={{fontSize:12,color:G.soft}}>{c.tipo} · {c.zona} · {c.duracion}min</div>
-      {c.contenido&&<div style={{fontSize:12,color:"#555",marginTop:3}}>{c.contenido}</div>}
+      {cLabel&&<div style={{fontSize:12,color:G.fairway,marginTop:2,fontWeight:600}}>{cLabel}</div>}
+      {c.contenido&&<div style={{fontSize:12,color:"#555",marginTop:2}}>{c.contenido}</div>}
+      {Number(c.precio||0)>0&&<div style={{fontSize:11,marginTop:3}}>
+        <span style={{background:c.asistio?"#e8f4e8":"#fff3cd",color:c.asistio?G.grass:"#856404",borderRadius:4,padding:"1px 6px",fontWeight:600}}>
+          {c.asistio?"✅ Registrado contablemente":"⏳ "+Number(c.precio).toFixed(2)+"€ pendiente"}
+        </span>
+      </div>}
     </div>
     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
       <Badge color={c.asistio?"green":"gold"}>{c.asistio?"Asistió":"Pendiente"}</Badge>
       <Btn small color="secondary" onClick={()=>{setForm({...c});setModal(c.id);}}>✎</Btn>
       <Btn small color="sky" onClick={()=>generarPDFClase(c, alumnoNombre(c.alumnoId))}>PDF</Btn>
-      <Btn small color={c.asistio?"secondary":"sky"} onClick={()=>{const updated={...c,asistio:!c.asistio};setData({...data,clases:clases.map(x=>x.id===c.id?updated:x)});sincronizarClaseFirestore(updated,alumnos);}}>{c.asistio?"↩":"✔"}</Btn>
+      <Btn small color={c.asistio?"secondary":"sky"} onClick={()=>{
+        const updated={...c,asistio:!c.asistio};
+        const clasesMod=clases.map(x=>x.id===c.id?updated:x);
+        let ingMod=data.ingresos||[];
+        const precio=Number(c.precio||0);
+        if(updated.asistio && precio>0){
+          const yaReg=ingMod.find(i=>i.claseId===c.id&&i.generadoAutomatico);
+          if(!yaReg){
+            const al=alumnos.find(a=>a.id===c.alumnoId);
+            const cLabel=CONTENIDOS_CLASE.find(x=>x.id===c.contenidoEspecifico)?.label||c.tipo||"Clase";
+            const ivaP=Number(c.ivaPct||21),retP=Number(c.retencionPct||0);
+            const ivaImp=+(precio*ivaP/100).toFixed(2),retImp=+(precio*retP/100).toFixed(2);
+            ingMod=[...ingMod,{id:uid(),claseId:c.id,fecha:c.fecha,categoria:"Clase individual",
+              concepto:cLabel+(al?" — "+al.nombre:""),alumnoId:c.alumnoId,
+              importeBase:precio,ivaPct:ivaP,ivaImporte:ivaImp,retencionPct:retP,
+              retencionImporte:retImp,importeTotal:+(precio+ivaImp-retImp).toFixed(2),
+              metodo:c.metodoPago||"Efectivo",generadoAutomatico:true}];
+          }
+        }
+        if(!updated.asistio) ingMod=ingMod.filter(i=>!(i.claseId===c.id&&i.generadoAutomatico));
+        setData({...data,clases:clasesMod,ingresos:ingMod});
+        sincronizarClaseFirestore(updated,alumnos);
+      }}>{c.asistio?"↩":"✔"}</Btn>
       <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?")){setData({...data,clases:clases.filter(x=>x.id!==c.id)});eliminarClaseFirestore(c.id);}}}> ✕</Btn>
     </div>
   </Card>;
+  };
 
   return <div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:20}}>
@@ -2846,11 +2918,52 @@ function ModClases({data,setData}){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Duración"><Sel value={form.duracion||"60"} onChange={v=>setForm({...form,duracion:v})} options={["30","45","60","90","120"].map(v=>({value:v,label:v+"min"}))}/></Field>
-        <Field label="Tipo"><Sel value={form.tipo||"Individual"} onChange={v=>setForm({...form,tipo:v})} options={TIPOS_CLASE.map(t=>({value:t.id,label:t.label}))}/></Field>
+        <Field label="Modalidad"><Sel value={form.tipo||"Individual"} onChange={v=>setForm({...form,tipo:v})} options={TIPOS_CLASE.map(t=>({value:t.id,label:t.label}))}/></Field>
       </div>
+
+      {/* ── Contenido específico ── */}
+      <Field label="Contenido de la clase">
+        <Sel value={form.contenidoEspecifico||"swing_completo"} onChange={v=>setForm({...form,contenidoEspecifico:v})}
+          options={CONTENIDOS_CLASE.map(c=>({value:c.id,label:c.label+" ("+c.categoria+")"}))}/>
+      </Field>
+      <Field label="Notas / Objetivo"><Textarea value={form.contenido||""} onChange={v=>setForm({...form,contenido:v})} placeholder="Detalles, ejercicios, observaciones…"/></Field>
       <Field label="Zona"><Sel value={form.zona||"Campo de prácticas"} onChange={v=>setForm({...form,zona:v})} options={ZONAS.map(v=>({value:v,label:v}))}/></Field>
-      <Field label="Contenido"><Textarea value={form.contenido||""} onChange={v=>setForm({...form,contenido:v})} placeholder="Objetivo, ejercicios…"/></Field>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+
+      {/* ── Precio y contabilidad ── */}
+      <div style={{background:"#f0f7f0",borderRadius:10,padding:"12px 14px",marginTop:4}}>
+        <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:10}}>💶 Precio y facturación</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+          <Field label="Precio base (€)">
+            <Input type="number" value={form.precio||""} onChange={v=>setForm({...form,precio:v})} placeholder="0.00"/>
+          </Field>
+          <Field label="IVA (%)">
+            <Sel value={String(form.ivaPct??21)} onChange={v=>setForm({...form,ivaPct:Number(v)})}
+              options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
+          </Field>
+          <Field label="Retención IRPF (%)">
+            <Sel value={String(form.retencionPct??0)} onChange={v=>setForm({...form,retencionPct:Number(v)})}
+              options={["0","7","15","19"].map(v=>({value:v,label:v+"%"}))}/>
+          </Field>
+        </div>
+        <Field label="Método de cobro">
+          <Sel value={form.metodoPago||"Efectivo"} onChange={v=>setForm({...form,metodoPago:v})}
+            options={["Efectivo","Tarjeta","Transferencia","Bizum","Bono"].map(v=>({value:v,label:v}))}/>
+        </Field>
+        {Number(form.precio||0)>0&&<div style={{fontSize:12,color:G.soft,marginTop:6,background:"#fff",borderRadius:6,padding:"6px 10px"}}>
+          Base: <b>{Number(form.precio||0).toFixed(2)}€</b> + IVA {form.ivaPct??21}%: <b style={{color:G.grass}}>{(Number(form.precio||0)*(Number(form.ivaPct??21)/100)).toFixed(2)}€</b>
+          {Number(form.retencionPct||0)>0&&<> − Ret. {form.retencionPct}%: <b style={{color:G.flag}}>{(Number(form.precio||0)*(Number(form.retencionPct||0)/100)).toFixed(2)}€</b></>}
+          {" "} = <b style={{color:G.fairway}}>{(Number(form.precio||0)+Number(form.precio||0)*(Number(form.ivaPct??21)/100)-Number(form.precio||0)*(Number(form.retencionPct||0)/100)).toFixed(2)}€</b>
+          <span style={{marginLeft:8,fontSize:11,color:G.soft}}>Se registrará en contabilidad al marcar asistencia ✔</span>
+        </div>}
+        {Number(form.precio||0)===0&&<div style={{fontSize:11,color:G.soft,marginTop:4}}>Sin precio → no se genera ingreso contable.</div>}
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}>
+        <input type="checkbox" id="asistioChk" checked={!!form.asistio} onChange={e=>setForm({...form,asistio:e.target.checked})} style={{width:16,height:16}}/>
+        <label htmlFor="asistioChk" style={{fontSize:13,color:G.ink,cursor:"pointer"}}>Marcar como impartida (asistió)</label>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
         <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={save}>Guardar</Btn>
       </div>
     </Modal>}
@@ -7067,13 +7180,33 @@ function ModEjerciciosAlumno({ data, setData, alumnoId }) {
 // ═══════════════════════════════════════════════════════════════════
 
 const TIPOS_CLASE = [
-  { id:"tecnica",    label:"🏌️ Técnica",       color:"#1a5c2a", bg:"#e8f5eb" },
-  { id:"putting",    label:"🎯 Putting",         color:"#3a7abf", bg:"#e8f0fb" },
-  { id:"juego",      label:"⛳ Juego en campo",  color:"#2e7d3c", bg:"#e8f5eb" },
-  { id:"fisico",     label:"💪 Físico/Mental",   color:"#7b5ea7", bg:"#f0ebfa" },
-  { id:"competicion",label:"🏆 Competición",     color:"#c0392b", bg:"#fdecea" },
-  { id:"teoria",     label:"📚 Teoría/Reglas",   color:"#c8a84b", bg:"#fdf6e3" },
-  { id:"evaluacion", label:"📊 Evaluación",      color:"#555",    bg:"#f0f0f0" },
+  { id:"Individual",  label:"👤 Individual",      color:"#1a5c2a", bg:"#e8f5eb" },
+  { id:"Grupo",       label:"👥 Grupo",            color:"#3a7abf", bg:"#e8f0fb" },
+  { id:"Empresa",     label:"🏢 Empresa/Evento",   color:"#c0392b", bg:"#fdecea" },
+  { id:"Junior",      label:"🧒 Junior/Infantil",  color:"#c8a84b", bg:"#fdf6e3" },
+  { id:"Online",      label:"💻 Online",           color:"#555",    bg:"#f0f0f0" },
+];
+
+// Contenidos específicos de clase
+const CONTENIDOS_CLASE = [
+  { id:"swing_completo",   label:"🏌️ Swing completo",        categoria:"Técnica" },
+  { id:"swing_corto",      label:"✂️ Juego corto (chipping)", categoria:"Técnica" },
+  { id:"putt",             label:"🎯 Trabajo de putt",        categoria:"Técnica" },
+  { id:"bunker",           label:"🏖️ Salidas de bunker",      categoria:"Técnica" },
+  { id:"approach",         label:"🎯 Approach / Approach",    categoria:"Técnica" },
+  { id:"driving",          label:"🚀 Driver / Tee shots",     categoria:"Técnica" },
+  { id:"hierros",          label:"⛳ Hierros medios y largos", categoria:"Técnica" },
+  { id:"estrategia",       label:"🗺️ Estrategia de juego",    categoria:"Táctica" },
+  { id:"gestion_campo",    label:"🧠 Gestión del campo",      categoria:"Táctica" },
+  { id:"lectura_greens",   label:"📐 Lectura de greens",      categoria:"Táctica" },
+  { id:"juego_campo",      label:"⛳ Juego en campo real",     categoria:"Campo" },
+  { id:"competicion",      label:"🏆 Preparación competición",categoria:"Campo" },
+  { id:"mental",           label:"🧘 Juego mental / Concentración", categoria:"Mental" },
+  { id:"fisico",           label:"💪 Preparación física golf",categoria:"Mental" },
+  { id:"reglas",           label:"📚 Reglas de golf",         categoria:"Teoría" },
+  { id:"etiqueta",         label:"🎩 Etiqueta y protocolo",   categoria:"Teoría" },
+  { id:"evaluacion",       label:"📊 Evaluación y seguimiento",categoria:"Evaluación"},
+  { id:"otro",             label:"📝 Otro / Libre",           categoria:"Otro" },
 ];
 
 const TRIMESTRES_CURSO = [
