@@ -494,6 +494,19 @@ function makeDefaultData() {
     programas: [],
     informes: [],
     labels: {},
+    superAdminPin: "0000",
+    profesores: [],
+    permisosPortal: {
+      inicio: true,
+      calendario: true,
+      reservas: true,
+      analisis: true,
+      stats: true,
+      informes: true,
+      ejercicios: true,
+      mensajes: true,
+      miperfil: true,
+    },
     ingresos: [],
     gastos: [],
     categoriasIngreso: [
@@ -1282,12 +1295,17 @@ function LoginScreen({data,onLogin}){
     const recordar = localStorage.getItem("gcr_recordar")==="1";
     const pinGuardado = localStorage.getItem("gcr_pin_saved");
     if(recordar && pinGuardado && data){
-      // Comprobar admin
-      if(pinGuardado===(data.adminPin||DEFAULT_ADMIN_PIN)){
-        setAutoLoginHecho(true);
-        onLogin({role:"admin"});
-        return;
+      // Comprobar super-admin
+      if(pinGuardado===(data.superAdminPin||"0000")){
+        setAutoLoginHecho(true); onLogin({role:"superadmin"}); return;
       }
+      // Comprobar admin principal
+      if(pinGuardado===(data.adminPin||DEFAULT_ADMIN_PIN)){
+        setAutoLoginHecho(true); onLogin({role:"admin",profesorId:null}); return;
+      }
+      // Comprobar profesores adicionales
+      const profe=(data.profesores||[]).find(pr=>pr.activo&&pr.pin===pinGuardado);
+      if(profe){ setAutoLoginHecho(true); onLogin({role:"profesor",profesorId:profe.id,profesorNombre:profe.nombre}); return; }
       // Comprobar alumnos activos
       const alumno=(data.alumnos||[]).find(a=>a.activo&&a.pin===pinGuardado);
       if(alumno){ setAutoLoginHecho(true); onLogin({role:"alumno",alumnoId:alumno.id}); return; }
@@ -1308,13 +1326,29 @@ function LoginScreen({data,onLogin}){
   function intentarAcceso(p){
     if(!p||p.length===0) return;
     setError("");
-    // Comprobar clave de administrador
-    if(p===(data.adminPin||DEFAULT_ADMIN_PIN)){
+    // Comprobar super-admin (acceso total)
+    if(p===(data.superAdminPin||"0000")){
       setIntentando(true);
-      // Guardar para recordar acceso
       const recordar=localStorage.getItem("gcr_recordar")==="1";
       if(recordar) localStorage.setItem("gcr_pin_saved",p);
-      setTimeout(()=>{ onLogin({role:"admin"}); setIntentando(false); },300);
+      setTimeout(()=>{ onLogin({role:"superadmin"}); setIntentando(false); },300);
+      return;
+    }
+    // Comprobar clave de administrador (profesor principal)
+    if(p===(data.adminPin||DEFAULT_ADMIN_PIN)){
+      setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
+      setTimeout(()=>{ onLogin({role:"admin",profesorId:null}); setIntentando(false); },300);
+      return;
+    }
+    // Comprobar profesores adicionales
+    const profesor=(data.profesores||[]).find(pr=>pr.activo&&pr.pin===p);
+    if(profesor){
+      setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
+      setTimeout(()=>{ onLogin({role:"profesor",profesorId:profesor.id,profesorNombre:profesor.nombre}); setIntentando(false); },300);
       return;
     }
     // Comprobar alumnos activos
@@ -2262,7 +2296,7 @@ function EstructuraInfantil({data, setData, alumnos}){
 }
 
 
-function ModAlumnos({data,setData}){
+function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
   const [modal,         setModal]         = useState(null);
   const [form,          setForm]          = useState({});
   const [tabTipo,       setTabTipo]       = useState("infantil");
@@ -2555,6 +2589,27 @@ function ModAlumnos({data,setData}){
         <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} rows={2} placeholder="Observaciones generales..."/>
       </Field>
 
+      {/* Asignación de profesores */}
+      {(data.profesores||[]).filter(p=>p.activo).length>0&&<Field label="Profesores asignados">
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:4}}>
+          {(data.profesores||[]).filter(p=>p.activo).map(p=>{
+            const asignado=(form.profesores||[]).includes(p.id);
+            return <div key={p.id} onClick={()=>{
+                const arr=form.profesores||[];
+                setForm(f=>({...f,profesores:asignado?arr.filter(x=>x!==p.id):[...arr,p.id]}));
+              }}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:20,
+                cursor:"pointer",border:`2px solid ${asignado?p.color:"#ddd"}`,
+                background:asignado?p.color+"22":"#f9f9f9",fontSize:13,fontWeight:600,
+                color:asignado?p.color:G.soft}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:asignado?p.color:"#ddd"}}/>
+              {p.nombre}
+            </div>;
+          })}
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:4}}>Selecciona los profesores que trabajan con este alumno</div>
+      </Field>}
+
       {/* Salud */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
         paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🏥 Información médica</div>
@@ -2802,7 +2857,7 @@ function ModAlumnos({data,setData}){
 }
 
 
-function ModClases({data,setData}){
+function ModClases({data,setData,profesorId=null,modoAdmin=false}){
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
   const clases=data.clases||[];
@@ -3983,7 +4038,12 @@ function ModAjustes({data,setData,onLogout}){
   // Labels editor state — local edits before saving
   const [labelsEdit,setLabelsEdit]=useState(data.labels||{});
 
-  function savePin(){setData({...data,adminPin:pin});setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  const [pinAdmin,setPinAdmin]=useState(data.adminPin||DEFAULT_ADMIN_PIN);
+  const [pinSuper,setPinSuper]=useState(data.superAdminPin||"0000");
+  const [savedAdmin,setSavedAdmin]=useState(false);
+  const [savedSuper,setSavedSuper]=useState(false);
+  function savePin(){setData({...data,adminPin:pinAdmin});setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  function saveSuperPin(){setData({...data,superAdminPin:pinSuper});setSavedSuper(true);setTimeout(()=>setSavedSuper(false),2000);}
 
   function exportarDatos(){
     const json=JSON.stringify(data,null,2);
@@ -4053,7 +4113,7 @@ function ModAjustes({data,setData,onLogout}){
   const stats=[[(data.alumnos||[]).length,"Alumnos","👤"],[(data.clases||[]).length,"Clases","📅"],[(data.analisis||[]).length,"Análisis","🎬"],[(data.pagos||[]).length,"Pagos","💶"]];
   const totalModified=Object.keys(labelsEdit).filter(k=>labelsEdit[k]!==DEFAULT_LABELS[k]&&labelsEdit[k]!=="").length;
 
-  const AJ_TABS=[{id:"pin",label:"🔐 Acceso"},{id:"campos",label:"✏️ Nombres de campos"},{id:"datos",label:"🗑 Datos"},{id:"backup",label:"💾 Copia de seguridad"}];
+  const AJ_TABS=[{id:"pin",label:"🔐 Acceso"},{id:"portal",label:"👁️ Portal alumno"},{id:"campos",label:"✏️ Nombres de campos"},{id:"datos",label:"🗑 Datos"},{id:"backup",label:"💾 Copia de seguridad"}];
 
   return <div style={{maxWidth:680}}>
     {/* Sub-tabs de ajustes */}
@@ -4069,11 +4129,28 @@ function ModAjustes({data,setData,onLogout}){
       <Card style={{marginBottom:16}}>
         <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 Clave del Profesor</h3>
         <Field label="Clave nueva (mínimo 6 caracteres, letras/números/símbolos)">
-          <Input type="password" value={pin} onChange={v=>setPin(v.slice(0,20))} placeholder="Ej: Golf2026!" maxLength={20}/>
+          <Input type="password" value={pinAdmin} onChange={v=>setPinAdmin(v.slice(0,20))} placeholder="Ej: Golf2026!" maxLength={20}/>
         </Field>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <Btn onClick={savePin} disabled={pin.length<6}>Guardar clave</Btn>
+          <Btn onClick={savePin} disabled={pinAdmin.length<6}>Guardar clave</Btn>
           {saved&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
+        </div>
+      </Card>
+
+      <Card style={{marginBottom:16,borderLeft:"4px solid #2c3e50"}}>
+        <h3 style={{margin:"0 0 8px",color:"#2c3e50"}}>👑 PIN de Super-Administrador</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
+          El super-admin tiene acceso completo a toda la academia, incluyendo gestión de profesores y vista global de datos.
+        </p>
+        <Field label="PIN super-admin (4 dígitos)">
+          <Input value={pinSuper} onChange={v=>setPinSuper(v.replace(/\D/g,"").slice(0,4))} placeholder="0000"/>
+        </Field>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <Btn onClick={saveSuperPin} disabled={pinSuper.length<4} style={{background:"#2c3e50"}}>Guardar PIN</Btn>
+          {savedSuper&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:8,background:"#f5f5f5",borderRadius:6,padding:"6px 10px"}}>
+          💡 PIN por defecto: <b>0000</b>. Cámbialo por seguridad.
         </div>
       </Card>
 
@@ -4083,6 +4160,58 @@ function ModAjustes({data,setData,onLogout}){
         {(data.alumnos||[]).filter(a=>a.activo).map(a=>(
           <PinAlumnoRow key={a.id} alumno={a} data={data} setData={setData}/>
         ))}
+      </Card>
+    </div>}
+
+    {/* ── PERMISOS PORTAL ALUMNO ── */}
+    {tabAj==="portal"&&<div>
+      <Card style={{marginBottom:16}}>
+        <h3 style={{margin:"0 0 6px",color:G.fairway}}>👁️ Visibilidad del portal del alumno</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 16px",lineHeight:1.5}}>
+          Elige qué pestañas pueden ver tus alumnos cuando acceden a su portal.
+          Los cambios se aplican a <b>todos los alumnos</b> inmediatamente.
+        </p>
+        <div style={{display:"grid",gap:10}}>
+          {[
+            {id:"inicio",     label:"🏠 Inicio",           desc:"Pantalla de bienvenida con resumen de próximas clases"},
+            {id:"calendario", label:"🗓️ Calendario",        desc:"Calendario de la academia y descarga de PDF"},
+            {id:"reservas",   label:"📅 Clases",            desc:"Historial de clases y reservas del alumno"},
+            {id:"analisis",   label:"🎬 Vídeo Análisis",    desc:"Vídeos de análisis de swing compartidos por el profesor"},
+            {id:"stats",      label:"📊 Estadísticas",      desc:"Rondas, hándicap y evolución del juego"},
+            {id:"informes",   label:"📋 Informes",          desc:"Informes de seguimiento generados por el profesor"},
+            {id:"ejercicios", label:"🏋️ Ejercicios",        desc:"Ejercicios y tests asignados por el profesor"},
+            {id:"mensajes",   label:"✉️ Mensajes",          desc:"Sistema de mensajería con el profesor"},
+            {id:"miperfil",   label:"🔐 Mi PIN",            desc:"Cambio de PIN de acceso del alumno"},
+          ].map(tab=>{
+            const permisos = data.permisosPortal || {};
+            const visible = permisos[tab.id] !== false; // true por defecto
+            return <div key={tab.id} onClick={()=>{
+                const nuevos = {...(data.permisosPortal||{}), [tab.id]: !visible};
+                setData({...data, permisosPortal: nuevos});
+              }}
+              style={{display:"flex",alignItems:"center",gap:14,
+                background: visible ? "#f0f7f0" : "#f9f9f9",
+                border: `2px solid ${visible ? G.grass : "#ddd"}`,
+                borderRadius:12, padding:"12px 16px", cursor:"pointer",
+                transition:"all .15s"}}>
+              <div style={{width:24,height:24,borderRadius:6,flexShrink:0,
+                background: visible ? G.grass : "#ddd",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{color:"#fff",fontSize:14,fontWeight:800}}>{visible ? "✓" : "✗"}</span>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color: visible ? G.ink : G.soft}}>{tab.label}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>{tab.desc}</div>
+              </div>
+              <div style={{fontSize:12,fontWeight:700,color: visible ? G.grass : G.soft}}>
+                {visible ? "VISIBLE" : "OCULTO"}
+              </div>
+            </div>;
+          })}
+        </div>
+        <div style={{marginTop:16,background:"#fff3cd",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#856404"}}>
+          ⚠️ <b>Inicio</b> y <b>Mi PIN</b> se recomiendan siempre visibles. El alumno necesita al menos una pestaña activa para navegar.
+        </div>
       </Card>
     </div>}
 
@@ -4350,7 +4479,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
   const misInformes = (data.informes||[]).filter(r=>r.alumnoId===alumnoId&&r.publicado).sort((a,b)=>(b.fechaCreacion||"").localeCompare(a.fechaCreacion||""));
 
-  const ATABS=[
+  const ATABS_ALL=[
     {id:"inicio",label:"Inicio",icon:"🏠"},
     {id:"calendario",label:"Calendario",icon:"🗓️"},
     {id:"reservas",label:"Clases",icon:"📅"},
@@ -4361,6 +4490,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
     {id:"mensajes",label:"Mensajes",icon:"✉️"},
     {id:"miperfil",label:"Mi PIN",icon:"🔐"},
   ];
+  const permisos = data.permisosPortal || {};
+  const ATABS = ATABS_ALL.filter(t => permisos[t.id] !== false);
+  // Si la pestaña activa queda oculta, ir a la primera visible
+  useEffect(()=>{
+    if(ATABS.length>0 && !ATABS.find(t=>t.id===tab)){
+      setTab(ATABS[0].id);
+    }
+  },[permisos]);
   const ATABS_DUMMY=[{id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
   ];
 
@@ -9234,8 +9371,29 @@ function ModRegistrosPendientes({data, setData, notifs}){
   </div>;
 }
 
-function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount}){
+function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
   const [tab,setTab]=useState("calendario");
+
+  // Filtrar datos según el profesor activo
+  // null = profesor principal (ve todo lo sin asignar + sus alumnos)
+  // id = profesor adicional (solo ve sus alumnos)
+  const dataProffesor = profesorId ? {
+    ...data,
+    alumnos: (data.alumnos||[]).filter(a=>(a.profesores||[]).includes(profesorId)||a.profesorId===profesorId),
+    clases:  (data.clases||[]).filter(c=>c.profesorId===profesorId),
+    analisis:(data.analisis||[]).filter(a=>a.profesorId===profesorId),
+    ingresos:(data.ingresos||[]).filter(i=>i.profesorId===profesorId),
+    gastos:  (data.gastos||[]).filter(g=>g.profesorId===profesorId),
+  } : data;
+
+  // setData wrapper que inyecta profesorId en nuevos registros
+  function setDataProfesor(newData){
+    if(!profesorId){ setData(newData); return; }
+    setData(newData);
+  }
+
+  const nombrePanel = profesorNombre ? profesorNombre+" · Panel Profesor" : "Panel del Profesor";
+
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand,color:G.ink}}>
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:920,margin:"0 auto"}}>
@@ -9246,7 +9404,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount}){
             <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:32,objectFit:"contain",marginLeft:4}}/>
             <div style={{marginLeft:6}}>
               <div style={{fontWeight:800,fontSize:16}}>José Caballero Golf Academy</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>Panel del Profesor</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>{nombrePanel}</div>
             </div>
           </div>
           <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
@@ -9281,8 +9439,8 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount}){
       <h2 style={{margin:"0 0 18px",color:G.fairway,fontSize:19,fontWeight:800}}>
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
-      {tab==="calendario"&&<ModCalendario data={data} setData={setData}/>}
-      {tab==="alumnos"&&<ModAlumnos data={data} setData={setData}/>}
+      {tab==="calendario"&&<ModCalendario data={dataProffesor} setData={setDataProfesor}/>}
+      {tab==="alumnos"&&<ModAlumnos data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
       {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
       {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
       {tab==="clases"&&<ModClases data={data} setData={setData}/>}
@@ -9293,6 +9451,254 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount}){
       {tab==="informes"&&<ModInformes data={data} setData={setData}/>}
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
+      {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MOD PROFESORES (gestión de profesores desde el superadmin)
+// ═══════════════════════════════════════════════════════════════════
+function ModProfesores({data,setData}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const profesores = data.profesores||[];
+
+  function openNew(){
+    setForm({nombre:"",pin:"",email:"",color:"#1a5c2a",activo:true,especialidad:""});
+    setModal("new");
+  }
+  function openEdit(p){setForm({...p});setModal(p.id);}
+  function save(){
+    if(!form.nombre||!form.pin) return;
+    const updated = modal==="new"
+      ? [...profesores,{...form,id:uid(),fechaAlta:today()}]
+      : profesores.map(p=>p.id===modal?{...form}:p);
+    setData({...data,profesores:updated});
+    setModal(null);
+  }
+  function toggle(id){
+    setData({...data,profesores:profesores.map(p=>p.id===id?{...p,activo:!p.activo}:p)});
+  }
+  function eliminar(id){
+    if(!confirm("¿Eliminar este profesor? Sus alumnos no se borran.")) return;
+    setData({...data,profesores:profesores.filter(p=>p.id!==id)});
+  }
+
+  // Stats por profesor
+  function statsProfesor(pid){
+    const alumnos=(data.alumnos||[]).filter(a=>(a.profesores||[]).includes(pid)||a.profesorId===pid);
+    const clases=(data.clases||[]).filter(c=>c.profesorId===pid);
+    return {alumnos:alumnos.length,clases:clases.length};
+  }
+
+  const COLORES=["#1a5c2a","#3a7abf","#c0392b","#8e44ad","#d35400","#16a085","#2c3e50","#c8a84b"];
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div>
+        <h3 style={{margin:0,color:G.fairway}}>👨‍🏫 Profesores de la academia</h3>
+        <div style={{fontSize:13,color:G.soft,marginTop:2}}>{profesores.length} profesores registrados</div>
+      </div>
+      <Btn onClick={openNew}>+ Añadir profesor</Btn>
+    </div>
+
+    {/* Profesor principal (admin) */}
+    <Card style={{marginBottom:12,borderLeft:"4px solid "+G.fairway,background:"#f0f7f0"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{width:44,height:44,borderRadius:"50%",background:G.fairway,
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:"#fff",flexShrink:0}}>
+          👑
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,color:G.ink,fontSize:15}}>Profesor Principal</div>
+          <div style={{fontSize:12,color:G.soft}}>PIN: {data.adminPin||"1234"} · Acceso completo</div>
+          <div style={{fontSize:11,color:G.fairway,marginTop:2}}>Gestiona todos los alumnos sin asignar + sus propios alumnos</div>
+        </div>
+        <div style={{textAlign:"right",fontSize:12}}>
+          <div style={{fontWeight:700,color:G.fairway}}>{(data.alumnos||[]).filter(a=>!a.profesorId&&!(a.profesores||[]).length).length} alumnos</div>
+          <div style={{color:G.soft}}>{(data.clases||[]).filter(c=>!c.profesorId).length} clases</div>
+        </div>
+      </div>
+    </Card>
+
+    {profesores.length===0&&<div style={{textAlign:"center",padding:32,color:G.soft,fontSize:14}}>
+      No hay profesores adicionales. Añade uno con el botón de arriba.
+    </div>}
+
+    {profesores.map(p=>{
+      const st=statsProfesor(p.id);
+      return <Card key={p.id} style={{marginBottom:10,borderLeft:`4px solid ${p.color||G.fairway}`,opacity:p.activo?1:0.6}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:44,height:44,borderRadius:"50%",background:p.color||G.fairway,
+            display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:"#fff",flexShrink:0}}>
+            👨‍🏫
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,color:G.ink,fontSize:15,display:"flex",alignItems:"center",gap:8}}>
+              {p.nombre}
+              {!p.activo&&<span style={{background:"#eee",color:G.soft,fontSize:11,padding:"1px 7px",borderRadius:8}}>Inactivo</span>}
+            </div>
+            <div style={{fontSize:12,color:G.soft}}>
+              PIN: <b>{p.pin}</b>
+              {p.email&&<> · {p.email}</>}
+              {p.especialidad&&<> · {p.especialidad}</>}
+            </div>
+          </div>
+          <div style={{textAlign:"right",fontSize:12,marginRight:8}}>
+            <div style={{fontWeight:700,color:p.color||G.fairway}}>{st.alumnos} alumnos</div>
+            <div style={{color:G.soft}}>{st.clases} clases</div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <Btn small color="secondary" onClick={()=>openEdit(p)}>✎</Btn>
+            <Btn small color={p.activo?"secondary":"sky"} onClick={()=>toggle(p.id)}>
+              {p.activo?"⏸":"▶"}
+            </Btn>
+            <Btn small color="danger" onClick={()=>eliminar(p.id)}>✕</Btn>
+          </div>
+        </div>
+      </Card>;
+    })}
+
+    {/* Resumen global */}
+    {profesores.length>0&&<Card style={{marginTop:16,background:"#f9f9f9"}}>
+      <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>📊 Resumen global de la academia</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
+        {[
+          [(data.alumnos||[]).length,"Alumnos totales","👤"],
+          [(data.clases||[]).length,"Clases totales","📅"],
+          [profesores.filter(p=>p.activo).length,"Profesores activos","👨‍🏫"],
+          [(data.ingresos||[]).reduce((s,i)=>s+Number(i.importeBase||0),0).toFixed(0)+"€","Ingresos totales","💶"],
+        ].map(([v,l,ico])=><div key={l} style={{textAlign:"center",background:"#fff",borderRadius:10,padding:"10px 6px"}}>
+          <div style={{fontSize:20}}>{ico}</div>
+          <div style={{fontWeight:800,fontSize:16,color:G.fairway}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft}}>{l}</div>
+        </div>)}
+      </div>
+    </Card>}
+
+    {modal&&<Modal title={modal==="new"?"Nuevo profesor":"Editar profesor"} onClose={()=>setModal(null)}>
+      <Field label="Nombre completo *">
+        <Input value={form.nombre||""} onChange={v=>setForm({...form,nombre:v})} placeholder="Nombre del profesor"/>
+      </Field>
+      <Field label="Especialidad / Rol">
+        <Input value={form.especialidad||""} onChange={v=>setForm({...form,especialidad:v})} placeholder="Ej: Profesor PGA, Monitor júnior..."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="PIN de acceso (4 dígitos) *">
+          <Input value={form.pin||""} onChange={v=>setForm({...form,pin:v.replace(/\D/g,"").slice(0,4)})} placeholder="0000"/>
+        </Field>
+        <Field label="Email (opcional)">
+          <Input value={form.email||""} onChange={v=>setForm({...form,email:v})} placeholder="profesor@email.com"/>
+        </Field>
+      </div>
+      <Field label="Color identificativo">
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:4}}>
+          {COLORES.map(c=><div key={c} onClick={()=>setForm({...form,color:c})}
+            style={{width:32,height:32,borderRadius:"50%",background:c,cursor:"pointer",
+              border:form.color===c?"3px solid #333":"3px solid transparent",flexShrink:0}}/>)}
+        </div>
+      </Field>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+        <input type="checkbox" id="activoChk" checked={!!form.activo} onChange={e=>setForm({...form,activo:e.target.checked})}
+          style={{width:16,height:16}}/>
+        <label htmlFor="activoChk" style={{fontSize:13,cursor:"pointer"}}>Profesor activo (puede acceder al sistema)</label>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:14}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={save}>Guardar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SUPERADMIN SHELL
+// ═══════════════════════════════════════════════════════════════════
+function SuperAdminShell({data,setData,onLogout}){
+  const [tab,setTab]=useState("profesores");
+  const [verComo,setVerComo]=useState(null); // {profesorId, profesorNombre} o null
+
+  // Si está "viendo como" un profesor, mostrar su panel
+  if(verComo!==null){
+    return <div>
+      <div style={{background:"#2c3e50",color:"#fff",padding:"8px 16px",
+        display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:13}}>
+        <span>👁️ Viendo como: <b>{verComo.profesorId?"Prof. "+verComo.profesorNombre:"Profesor Principal"}</b></span>
+        <button onClick={()=>setVerComo(null)}
+          style={{background:"rgba(255,255,255,.2)",border:"none",color:"#fff",
+            borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>
+          ← Volver al panel Admin
+        </button>
+      </div>
+      <AdminShell data={data} setData={setData} onLogout={onLogout}
+        profesorId={verComo.profesorId} profesorNombre={verComo.profesorNombre}
+        esSuperAdmin={true}/>
+    </div>;
+  }
+
+  const SA_TABS=[
+    {id:"profesores",label:"Profesores",icon:"👨‍🏫"},
+    {id:"alumnos",   label:"Todos los alumnos",icon:"👤"},
+    {id:"clases",    label:"Todas las clases",icon:"📅"},
+    {id:"pagos",     label:"Contabilidad global",icon:"💶"},
+    {id:"ajustes",   label:"Ajustes",icon:"⚙️"},
+  ];
+
+  return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
+    {/* Cabecera */}
+    <div style={{background:"linear-gradient(135deg,#2c3e50,#1a252f)",color:"#fff",padding:"0 16px"}}>
+      <div style={{maxWidth:980,margin:"0 auto"}}>
+        <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
+            <div>
+              <div style={{fontWeight:800,fontSize:16}}>José Caballero Golf Academy</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>👑 Panel Administrador</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            {/* Accesos rápidos "Ver como" */}
+            <div style={{fontSize:12,color:"rgba(255,255,255,.7)"}}>Ver como:</div>
+            <button onClick={()=>setVerComo({profesorId:null,profesorNombre:"Principal"})}
+              style={{background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.3)",
+                color:"#fff",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
+              👨‍🏫 Principal
+            </button>
+            {(data.profesores||[]).filter(p=>p.activo).map(p=>
+              <button key={p.id} onClick={()=>setVerComo({profesorId:p.id,profesorNombre:p.nombre})}
+                style={{background:p.color+"33",border:`1px solid ${p.color}`,
+                  color:"#fff",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
+                👨‍🏫 {p.nombre.split(" ")[0]}
+              </button>
+            )}
+            <button onClick={onLogout}
+              style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",
+                borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:4}}>
+              Salir
+            </button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
+          {SA_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:tab===t.id?G.white:"transparent",
+              color:tab===t.id?"#2c3e50":"rgba(255,255,255,.8)",border:"none",
+              borderRadius:"8px 8px 0 0",padding:"8px 12px",fontSize:12,fontWeight:600,
+              cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {t.icon} {t.label}
+          </button>)}
+        </div>
+      </div>
+    </div>
+
+    <div style={{maxWidth:980,margin:"0 auto",padding:"22px 14px 60px"}}>
+      <h2 style={{margin:"0 0 18px",color:"#2c3e50",fontSize:19,fontWeight:800}}>
+        {SA_TABS.find(t=>t.id===tab)?.icon} {SA_TABS.find(t=>t.id===tab)?.label}
+      </h2>
+      {tab==="profesores"&&<ModProfesores data={data} setData={setData}/>}
+      {tab==="alumnos"&&<ModAlumnos data={data} setData={setData} modoAdmin={true}/>}
+      {tab==="clases"&&<ModClases data={data} setData={setData} modoAdmin={true}/>}
+      {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
   </div>;
@@ -9381,7 +9787,13 @@ export default function App(){
   if(!session) return <LoginScreen data={data} onLogin={onLogin}/>;
   if(session.role==="alumno"||session.role==="tutor")
     return <PortalAlumno data={data} setData={setData} alumnoId={session.alumnoId} onLogout={onLogout} tutorNombre={session.tutorNombre||null}/>;
-  return <AdminShell data={data} setData={setData} onLogout={onLogout}/>;
+  if(session.role==="superadmin")
+    return <SuperAdminShell data={data} setData={setData} onLogout={onLogout}/>;
+  // admin (profesor principal) y profesor adicional: mismo panel, filtrado por profesorId
+  return <AdminShell data={data} setData={setData} onLogout={onLogout}
+    profesorId={session.profesorId||null}
+    profesorNombre={session.profesorNombre||null}
+    esSuperAdmin={false}/>;
 }
 
 
