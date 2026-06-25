@@ -494,6 +494,10 @@ function makeDefaultData() {
     programas: [],
     informes: [],
     labels: {},
+    ingresos: [],
+    gastos: [],
+    categoriasIngreso: ["Clase individual","Bono clases","Cuota mensual","Clase grupo","Clase empresa","Torneo","Evento","Otro"],
+    categoriasGasto: ["Material deportivo","Desplazamiento","Formación/Licencias","Cuota autónomo","Asesoría/Gestoría","Publicidad","Equipamiento","Ropa/Uniformes","Seguro","Otro"],
   };
 }
 
@@ -3215,112 +3219,557 @@ function ModAnalisis({data,setData}){
 // ADMIN: PAGOS
 // ═══════════════════════════════════════════════════════════════════
 function ModPagos({data,setData}){
-  const [modalB,setModalB]=useState(null);
-  const [modalP,setModalP]=useState(null);
-  const [fB,setFB]=useState({});
-  const [fP,setFP]=useState({});
-  const [alumnoSel,setAlumnoSel]=useState("todos");
-  const alumnos=data.alumnos||[],bonos=data.bonos||[],pagos=data.pagos||[];
-  const nombre=id=>alumnos.find(a=>a.id===id)?.nombre||"—";
+  // ── Estados ──────────────────────────────────────────────────────
+  const [tab,setTab]         = useState("resumen");
+  const [modalI,setModalI]   = useState(null);   // ingreso
+  const [modalG,setModalG]   = useState(null);   // gasto
+  const [modalCat,setModalCat] = useState(null); // categorías
+  const [fI,setFI]           = useState({});
+  const [fG,setFG]           = useState({});
+  const [filtroDesde,setFiltroDesde] = useState("");
+  const [filtroHasta,setFiltroHasta] = useState("");
+  const [filtroCat,setFiltroCat]     = useState("todas");
+  const [nuevaCat,setNuevaCat]       = useState("");
+  const [tipoCat,setTipoCat]         = useState("ingreso");
 
-  function saveB(){
-    if(!fB.alumnoId||!fB.clases) return;
-    const u=modalB==="new"?[...bonos,{...fB,id:uid(),usadas:0,fechaCompra:fB.fechaCompra||today()}]:bonos.map(b=>b.id===modalB?{...fB}:b);
-    setData({...data,bonos:u});setModalB(null);
+  const alumnos = data.alumnos||[];
+  const ingresos = data.ingresos||[];
+  const gastos   = data.gastos||[];
+  const catI     = data.categoriasIngreso||[];
+  const catG     = data.categoriasGasto||[];
+
+  // IVA y retención por defecto (autónomo actividad deportiva)
+  const IVA_DEFAULT = 21;
+  const RET_DEFAULT = 15;
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  function filtrarPorFecha(arr){
+    return arr.filter(r=>{
+      if(filtroDesde && r.fecha < filtroDesde) return false;
+      if(filtroHasta && r.fecha > filtroHasta) return false;
+      return true;
+    });
   }
-  function saveP(){
-    if(!fP.alumnoId||!fP.importe) return;
-    const u=modalP==="new"?[...pagos,{...fP,id:uid(),fecha:fP.fecha||today()}]:pagos.map(p=>p.id===modalP?{...fP}:p);
-    setData({...data,pagos:u});setModalP(null);
+  function fmt(n){ return Number(n||0).toFixed(2)+"€"; }
+  function fmtN(n){ return Number(n||0).toFixed(2); }
+
+  const ingFiltrados = filtrarPorFecha(ingresos).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const gasFiltrados = filtrarPorFecha(gastos).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+
+  // Totales
+  const totalIngBruto = ingFiltrados.reduce((s,r)=>s+Number(r.importeBase||0),0);
+  const totalIVAing   = ingFiltrados.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+  const totalRet      = ingFiltrados.reduce((s,r)=>s+Number(r.retencionImporte||0),0);
+  const totalIngNeto  = totalIngBruto + totalIVAing - totalRet;
+  const totalGas      = gasFiltrados.reduce((s,r)=>s+Number(r.importeTotal||0),0);
+  const totalIVAgas   = gasFiltrados.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+  const beneficio     = totalIngBruto - gasFiltrados.reduce((s,r)=>s+Number(r.importeBase||0),0);
+  const ivaLiquidar   = totalIVAing - totalIVAgas;
+
+  // Agrupar por mes para gráfico
+  function porMes(arr, campo){
+    const map={};
+    arr.forEach(r=>{
+      const mes=r.fecha?.slice(0,7)||"";
+      if(!map[mes]) map[mes]=0;
+      map[mes]+=Number(r[campo]||0);
+    });
+    return map;
   }
 
-  const totalMes=pagos.filter(p=>p.fecha?.slice(0,7)===today().slice(0,7)).reduce((s,p)=>s+Number(p.importe||0),0);
-  const totalG=pagos.reduce((s,p)=>s+Number(p.importe||0),0);
-  const fBonos=alumnoSel==="todos"?bonos:bonos.filter(b=>b.alumnoId===alumnoSel);
-  const fPagos=(alumnoSel==="todos"?pagos:pagos.filter(p=>p.alumnoId===alumnoSel)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  // ── Guardar ingreso ───────────────────────────────────────────────
+  function saveIngreso(){
+    if(!fI.fecha||!fI.importeBase) return;
+    const ivaP  = Number(fI.ivaPct||IVA_DEFAULT);
+    const retP  = Number(fI.retencionPct||0);
+    const base  = Number(fI.importeBase||0);
+    const ivaImp= +(base * ivaP/100).toFixed(2);
+    const retImp= +(base * retP/100).toFixed(2);
+    const total = +(base + ivaImp - retImp).toFixed(2);
+    const reg = {...fI, ivaPct:ivaP, retencionPct:retP,
+      ivaImporte:ivaImp, retencionImporte:retImp, importeTotal:total };
+    const u = modalI==="new"
+      ? [...ingresos,{...reg,id:uid()}]
+      : ingresos.map(r=>r.id===modalI?{...reg,id:modalI}:r);
+    setData({...data,ingresos:u}); setModalI(null);
+  }
 
+  // ── Guardar gasto ────────────────────────────────────────────────
+  function saveGasto(){
+    if(!fG.fecha||!fG.importeBase) return;
+    const ivaP  = Number(fG.ivaPct||0);
+    const base  = Number(fG.importeBase||0);
+    const ivaImp= +(base * ivaP/100).toFixed(2);
+    const total = +(base + ivaImp).toFixed(2);
+    const reg = {...fG, ivaPct:ivaP, ivaImporte:ivaImp, importeTotal:total };
+    const u = modalG==="new"
+      ? [...gastos,{...reg,id:uid()}]
+      : gastos.map(r=>r.id===modalG?{...reg,id:modalG}:r);
+    setData({...data,gastos:u}); setModalG(null);
+  }
+
+  // ── Añadir categoría ─────────────────────────────────────────────
+  function addCat(){
+    if(!nuevaCat.trim()) return;
+    if(tipoCat==="ingreso"){
+      if(catI.includes(nuevaCat.trim())) return;
+      setData({...data,categoriasIngreso:[...catI,nuevaCat.trim()]});
+    } else {
+      if(catG.includes(nuevaCat.trim())) return;
+      setData({...data,categoriasGasto:[...catG,nuevaCat.trim()]});
+    }
+    setNuevaCat("");
+  }
+  function delCat(tipo,cat){
+    if(!confirm("¿Eliminar categoría «"+cat+"»?")) return;
+    if(tipo==="ingreso") setData({...data,categoriasIngreso:catI.filter(c=>c!==cat)});
+    else setData({...data,categoriasGasto:catG.filter(c=>c!==cat)});
+  }
+
+  // ── Exportar CSV ─────────────────────────────────────────────────
+  function exportarCSV(){
+    const rows=[["Tipo","Fecha","Categoría","Concepto","Alumno","Base (€)","IVA%","IVA(€)","Ret%","Ret(€)","Total(€)","Método","Factura"]];
+    ingFiltrados.forEach(r=>{
+      const al=alumnos.find(a=>a.id===r.alumnoId)?.nombre||"—";
+      rows.push(["INGRESO",r.fecha,r.categoria||"",r.concepto||"",al,
+        fmtN(r.importeBase),r.ivaPct||"",fmtN(r.ivaImporte),
+        r.retencionPct||"",fmtN(r.retencionImporte),fmtN(r.importeTotal),
+        r.metodo||"",r.factura||""]);
+    });
+    gasFiltrados.forEach(r=>{
+      rows.push(["GASTO",r.fecha,r.categoria||"",r.concepto||"","—",
+        fmtN(r.importeBase),r.ivaPct||"",fmtN(r.ivaImporte),
+        "","",fmtN(r.importeTotal),r.metodo||"",r.factura||""]);
+    });
+    const sep=";";
+    const csv=rows.map(r=>r.map(v=>{const s=String(v).replace(/"/g,'""');return s.includes(sep)?`"${s}"`:s;}).join(sep)).join("\r\n");
+    const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="contabilidad-academia.csv";a.click();URL.revokeObjectURL(url);
+  }
+
+  // ── Colores tabs ─────────────────────────────────────────────────
+  const TABS=[
+    {id:"resumen",label:"📊 Resumen"},
+    {id:"ingresos",label:"💶 Ingresos"},
+    {id:"gastos",label:"🧾 Gastos"},
+    {id:"iva",label:"🏛️ IVA / Retención"},
+    {id:"categorias",label:"🏷️ Categorías"},
+  ];
+
+  const estiloTabBtn=(id)=>({
+    background:tab===id?G.fairway:"transparent",
+    color:tab===id?"#fff":G.fairway,
+    border:"1px solid "+G.fairway,
+    borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"
+  });
+
+  // ── Filtros comunes ───────────────────────────────────────────────
+  const FiltroBarra=()=><div style={{background:"#f5f5f5",borderRadius:10,padding:"10px 14px",
+    display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:16}}>
+    <div style={{fontSize:13,fontWeight:600,color:G.fairway}}>🔍 Filtrar:</div>
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <label style={{fontSize:12,color:G.soft}}>Desde</label>
+      <input type="date" value={filtroDesde} onChange={e=>setFiltroDesde(e.target.value)}
+        style={{border:"1px solid #ddd",borderRadius:6,padding:"4px 8px",fontSize:12}}/>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <label style={{fontSize:12,color:G.soft}}>Hasta</label>
+      <input type="date" value={filtroHasta} onChange={e=>setFiltroHasta(e.target.value)}
+        style={{border:"1px solid #ddd",borderRadius:6,padding:"4px 8px",fontSize:12}}/>
+    </div>
+    {(filtroDesde||filtroHasta)&&<button onClick={()=>{setFiltroDesde("");setFiltroHasta("");}}
+      style={{background:"#eee",border:"none",borderRadius:6,padding:"5px 10px",fontSize:12,cursor:"pointer"}}>✕ Limpiar</button>}
+    <button onClick={exportarCSV}
+      style={{background:"#217346",color:"#fff",border:"none",borderRadius:6,
+        padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>
+      📊 Exportar CSV
+    </button>
+  </div>;
+
+  // ── RENDER ───────────────────────────────────────────────────────
   return <div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:20}}>
-      {[[`${totalG.toFixed(0)}€`,"Total",G.fairway],[`${totalMes.toFixed(0)}€`,"Este mes",G.grass],[bonos.filter(b=>b.usadas<Number(b.clases)).length,"Bonos activos",G.sky]].map(([v,l,c])=>(
-        <Card key={l} style={{textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:12,color:G.soft,marginTop:2}}>{l}</div></Card>
-      ))}
+    {/* Tabs */}
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18,overflowX:"auto"}}>
+      {TABS.map(t=><button key={t.id} style={estiloTabBtn(t.id)} onClick={()=>setTab(t.id)}>{t.label}</button>)}
     </div>
-    <div style={{marginBottom:14}}><Sel value={alumnoSel} onChange={setAlumnoSel} options={[{value:"todos",label:"Todos los alumnos"},...alumnos.map(a=>({value:a.id,label:a.nombre}))]}/></div>
 
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-      <h3 style={{margin:0,color:G.ink}}>🎫 Bonos</h3>
-      <Btn color="gold" onClick={()=>{setFB({alumnoId:alumnos[0]?.id||"",clases:"10",precio:"",fechaCompra:today(),tipo:"Individual"});setModalB("new");}}>+ Nuevo bono</Btn>
-    </div>
-    <div style={{display:"grid",gap:10,marginBottom:20}}>
-      {fBonos.length===0&&<div style={{color:G.soft,textAlign:"center",padding:16}}>Sin bonos.</div>}
-      {fBonos.map(b=>{
-        const pct=(b.usadas/Number(b.clases))*100,activo=b.usadas<Number(b.clases);
-        return <Card key={b.id}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <div style={{flex:1}}>
-              <div style={{fontWeight:700,color:G.ink}}>{nombre(b.alumnoId)}</div>
-              <div style={{fontSize:12,color:G.soft}}>Bono {b.tipo} · {b.clases} clases · {b.precio?b.precio+"€":"—"}</div>
-              <div style={{marginTop:6,background:"#e8e8e8",borderRadius:6,height:7,overflow:"hidden"}}>
-                <div style={{width:`${pct}%`,height:"100%",background:pct>=80?G.danger:G.grass}}/>
+    {/* ══ RESUMEN ════════════════════════════════════════════════════ */}
+    {tab==="resumen"&&<div>
+      <FiltroBarra/>
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}}>
+        {[
+          [fmt(totalIngBruto),"Base ingresos",G.fairway,"💶"],
+          [fmt(totalIVAing),"IVA cobrado",G.grass,"🏛️"],
+          [fmt(totalRet),"Retención IRPF",G.flag,"📉"],
+          [fmt(totalIngNeto),"Cobrado neto",G.sky,"✅"],
+          [fmt(totalGas),"Total gastos",G.danger,"🧾"],
+          [fmt(beneficio),"Beneficio bruto",beneficio>=0?G.grass:G.danger,"📈"],
+        ].map(([v,l,c,ico])=>(
+          <Card key={l} style={{textAlign:"center",borderTop:`3px solid ${c}`}}>
+            <div style={{fontSize:20,marginBottom:4}}>{ico}</div>
+            <div style={{fontSize:18,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:11,color:G.soft,marginTop:2}}>{l}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Desglose trimestral */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:700,color:G.fairway,marginBottom:12}}>📅 Resumen por trimestre</div>
+        {(()=>{
+          const trimestres={"T1 (Ene-Mar)":["01","02","03"],"T2 (Abr-Jun)":["04","05","06"],
+            "T3 (Jul-Sep)":["07","08","09"],"T4 (Oct-Dic)":["10","11","12"]};
+          const year=(filtroDesde||filtroHasta||today()).slice(0,4);
+          return Object.entries(trimestres).map(([t,meses])=>{
+            const tIng=ingresos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+            const tGas=gastos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+            const bIng=tIng.reduce((s,r)=>s+Number(r.importeBase||0),0);
+            const bGas=tGas.reduce((s,r)=>s+Number(r.importeBase||0),0);
+            const ivaIng=tIng.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+            const retT=tIng.reduce((s,r)=>s+Number(r.retencionImporte||0),0);
+            const ivaGas=tGas.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+            return <div key={t} style={{display:"grid",gridTemplateColumns:"120px 1fr 1fr 1fr 1fr 1fr",
+              gap:8,padding:"8px 0",borderBottom:"1px solid #f0f0f0",fontSize:13,alignItems:"center"}}>
+              <div style={{fontWeight:700,color:G.ink}}>{t}</div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>Base ing.</div><b style={{color:G.fairway}}>{fmt(bIng)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>IVA cobrado</div><b style={{color:G.grass}}>{fmt(ivaIng)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.flag}}>Ret. IRPF</div><b style={{color:G.flag}}>{fmt(retT)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>Gastos</div><b style={{color:G.danger}}>{fmt(bGas)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>IVA soportado</div><b style={{color:G.soft}}>{fmt(ivaGas)}</b></div>
+            </div>;
+          });
+        })()}
+      </Card>
+
+      {/* Desglose por categoría ingresos */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <Card>
+          <div style={{fontWeight:700,color:G.fairway,marginBottom:10}}>💶 Ingresos por categoría</div>
+          {catI.map(cat=>{
+            const tot=ingFiltrados.filter(r=>r.categoria===cat).reduce((s,r)=>s+Number(r.importeBase||0),0);
+            if(tot===0) return null;
+            return <div key={cat} style={{display:"flex",justifyContent:"space-between",
+              padding:"5px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{color:G.ink}}>{cat}</span>
+              <b style={{color:G.fairway}}>{fmt(tot)}</b>
+            </div>;
+          })}
+        </Card>
+        <Card>
+          <div style={{fontWeight:700,color:G.danger,marginBottom:10}}>🧾 Gastos por categoría</div>
+          {catG.map(cat=>{
+            const tot=gasFiltrados.filter(r=>r.categoria===cat).reduce((s,r)=>s+Number(r.importeBase||0),0);
+            if(tot===0) return null;
+            return <div key={cat} style={{display:"flex",justifyContent:"space-between",
+              padding:"5px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{color:G.ink}}>{cat}</span>
+              <b style={{color:G.danger}}>{fmt(tot)}</b>
+            </div>;
+          })}
+        </Card>
+      </div>
+    </div>}
+
+    {/* ══ INGRESOS ═══════════════════════════════════════════════════ */}
+    {tab==="ingresos"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <span style={{fontWeight:700,color:G.fairway,fontSize:15}}>💶 Registro de Ingresos</span>
+          <span style={{marginLeft:10,fontSize:13,color:G.soft}}>{ingFiltrados.length} registros · {fmt(totalIngBruto)} base</span>
+        </div>
+        <Btn onClick={()=>{setFI({fecha:today(),ivaPct:IVA_DEFAULT,retencionPct:RET_DEFAULT,metodo:"Transferencia",categoria:catI[0]||""});setModalI("new");}}>
+          + Nuevo ingreso
+        </Btn>
+      </div>
+      <FiltroBarra/>
+      <div style={{display:"grid",gap:8}}>
+        {ingFiltrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>Sin ingresos en el período seleccionado.</div>}
+        {ingFiltrados.map(r=>{
+          const al=alumnos.find(a=>a.id===r.alumnoId)?.nombre||"—";
+          return <Card key={r.id} style={{borderLeft:`4px solid ${G.fairway}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:160}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{r.concepto||r.categoria}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+                  {r.fecha} · {r.categoria} · {al} · {r.metodo||"—"}
+                  {r.factura&&<span style={{marginLeft:6,background:"#e8f4e8",color:G.fairway,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
+                </div>
               </div>
-              <div style={{fontSize:11,color:G.soft,marginTop:2}}>{b.usadas}/{b.clases} usadas</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,auto)",gap:12,textAlign:"right",fontSize:12}}>
+                <div><div style={{color:G.soft,fontSize:10}}>Base</div><b style={{color:G.ink}}>{fmt(r.importeBase)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>IVA {r.ivaPct}%</div><b style={{color:G.grass}}>{fmt(r.ivaImporte)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>Ret. {r.retencionPct}%</div><b style={{color:G.flag}}>-{fmt(r.retencionImporte)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>Total</div><b style={{color:G.fairway,fontSize:14}}>{fmt(r.importeTotal)}</b></div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn small color="secondary" onClick={()=>{setFI({...r});setModalI(r.id);}}>✎</Btn>
+                <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,ingresos:ingresos.filter(x=>x.id!==r.id)});}}>✕</Btn>
+              </div>
             </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              <Badge color={activo?"green":"gray"}>{activo?"Activo":"Agotado"}</Badge>
-              {activo&&<Btn small color="sky" onClick={()=>setData({...data,bonos:bonos.map(x=>x.id===b.id?{...x,usadas:x.usadas+1}:x)})}>−1</Btn>}
-              <Btn small color="secondary" onClick={()=>{setFB({...b});setModalB(b.id);}}>✎</Btn>
+          </Card>;
+        })}
+      </div>
+    </div>}
+
+    {/* ══ GASTOS ═════════════════════════════════════════════════════ */}
+    {tab==="gastos"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <span style={{fontWeight:700,color:G.danger,fontSize:15}}>🧾 Registro de Gastos</span>
+          <span style={{marginLeft:10,fontSize:13,color:G.soft}}>{gasFiltrados.length} registros · {fmt(totalGas)} total</span>
+        </div>
+        <Btn color="danger" onClick={()=>{setFG({fecha:today(),ivaPct:21,metodo:"Tarjeta",categoria:catG[0]||"",deducible:"si"});setModalG("new");}}>
+          + Nuevo gasto
+        </Btn>
+      </div>
+      <FiltroBarra/>
+      <div style={{display:"grid",gap:8}}>
+        {gasFiltrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>Sin gastos en el período seleccionado.</div>}
+        {gasFiltrados.map(r=>(
+          <Card key={r.id} style={{borderLeft:`4px solid ${G.danger}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:160}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{r.concepto||r.categoria}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+                  {r.fecha} · {r.categoria} · {r.metodo||"—"}
+                  {r.factura&&<span style={{marginLeft:6,background:"#fdecea",color:G.danger,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
+                  {r.deducible==="si"&&<span style={{marginLeft:6,background:"#e8f4e8",color:G.grass,borderRadius:4,padding:"1px 5px",fontSize:11}}>Deducible</span>}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,auto)",gap:12,textAlign:"right",fontSize:12}}>
+                <div><div style={{color:G.soft,fontSize:10}}>Base</div><b style={{color:G.ink}}>{fmt(r.importeBase)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>IVA {r.ivaPct}%</div><b style={{color:G.grass}}>{fmt(r.ivaImporte)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>Total</div><b style={{color:G.danger,fontSize:14}}>{fmt(r.importeTotal)}</b></div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn small color="secondary" onClick={()=>{setFG({...r});setModalG(r.id);}}>✎</Btn>
+                <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,gastos:gastos.filter(x=>x.id!==r.id)});}}>✕</Btn>
+              </div>
             </div>
-          </div>
-        </Card>;
-      })}
-    </div>
+          </Card>
+        ))}
+      </div>
+    </div>}
 
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-      <h3 style={{margin:0,color:G.ink}}>💶 Pagos</h3>
-      <Btn onClick={()=>{setFP({alumnoId:alumnos[0]?.id||"",importe:"",concepto:"Clase individual",fecha:today(),metodo:"Efectivo"});setModalP("new");}}>+ Registrar pago</Btn>
-    </div>
-    <div style={{display:"grid",gap:8}}>
-      {fPagos.length===0&&<div style={{color:G.soft,textAlign:"center",padding:16}}>Sin pagos.</div>}
-      {fPagos.map(p=><Card key={p.id} style={{display:"flex",alignItems:"center",gap:12}}>
-        <div style={{fontSize:22}}>💶</div>
-        <div style={{flex:1}}><div style={{fontWeight:700,color:G.ink}}>{nombre(p.alumnoId)}</div><div style={{fontSize:12,color:G.soft}}>{p.fecha} · {p.concepto} · {p.metodo}</div></div>
-        <div style={{fontWeight:800,color:G.fairway,fontSize:17}}>{Number(p.importe).toFixed(2)}€</div>
-        <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,pagos:pagos.filter(x=>x.id!==p.id)});}}>✕</Btn>
-      </Card>)}
-    </div>
+    {/* ══ IVA / RETENCIÓN ════════════════════════════════════════════ */}
+    {tab==="iva"&&<div>
+      <FiltroBarra/>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:20}}>
+        {[
+          ["IVA repercutido (cobrado)","💶",fmt(totalIVAing),G.fairway,"IVA de tus ingresos. Lo cobras al cliente."],
+          ["IVA soportado (pagado)","🧾",fmt(totalIVAgas),G.danger,"IVA de tus gastos. Lo pagas a proveedores."],
+          ["IVA a liquidar (Mod. 303)","🏛️",fmt(ivaLiquidar),ivaLiquidar>=0?G.grass:G.flag,"Diferencia a ingresar a Hacienda cada trimestre."],
+          ["Retención IRPF (Mod. 111)","📉",fmt(totalRet),G.purple,"Ya retenido por quien te paga. Descuenta en tu declaración."],
+        ].map(([l,ico,v,c,desc])=>(
+          <Card key={l} style={{borderTop:`3px solid ${c}`}}>
+            <div style={{fontSize:22,marginBottom:6}}>{ico}</div>
+            <div style={{fontSize:11,color:G.soft,marginBottom:4}}>{l}</div>
+            <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:11,color:G.soft,marginTop:6,lineHeight:1.4}}>{desc}</div>
+          </Card>
+        ))}
+      </div>
 
-    {modalB&&<Modal title={modalB==="new"?"Nuevo bono":"Editar bono"} onClose={()=>setModalB(null)}>
-      <Field label="Alumno *"><Sel value={fB.alumnoId||""} onChange={v=>setFB({...fB,alumnoId:v})} options={alumnos.map(a=>({value:a.id,label:a.nombre}))}/></Field>
+      {/* Tabla trimestral IVA */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:700,color:G.fairway,marginBottom:12}}>📋 Liquidación trimestral estimada (Modelo 303)</div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead>
+              <tr style={{background:G.fairway,color:"#fff"}}>
+                {["Trimestre","Base ing.","IVA repercutido","Base gas.","IVA soportado","A liquidar"].map(h=>
+                  <th key={h} style={{padding:"8px 10px",textAlign:"right",fontWeight:600,":firstChild":{textAlign:"left"}}}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {[["T1",["01","02","03"]],["T2",["04","05","06"]],["T3",["07","08","09"]],["T4",["10","11","12"]]].map(([t,meses],i)=>{
+                const year=(filtroDesde||filtroHasta||today()).slice(0,4);
+                const tI=ingresos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+                const tG=gastos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+                const bI=tI.reduce((s,r)=>s+Number(r.importeBase||0),0);
+                const ivaR=tI.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+                const bG=tG.reduce((s,r)=>s+Number(r.importeBase||0),0);
+                const ivaS=tG.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+                const liq=ivaR-ivaS;
+                return <tr key={t} style={{background:i%2===0?"#f9f9f9":"#fff"}}>
+                  <td style={{padding:"7px 10px",fontWeight:700,color:G.ink}}>{t} {year}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right"}}>{fmt(bI)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:G.fairway}}><b>{fmt(ivaR)}</b></td>
+                  <td style={{padding:"7px 10px",textAlign:"right"}}>{fmt(bG)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:G.danger}}><b>{fmt(ivaS)}</b></td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:liq>=0?G.grass:G.flag}}><b>{fmt(liq)}</b></td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Retenciones por pagador */}
+      <Card>
+        <div style={{fontWeight:700,color:G.purple,marginBottom:12}}>📉 Retenciones IRPF por pagador (Mod. 111 / 190)</div>
+        {(()=>{
+          const porPagador={};
+          ingFiltrados.filter(r=>Number(r.retencionImporte||0)>0).forEach(r=>{
+            const k=r.pagador||r.concepto||"Sin especificar";
+            if(!porPagador[k]) porPagador[k]={base:0,ret:0};
+            porPagador[k].base+=Number(r.importeBase||0);
+            porPagador[k].ret+=Number(r.retencionImporte||0);
+          });
+          const ents=Object.entries(porPagador);
+          if(ents.length===0) return <div style={{color:G.soft,fontSize:13}}>No hay ingresos con retención en el período.</div>;
+          return ents.map(([k,v])=>(
+            <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",
+              borderBottom:"1px solid #f0f0f0",fontSize:13}}>
+              <span style={{color:G.ink}}>{k}</span>
+              <span>Base: <b>{fmt(v.base)}</b> · Retención: <b style={{color:G.purple}}>{fmt(v.ret)}</b></span>
+            </div>
+          ));
+        })()}
+      </Card>
+    </div>}
+
+    {/* ══ CATEGORÍAS ═════════════════════════════════════════════════ */}
+    {tab==="categorias"&&<div>
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:700,color:G.fairway,marginBottom:12}}>➕ Nueva categoría</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <Field label="Tipo" style={{margin:0}}>
+            <Sel value={tipoCat} onChange={setTipoCat} options={[{value:"ingreso",label:"Ingreso"},{value:"gasto",label:"Gasto"}]}/>
+          </Field>
+          <Field label="Nombre" style={{margin:0,flex:1,minWidth:180}}>
+            <Input value={nuevaCat} onChange={setNuevaCat} placeholder="Ej: Clínica empresa..."/>
+          </Field>
+          <Btn onClick={addCat} style={{marginBottom:0}}>Añadir</Btn>
+        </div>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <Card>
+          <div style={{fontWeight:700,color:G.fairway,marginBottom:10}}>💶 Categorías de Ingreso</div>
+          {catI.map(cat=>(
+            <div key={cat} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{color:G.ink}}>{cat}</span>
+              <Btn small color="danger" onClick={()=>delCat("ingreso",cat)}>✕</Btn>
+            </div>
+          ))}
+        </Card>
+        <Card>
+          <div style={{fontWeight:700,color:G.danger,marginBottom:10}}>🧾 Categorías de Gasto</div>
+          {catG.map(cat=>(
+            <div key={cat} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+              padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{color:G.ink}}>{cat}</span>
+              <Btn small color="danger" onClick={()=>delCat("gasto",cat)}>✕</Btn>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>}
+
+    {/* ══ MODAL INGRESO ══════════════════════════════════════════════ */}
+    {modalI&&<Modal title={modalI==="new"?"Nuevo ingreso":"Editar ingreso"} onClose={()=>setModalI(null)}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Nº clases"><Sel value={fB.clases||"10"} onChange={v=>setFB({...fB,clases:v})} options={["5","10","15","20"].map(v=>({value:v,label:v+" clases"}))}/></Field>
-        <Field label="Tipo"><Sel value={fB.tipo||"Individual"} onChange={v=>setFB({...fB,tipo:v})} options={["Individual","Grupo","Junior"].map(v=>({value:v,label:v}))}/></Field>
+        <Field label="Fecha *"><Input type="date" value={fI.fecha||""} onChange={v=>setFI({...fI,fecha:v})}/></Field>
+        <Field label="Categoría *">
+          <Sel value={fI.categoria||""} onChange={v=>setFI({...fI,categoria:v})}
+            options={catI.map(c=>({value:c,label:c}))}/>
+        </Field>
+      </div>
+      <Field label="Concepto / Descripción">
+        <Input value={fI.concepto||""} onChange={v=>setFI({...fI,concepto:v})} placeholder="Ej: Bono 10 clases enero..."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Alumno (opcional)">
+          <Sel value={fI.alumnoId||""} onChange={v=>setFI({...fI,alumnoId:v})}
+            options={[{value:"",label:"— Sin alumno —"},...alumnos.map(a=>({value:a.id,label:a.nombre}))]}/>
+        </Field>
+        <Field label="Pagador (empresa/club)">
+          <Input value={fI.pagador||""} onChange={v=>setFI({...fI,pagador:v})} placeholder="Ej: Golf Ciudad Real C.D."/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Base imponible (€) *">
+          <Input type="number" value={fI.importeBase||""} onChange={v=>setFI({...fI,importeBase:v})} placeholder="0.00"/>
+        </Field>
+        <Field label="IVA (%)">
+          <Sel value={String(fI.ivaPct??IVA_DEFAULT)} onChange={v=>setFI({...fI,ivaPct:Number(v)})}
+            options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
+        </Field>
+        <Field label="Retención IRPF (%)">
+          <Sel value={String(fI.retencionPct??0)} onChange={v=>setFI({...fI,retencionPct:Number(v)})}
+            options={["0","7","15","19"].map(v=>({value:v,label:v+"%"}))}/>
+        </Field>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Precio (€)"><Input type="number" value={fB.precio||""} onChange={v=>setFB({...fB,precio:v})}/></Field>
-        <Field label="Fecha compra"><Input type="date" value={fB.fechaCompra||""} onChange={v=>setFB({...fB,fechaCompra:v})}/></Field>
+        <Field label="Método de cobro">
+          <Sel value={fI.metodo||"Transferencia"} onChange={v=>setFI({...fI,metodo:v})}
+            options={["Efectivo","Tarjeta","Transferencia","Bizum","Domiciliación"].map(v=>({value:v,label:v}))}/>
+        </Field>
+        <Field label="Nº Factura (opcional)">
+          <Input value={fI.factura||""} onChange={v=>setFI({...fI,factura:v})} placeholder="Ej: 2025-001"/>
+        </Field>
       </div>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
-        <Btn color="secondary" onClick={()=>setModalB(null)}>Cancelar</Btn><Btn color="gold" onClick={saveB}>Guardar</Btn>
+      {/* Preview cálculo */}
+      {fI.importeBase&&<div style={{background:"#f0f7f0",borderRadius:8,padding:"10px 14px",fontSize:13,marginTop:4}}>
+        <b>Vista previa:</b> Base {fmt(fI.importeBase)} + IVA {fmt(Number(fI.importeBase||0)*Number(fI.ivaPct??IVA_DEFAULT)/100)} − Ret. {fmt(Number(fI.importeBase||0)*Number(fI.retencionPct??0)/100)} = <b style={{color:G.fairway}}>{fmt(Number(fI.importeBase||0)+Number(fI.importeBase||0)*Number(fI.ivaPct??IVA_DEFAULT)/100-Number(fI.importeBase||0)*Number(fI.retencionPct??0)/100)}</b>
+      </div>}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
+        <Btn color="secondary" onClick={()=>setModalI(null)}>Cancelar</Btn>
+        <Btn onClick={saveIngreso}>Guardar</Btn>
       </div>
     </Modal>}
-    {modalP&&<Modal title="Registrar pago" onClose={()=>setModalP(null)}>
-      <Field label="Alumno *"><Sel value={fP.alumnoId||""} onChange={v=>setFP({...fP,alumnoId:v})} options={alumnos.map(a=>({value:a.id,label:a.nombre}))}/></Field>
+
+    {/* ══ MODAL GASTO ════════════════════════════════════════════════ */}
+    {modalG&&<Modal title={modalG==="new"?"Nuevo gasto":"Editar gasto"} onClose={()=>setModalG(null)}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <Field label="Importe (€) *"><Input type="number" value={fP.importe||""} onChange={v=>setFP({...fP,importe:v})}/></Field>
-        <Field label="Fecha"><Input type="date" value={fP.fecha||""} onChange={v=>setFP({...fP,fecha:v})}/></Field>
+        <Field label="Fecha *"><Input type="date" value={fG.fecha||""} onChange={v=>setFG({...fG,fecha:v})}/></Field>
+        <Field label="Categoría *">
+          <Sel value={fG.categoria||""} onChange={v=>setFG({...fG,categoria:v})}
+            options={catG.map(c=>({value:c,label:c}))}/>
+        </Field>
       </div>
-      <Field label="Concepto"><Sel value={fP.concepto||"Clase individual"} onChange={v=>setFP({...fP,concepto:v})} options={["Clase individual","Bono clases","Cuota mensual","Material","Otro"].map(v=>({value:v,label:v}))}/></Field>
-      <Field label="Método"><Sel value={fP.metodo||"Efectivo"} onChange={v=>setFP({...fP,metodo:v})} options={["Efectivo","Tarjeta","Transferencia","Bizum"].map(v=>({value:v,label:v}))}/></Field>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
-        <Btn color="secondary" onClick={()=>setModalP(null)}>Cancelar</Btn><Btn onClick={saveP}>Guardar</Btn>
+      <Field label="Concepto / Descripción">
+        <Input value={fG.concepto||""} onChange={v=>setFG({...fG,concepto:v})} placeholder="Ej: Pelotas práctica enero..."/>
+      </Field>
+      <Field label="Proveedor">
+        <Input value={fG.proveedor||""} onChange={v=>setFG({...fG,proveedor:v})} placeholder="Ej: ProGolf S.L."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Base imponible (€) *">
+          <Input type="number" value={fG.importeBase||""} onChange={v=>setFG({...fG,importeBase:v})} placeholder="0.00"/>
+        </Field>
+        <Field label="IVA (%)">
+          <Sel value={String(fG.ivaPct??21)} onChange={v=>setFG({...fG,ivaPct:Number(v)})}
+            options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Método de pago">
+          <Sel value={fG.metodo||"Tarjeta"} onChange={v=>setFG({...fG,metodo:v})}
+            options={["Efectivo","Tarjeta","Transferencia","Domiciliación"].map(v=>({value:v,label:v}))}/>
+        </Field>
+        <Field label="¿Deducible?">
+          <Sel value={fG.deducible||"si"} onChange={v=>setFG({...fG,deducible:v})}
+            options={[{value:"si",label:"Sí, deducible"},{value:"no",label:"No deducible"}]}/>
+        </Field>
+      </div>
+      <Field label="Nº Factura / Ticket">
+        <Input value={fG.factura||""} onChange={v=>setFG({...fG,factura:v})} placeholder="Ej: FAC-2025-001"/>
+      </Field>
+      {fG.importeBase&&<div style={{background:"#fdf0f0",borderRadius:8,padding:"10px 14px",fontSize:13,marginTop:4}}>
+        <b>Total con IVA:</b> <b style={{color:G.danger}}>{fmt(Number(fG.importeBase||0)+Number(fG.importeBase||0)*Number(fG.ivaPct??21)/100)}</b>
+      </div>}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
+        <Btn color="secondary" onClick={()=>setModalG(null)}>Cancelar</Btn>
+        <Btn color="danger" onClick={saveGasto}>Guardar</Btn>
       </div>
     </Modal>}
   </div>;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// ADMIN: AJUSTES
-// ═══════════════════════════════════════════════════════════════════
 
 function PinAlumnoRow({alumno, data, setData}){
   const [np,setNp]=useState(alumno.pin||"");
