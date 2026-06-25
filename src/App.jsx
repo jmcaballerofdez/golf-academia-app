@@ -54,8 +54,8 @@ async function generarPDFClase(clase, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 38, W, 16, "F");
 
-  // Logos
-  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 22, 22); } catch(e){}
+  // Logos (GCR: proporción ~1:1.5; PGA: cuadrado)
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 2, 15, 23); } catch(e){}
   try { doc.addImage(LOGO_PGA, "JPEG", W-30, 3, 22, 22); } catch(e){}
 
   doc.setTextColor(...BLANCO);
@@ -146,8 +146,8 @@ async function generarPDFInforme(rpt, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 41, W, 18, "F");
 
-  // Logos en cabecera
-  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 4, 22, 22); } catch(e){}
+  // Logos en cabecera (GCR: proporción ~1:1.5; PGA: cuadrado)
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 23); } catch(e){}
   try { doc.addImage(LOGO_PGA, "JPEG", W-30, 4, 22, 22); } catch(e){}
 
   // Texto cabecera
@@ -1624,12 +1624,12 @@ function ModCalendario({data,setData}){
         c.asistio?"Asistió":"Pendiente",
       ]);
     });
-    const sep="\t";
-    const csv=rows.map(r=>r.map(v=>String(v).replace(/\t/g," ")).join(sep)).join("\n");
-    const blob=new Blob(["\uFEFF"+csv],{type:"text/tab-separated-values;charset=utf-8"});
+    const sep=";";
+    const csv=rows.map(r=>r.map(v=>{ const s=String(v).replace(/"/g,'""'); return s.includes(sep)||s.includes('"')||s.includes('\n')?`"${s}"`:s; }).join(sep)).join("\r\n");
+    const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
-    a.href=url; a.download="clases-golf.xls"; a.click();
+    a.href=url; a.download="clases-golf.csv"; a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -1891,7 +1891,7 @@ function ModCalendario({data,setData}){
       <button onClick={exportarClasesExcel}
         style={{background:"#217346",color:"#fff",border:"none",borderRadius:8,
           padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
-        📊 Exportar Excel
+        📊 Exportar CSV
       </button>
       <button onClick={exportarClasesPDF}
         style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:8,
