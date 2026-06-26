@@ -54,9 +54,13 @@ async function generarPDFClase(clase, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 38, W, 16, "F");
 
-  // Logos (GCR: proporción ~1:1.5; PGA: cuadrado)
-  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 2, 15, 23); } catch(e){}
-  try { doc.addImage(LOGO_PGA, "JPEG", W-30, 3, 22, 22); } catch(e){}
+  // Logos con fondo blanco y esquinas redondeadas — misma altura 22mm
+  // GCR: proporción ~2:3 → 15x22mm | PGA: cuadrado → 22x22mm
+  doc.setFillColor(255,255,255);
+  doc.roundedRect(6, 1, 19, 26, 2, 2, "F");   // fondo GCR
+  doc.roundedRect(W-32, 1, 26, 26, 2, 2, "F"); // fondo PGA
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 22); } catch(e){console.warn("GCR PDF:",e);}
+  try { doc.addImage(LOGO_PGA,     "JPEG", W-30, 3, 22, 22); } catch(e){console.warn("PGA PDF:",e);}
 
   doc.setTextColor(...BLANCO);
   doc.setFontSize(18); doc.setFont("helvetica","bold");
@@ -146,9 +150,12 @@ async function generarPDFInforme(rpt, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 41, W, 18, "F");
 
-  // Logos en cabecera (GCR: proporción ~1:1.5; PGA: cuadrado)
-  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 23); } catch(e){}
-  try { doc.addImage(LOGO_PGA, "JPEG", W-30, 4, 22, 22); } catch(e){}
+  // Logos con fondo blanco y esquinas redondeadas — misma altura 22mm
+  doc.setFillColor(255,255,255);
+  doc.roundedRect(6, 2, 19, 26, 2, 2, "F");   // fondo GCR
+  doc.roundedRect(W-32, 2, 26, 26, 2, 2, "F"); // fondo PGA
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 4, 15, 22); } catch(e){console.warn("GCR PDF:",e);}
+  try { doc.addImage(LOGO_PGA,     "JPEG", W-30, 4, 22, 22); } catch(e){console.warn("PGA PDF:",e);}
 
   // Texto cabecera
   doc.setTextColor(...BLANCO);
@@ -4099,6 +4106,145 @@ function PinAlumnoRow({alumno, data, setData}){
     {ok&&<span style={{color:G.grass,fontSize:12}}>✔</span>}
   </div>;
 }
+// ═══════════════════════════════════════════════════════════════════
+// COMPRESOR DE FOTOS Y VÍDEOS
+// ═══════════════════════════════════════════════════════════════════
+function CompresorMedia(){
+  const [archivos, setArchivos] = useState([]);
+  const [procesando, setProcesando] = useState(false);
+
+  const MAX_FOTO_W = 1200;  // px
+  const MAX_FOTO_KB = 300;  // KB
+  const MAX_VIDEO_MB = 10;  // MB límite aviso
+
+  function procesarFoto(file){
+    return new Promise((resolve)=>{
+      const reader = new FileReader();
+      reader.onload = ev=>{
+        const img = new window.Image();
+        img.onload = ()=>{
+          const canvas = document.createElement("canvas");
+          let w = img.width, h = img.height;
+          // Reducir si supera MAX_FOTO_W
+          if(w > MAX_FOTO_W){ h = Math.round(h * MAX_FOTO_W / w); w = MAX_FOTO_W; }
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          // Comprimir con calidad ajustada
+          let quality = 0.85;
+          let dataUrl = canvas.toDataURL("image/jpeg", quality);
+          // Reducir calidad hasta llegar a MAX_FOTO_KB
+          while(dataUrl.length * 0.75 > MAX_FOTO_KB * 1024 && quality > 0.3){
+            quality -= 0.05;
+            dataUrl = canvas.toDataURL("image/jpeg", quality);
+          }
+          const kbFinal = Math.round(dataUrl.length * 0.75 / 1024);
+          resolve({
+            nombre: file.name.replace(/\.[^.]+$/, "") + "_comprimida.jpg",
+            dataUrl,
+            kbOriginal: Math.round(file.size/1024),
+            kbFinal,
+            tipo: "foto",
+            w, h,
+          });
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function manejarArchivos(e){
+    const files = Array.from(e.target.files);
+    if(!files.length) return;
+    setProcesando(true);
+    const resultados = [];
+    for(const file of files){
+      if(file.type.startsWith("image/")){
+        const r = await procesarFoto(file);
+        resultados.push(r);
+      } else if(file.type.startsWith("video/")){
+        const mbOrig = Math.round(file.size/1024/1024*10)/10;
+        const url = URL.createObjectURL(file);
+        resultados.push({
+          nombre: file.name,
+          dataUrl: url,
+          mbOriginal: mbOrig,
+          tipo: "video",
+          aviso: mbOrig > MAX_VIDEO_MB
+            ? `⚠️ Vídeo de ${mbOrig} MB. Los vídeos no se pueden comprimir en el navegador. Usa una app externa (Compress Video, HandBrake) para reducirlo antes de subirlo.`
+            : `✅ Vídeo de ${mbOrig} MB — dentro del límite.`
+        });
+      }
+    }
+    setArchivos(prev=>[...prev, ...resultados]);
+    setProcesando(false);
+  }
+
+  function descargar(r){
+    const a = document.createElement("a");
+    a.href = r.dataUrl;
+    a.download = r.nombre;
+    a.click();
+  }
+
+  function limpiar(){ setArchivos([]); }
+
+  return <div>
+    <Card style={{marginBottom:16}}>
+      <h3 style={{margin:"0 0 8px",color:G.fairway}}>🗜️ Compresor de fotos y vídeos</h3>
+      <p style={{fontSize:13,color:G.soft,margin:"0 0 14px",lineHeight:1.5}}>
+        Importa fotos o vídeos y los ajusta al tamaño permitido por la app.
+        Las fotos se comprimen automáticamente a máx. {MAX_FOTO_W}px / {MAX_FOTO_KB}KB.
+        Los vídeos se analizan y se indica si necesitan compresión externa.
+      </p>
+      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+        <label style={{background:G.fairway,color:"#fff",borderRadius:8,
+          padding:"10px 18px",fontSize:14,fontWeight:700,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8}}>
+          📁 Seleccionar fotos / vídeos
+          <input type="file" multiple accept="image/*,video/*"
+            onChange={manejarArchivos} style={{display:"none"}}/>
+        </label>
+        {archivos.length>0&&<Btn color="secondary" onClick={limpiar}>🗑 Limpiar todo</Btn>}
+        {procesando&&<span style={{color:G.soft,fontSize:13}}>⏳ Procesando...</span>}
+      </div>
+    </Card>
+
+    {archivos.length>0&&<div style={{display:"grid",gap:12}}>
+      {archivos.map((r,i)=>(
+        <Card key={i} style={{borderLeft:`4px solid ${r.tipo==="foto"?G.fairway:G.sky}`}}>
+          <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+            {/* Preview */}
+            {r.tipo==="foto"
+              ? <img src={r.dataUrl} alt={r.nombre}
+                  style={{width:72,height:72,objectFit:"cover",borderRadius:8,flexShrink:0}}/>
+              : <div style={{width:72,height:72,background:"#1a1a2e",borderRadius:8,
+                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}}>🎬</div>
+            }
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontWeight:700,color:G.ink,fontSize:13,marginBottom:4}}>{r.nombre}</div>
+              {r.tipo==="foto"&&<div style={{fontSize:12,color:G.soft}}>
+                📐 {r.w}×{r.h}px
+                · Antes: <b>{r.kbOriginal}KB</b>
+                → Después: <b style={{color:r.kbFinal<=MAX_FOTO_KB?G.grass:G.flag}}>{r.kbFinal}KB</b>
+                {r.kbFinal<=MAX_FOTO_KB
+                  ? <span style={{color:G.grass,marginLeft:6}}>✅ Lista para subir</span>
+                  : <span style={{color:G.flag,marginLeft:6}}>⚠️ Aún grande</span>}
+              </div>}
+              {r.tipo==="video"&&<div style={{fontSize:12,color:G.soft,marginTop:4}}>{r.aviso}</div>}
+            </div>
+            {r.tipo==="foto"&&<Btn small color="sky" onClick={()=>descargar(r)}>⬇ Descargar</Btn>}
+          </div>
+        </Card>
+      ))}
+    </div>}
+
+    {archivos.length===0&&!procesando&&<div style={{textAlign:"center",padding:32,color:G.soft,fontSize:13,background:G.mist,borderRadius:12}}>
+      Selecciona fotos o vídeos para comprimirlos automáticamente.
+    </div>}
+  </div>;
+}
+
 function ModAjustes({data,setData,onLogout}){
   const [pin,setPin]=useState(data.adminPin||DEFAULT_ADMIN_PIN);
   const [saved,setSaved]=useState(false);
@@ -4186,7 +4332,7 @@ function ModAjustes({data,setData,onLogout}){
   const stats=[[(data.alumnos||[]).length,"Alumnos","👤"],[(data.clases||[]).length,"Clases","📅"],[(data.analisis||[]).length,"Análisis","🎬"],[(data.pagos||[]).length,"Pagos","💶"]];
   const totalModified=Object.keys(labelsEdit).filter(k=>labelsEdit[k]!==DEFAULT_LABELS[k]&&labelsEdit[k]!=="").length;
 
-  const AJ_TABS=[{id:"pin",label:"🔐 Acceso"},{id:"portal",label:"👁️ Portal alumno"},{id:"campos",label:"✏️ Nombres de campos"},{id:"datos",label:"🗑 Datos"},{id:"backup",label:"💾 Copia de seguridad"}];
+  const AJ_TABS=[{id:"pin",label:"🔐 Acceso"},{id:"portal",label:"👁️ Portal alumno"},{id:"campos",label:"✏️ Nombres de campos"},{id:"datos",label:"🗑 Datos"},{id:"backup",label:"💾 Copia de seguridad"},{id:"compresor",label:"🗜️ Compresor"}];
 
   return <div style={{maxWidth:680}}>
     {/* Sub-tabs de ajustes */}
@@ -4409,6 +4555,9 @@ function ModAjustes({data,setData,onLogout}){
 
       <Btn color="danger" onClick={onLogout}>Salir de la app</Btn>
     </div>}
+
+    {/* ── COMPRESOR DE FOTOS Y VÍDEOS ── */}
+    {tabAj==="compresor"&&<CompresorMedia/>}
   </div>;
 }
 
