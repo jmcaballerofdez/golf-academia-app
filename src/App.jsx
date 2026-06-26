@@ -1386,16 +1386,14 @@ function LoginScreen({data,onLogin}){
         maxWidth:340,textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
         margin:"auto"}}>
 
-        {/* Logo JCGA */}
-        <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
-          <img src={LOGO_JCGA} alt="Golf B"
-            style={{width:"100%",maxWidth:220,objectFit:"contain"}}/>
+        {/* Logos */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,marginBottom:16}}>
+          <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:52,objectFit:"contain"}}/>
+          <div style={{width:1,height:40,background:"#ddd"}}/>
+          <img src={LOGO_JCGA} alt="Golf B" style={{height:46,objectFit:"contain"}}/>
+          <div style={{width:1,height:40,background:"#ddd"}}/>
+          <img src={LOGO_PGA} alt="PGA España" style={{height:50,objectFit:"contain"}}/>
         </div>
-
-        <div style={{fontWeight:800,fontSize:19,color:G.fairway,marginBottom:2}}>
-          Golf B
-        </div>
-        <div style={{fontSize:12,color:G.soft,marginBottom:6}}>Golf Ciudad Real C.D.</div>
         <div style={{fontSize:11,color:"#aaa",marginBottom:24}}>⛳ Plataforma de Gestión · Curso 2026/2027</div>
 
         {/* Campo de clave */}
@@ -9397,13 +9395,14 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:920,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:0.95}}/>
-            <img src={LOGO_PGA} alt="PGA España" style={{height:34,objectFit:"contain",marginLeft:4}}/>
-            <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:32,objectFit:"contain",marginLeft:4}}/>
-            <div style={{marginLeft:6}}>
-              <img src={LOGO_JCGA} alt="Golf B" style={{height:36,objectFit:"contain",opacity:.9}}/>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:1}}>{nombrePanel}</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:38,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.95}}/>
+            <div style={{width:1,height:30,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_JCGA} alt="Golf B" style={{height:34,objectFit:"contain",opacity:.95}}/>
+            <div style={{width:1,height:30,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.85}}/>
+            <div style={{marginLeft:4}}>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.65)"}}>{nombrePanel}</div>
             </div>
           </div>
           <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
@@ -9649,11 +9648,15 @@ function SuperAdminShell({data,setData,onLogout}){
     <div style={{background:"linear-gradient(135deg,#2c3e50,#1a252f)",color:"#fff",padding:"0 16px"}}>
       <div style={{maxWidth:980,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
-            <div>
-              <div style={{fontWeight:800,fontSize:16}}>Golf B</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>👑 Panel Administrador</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:40,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.95}}/>
+            <div style={{width:1,height:32,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_JCGA} alt="Golf B" style={{height:36,objectFit:"contain",opacity:.95}}/>
+            <div style={{width:1,height:32,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:38,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.85}}/>
+            <div style={{marginLeft:4}}>
+              <div style={{fontWeight:700,fontSize:13,color:"rgba(255,255,255,.9)"}}>Golf B</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.55)"}}>👑 Super Admin</div>
             </div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -9773,11 +9776,19 @@ export default function App(){
   // Pantalla de carga
   if(!fbReady) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
-      display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
-      <img src={LOGO_JCGA} alt="Golf B" style={{width:180,objectFit:"contain",marginBottom:8}}/>
+      display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      {/* Tres logos */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:4}}>
+        <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:64,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.95}}/>
+        <div style={{width:1,height:50,background:"rgba(255,255,255,.25)"}}/>
+        <img src={LOGO_JCGA} alt="Golf B" style={{height:56,objectFit:"contain",opacity:.95}}/>
+        <div style={{width:1,height:50,background:"rgba(255,255,255,.25)"}}/>
+        <img src={LOGO_PGA} alt="PGA España" style={{height:60,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
+      </div>
+      <div style={{color:"rgba(255,255,255,.55)",fontSize:12,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Plataforma de Gestión Golf</div>
       <div style={{color:"rgba(255,255,255,.7)",fontSize:14}}>Conectando con el servidor...</div>
-      <div style={{width:44,height:44,border:"4px solid rgba(255,255,255,.25)",
-        borderTop:"4px solid white",borderRadius:"50%",
+      <div style={{width:40,height:40,border:"3px solid rgba(255,255,255,.2)",
+        borderTop:"3px solid white",borderRadius:"50%",
         animation:"spin 1s linear infinite"}}/>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
