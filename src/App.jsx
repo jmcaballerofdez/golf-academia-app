@@ -54,17 +54,16 @@ async function generarPDFClase(clase, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 38, W, 16, "F");
 
-  // Logos (GCR: proporción ~1:1.5; PGA: cuadrado)
+  // Logos: GCR izquierda, Golf B centro, PGA derecha
   try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 2, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_JCGA, "PNG", W/2-13, 3, 26, 17); } catch(e){}
   try { doc.addImage(LOGO_PGA, "JPEG", W-30, 3, 22, 22); } catch(e){}
 
   doc.setTextColor(...BLANCO);
-  doc.setFontSize(18); doc.setFont("helvetica","bold");
-  doc.text("GOLF CIUDAD REAL C.D.", W/2, 14, {align:"center"});
-  doc.setFontSize(9); doc.setFont("helvetica","normal");
-  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 22, {align:"center"});
-  doc.setFontSize(8);
-  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 29, {align:"center"});
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 26, {align:"center"});
+  doc.setFontSize(8); doc.setFont("helvetica","normal");
+  doc.text("José Manuel Caballero Fernández  ·  Jugador Profesional y Técnico Deportivo de Golf  ·  PGA España Nº 1908P", W/2, 31, {align:"center"});
   doc.setFontSize(12); doc.setFont("helvetica","bold");
   doc.text("RESUMEN DE CLASE", W/2, 50, {align:"center"});
 
@@ -146,18 +145,17 @@ async function generarPDFInforme(rpt, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 41, W, 18, "F");
 
-  // Logos en cabecera (GCR: proporción ~1:1.5; PGA: cuadrado)
+  // Logos en cabecera: GCR izquierda, Golf B centro, PGA derecha
   try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_JCGA, "PNG", W/2-14, 5, 28, 18); } catch(e){}
   try { doc.addImage(LOGO_PGA, "JPEG", W-30, 4, 22, 22); } catch(e){}
 
   // Texto cabecera
   doc.setTextColor(...BLANCO);
-  doc.setFontSize(18); doc.setFont("helvetica","bold");
-  doc.text("GOLF CIUDAD REAL C.D.", W/2, 16, {align:"center"});
-  doc.setFontSize(9); doc.setFont("helvetica","normal");
-  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 25, {align:"center"});
-  doc.setFontSize(8);
-  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 33, {align:"center"});
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 30, {align:"center"});
+  doc.setFontSize(8); doc.setFont("helvetica","normal");
+  doc.text("José Manuel Caballero Fernández  ·  Jugador Profesional y Técnico Deportivo de Golf  ·  PGA España Nº 1908P", W/2, 36, {align:"center"});
 
   doc.setFontSize(13); doc.setFont("helvetica","bold");
   doc.text("INFORME DE SEGUIMIENTO", W/2, 53, {align:"center"});
