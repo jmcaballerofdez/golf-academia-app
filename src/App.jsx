@@ -54,17 +54,16 @@ async function generarPDFClase(clase, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 38, W, 16, "F");
 
-  // Logos (GCR: proporción ~1:1.5; PGA: cuadrado)
+  // Logos: GCR izquierda, Golf B centro, PGA derecha
   try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 2, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_JCGA, "PNG", W/2-13, 3, 26, 17); } catch(e){}
   try { doc.addImage(LOGO_PGA, "JPEG", W-30, 3, 22, 22); } catch(e){}
 
   doc.setTextColor(...BLANCO);
-  doc.setFontSize(18); doc.setFont("helvetica","bold");
-  doc.text("GOLF CIUDAD REAL C.D.", W/2, 14, {align:"center"});
-  doc.setFontSize(9); doc.setFont("helvetica","normal");
-  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 22, {align:"center"});
-  doc.setFontSize(8);
-  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 29, {align:"center"});
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 26, {align:"center"});
+  doc.setFontSize(8); doc.setFont("helvetica","normal");
+  doc.text("José Manuel Caballero Fernández  ·  Jugador Profesional y Técnico Deportivo de Golf  ·  PGA España Nº 1908P", W/2, 31, {align:"center"});
   doc.setFontSize(12); doc.setFont("helvetica","bold");
   doc.text("RESUMEN DE CLASE", W/2, 50, {align:"center"});
 
@@ -113,7 +112,7 @@ async function generarPDFClase(clase, alumnoNombre){
   doc.rect(0, H-11, W, 11, "F");
   doc.setTextColor(...BLANCO);
   doc.setFontSize(7); doc.setFont("helvetica","normal");
-  doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
+  doc.text("Golf B  ·  Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
 
   doc.save("clase-" + (clase.fecha||"golf") + "-" + alumnoNombre.replace(/\s+/g,"_") + ".pdf");
 }
@@ -146,18 +145,17 @@ async function generarPDFInforme(rpt, alumnoNombre){
   doc.setFillColor(...VERDE);
   doc.rect(0, 41, W, 18, "F");
 
-  // Logos en cabecera (GCR: proporción ~1:1.5; PGA: cuadrado)
+  // Logos en cabecera: GCR izquierda, Golf B centro, PGA derecha
   try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_JCGA, "PNG", W/2-14, 5, 28, 18); } catch(e){}
   try { doc.addImage(LOGO_PGA, "JPEG", W-30, 4, 22, 22); } catch(e){}
 
   // Texto cabecera
   doc.setTextColor(...BLANCO);
-  doc.setFontSize(18); doc.setFont("helvetica","bold");
-  doc.text("GOLF CIUDAD REAL C.D.", W/2, 16, {align:"center"});
-  doc.setFontSize(9); doc.setFont("helvetica","normal");
-  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 25, {align:"center"});
-  doc.setFontSize(8);
-  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 33, {align:"center"});
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 30, {align:"center"});
+  doc.setFontSize(8); doc.setFont("helvetica","normal");
+  doc.text("José Manuel Caballero Fernández  ·  Jugador Profesional y Técnico Deportivo de Golf  ·  PGA España Nº 1908P", W/2, 36, {align:"center"});
 
   doc.setFontSize(13); doc.setFont("helvetica","bold");
   doc.text("INFORME DE SEGUIMIENTO", W/2, 53, {align:"center"});
@@ -264,7 +262,7 @@ async function generarPDFInforme(rpt, alumnoNombre){
   const firma0 = rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández";
   doc.text(firma0, 20, y+5);
   doc.setFont("helvetica","normal"); doc.setTextColor(60,60,60); doc.setFontSize(9);
-  (rpt.firmaTexto?.split("\n").slice(1)||["Jugador Profesional y Técnico Deportivo de Golf","PGA de España Nº 1908P","Golf Ciudad Real C.D."]).forEach((l,i)=>{
+  (rpt.firmaTexto?.split("\n").slice(1)||["Jugador Profesional y Técnico Deportivo de Golf","PGA España Member Nº 1908P","Golf B · Golf Ciudad Real C.D."]).forEach((l,i)=>{
     doc.text(l, 20, y+11+(i*4.5));
   });
 
@@ -285,7 +283,7 @@ async function generarPDFInforme(rpt, alumnoNombre){
     doc.rect(0, H-11, W, 11, "F");
     doc.setTextColor(...BLANCO);
     doc.setFontSize(7); doc.setFont("helvetica","normal");
-    doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
+    doc.text("Golf B  ·  Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
     if(totalPages>1){
       doc.text("Pag. "+i+" / "+totalPages, W-12, H-5, {align:"right"});
     }
@@ -626,7 +624,7 @@ const DEFAULT_LABELS = {
   nav_ejercicios:"Ejercicios & Tests", nav_mensajes:"Mensajes",
   nav_tareas:"Tareas", nav_pagos:"Pagos", nav_ajustes:"Ajustes",
   // ── App general
-  app_nombre:"José Caballero Golf Academy", app_subtitulo:"Golf Ciudad Real C.D.",
+  app_nombre:"Golf B", app_subtitulo:"Golf Ciudad Real C.D.",
   app_profesor:"Profesor", app_alumno:"Alumno",
   // ── Ficha de alumno
   campo_nombre:"Nombre completo", campo_edad:"Edad", campo_nivel:"Nivel",
@@ -1002,7 +1000,7 @@ function PantallaRegistro({onVolver}){
           <div style={{fontSize:11,color:G.soft,marginTop:4}}>Guárdalo bien — lo necesitarás para entrar</div>
         </div>
         <div style={{fontSize:13,color:G.soft,marginBottom:20}}>
-          URL de la app: <b style={{color:G.sky}}>golf-ciudad-real.netlify.app</b>
+          URL de la app: <b style={{color:G.sky}}>jmcaballerofdez.github.io/golf-academia-app</b>
         </div>
         <button onClick={onVolver} style={{background:G.fairway,color:"white",border:"none",
           borderRadius:10,padding:"12px 24px",fontSize:15,fontWeight:700,cursor:"pointer",width:"100%"}}>
@@ -1018,8 +1016,8 @@ function PantallaRegistro({onVolver}){
       <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,
         padding:"20px 20px 16px",color:"white",textAlign:"center"}}>
         <div style={{fontSize:24,marginBottom:4}}>⛳</div>
-        <div style={{fontWeight:800,fontSize:18}}>Golf Ciudad Real Academy</div>
-        <div style={{fontSize:13,opacity:.8}}>Formulario de inscripción</div>
+        <div style={{fontWeight:800,fontSize:18}}>Golf B</div>
+        <div style={{fontSize:13,opacity:.8}}>Golf B · Formulario de inscripción</div>
       </div>
 
       {/* Indicador de pasos */}
@@ -1386,17 +1384,15 @@ function LoginScreen({data,onLogin}){
         maxWidth:340,textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
         margin:"auto"}}>
 
-        {/* Logo JCGA */}
-        <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
-          <img src={LOGO_JCGA} alt="José Caballero Golf Academy"
-            style={{width:"100%",maxWidth:280,objectFit:"contain",borderRadius:12}}/>
+        {/* Logos */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,marginBottom:16}}>
+          <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:52,objectFit:"contain"}}/>
+          <div style={{width:1,height:40,background:"#ddd"}}/>
+          <img src={LOGO_JCGA} alt="Golf B" style={{height:46,objectFit:"contain"}}/>
+          <div style={{width:1,height:40,background:"#ddd"}}/>
+          <img src={LOGO_PGA} alt="PGA España" style={{height:50,objectFit:"contain"}}/>
         </div>
-
-        <div style={{fontWeight:800,fontSize:19,color:G.fairway,marginBottom:2}}>
-          José Caballero Golf Academy
-        </div>
-        <div style={{fontSize:12,color:G.soft,marginBottom:6}}>Golf Ciudad Real C.D.</div>
-        <div style={{fontSize:11,color:"#aaa",marginBottom:24}}>🏫 Escuela de Golf · Curso 2026/2027</div>
+        <div style={{fontSize:11,color:"#aaa",marginBottom:24}}>⛳ Plataforma de Gestión · Curso 2026/2027</div>
 
         {/* Campo de clave */}
         <div style={{fontSize:13,color:G.soft,marginBottom:12,fontWeight:600}}>
@@ -1587,7 +1583,7 @@ function PanelPdfCalendario({esProfesor}){
         <div style={{fontSize:12,color:G.soft}}>
           {esProfesor
             ? "Sube el PDF del calendario de clases para que los alumnos puedan descargarlo"
-            : "Descarga el calendario de clases de la academia"}
+            : "Descarga el calendario de clases de Golf B"}
         </div>
       </div>
     </div>
@@ -1658,7 +1654,7 @@ function ModCalendario({data,setData}){
   function exportarICS(){
     const clases=(data.clases||[]).filter(c=>c.fecha);
     if(clases.length===0){ alert("No hay clases para exportar."); return; }
-    const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Golf Ciudad Real//Academia//ES","CALSCALE:GREGORIAN"];
+    const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Golf B//Golf Ciudad Real//ES","CALSCALE:GREGORIAN"];
     clases.forEach(c=>{
       const alumno=(data.alumnos||[]).find(a=>a.id===c.alumnoId);
       const titulo="Clase golf"+(alumno?" - "+alumno.nombre:"");
@@ -1671,7 +1667,7 @@ function ModCalendario({data,setData}){
       lines.push("DTSTART;TZID=Europe/Madrid:"+dt+"T"+hi+"00");
       lines.push("DTEND;TZID=Europe/Madrid:"+dt+"T"+hEnd+"00");
       lines.push("SUMMARY:"+titulo);
-      lines.push("DESCRIPTION:Academia Golf Ciudad Real"+(c.notas?" - "+c.notas:""));
+      lines.push("DESCRIPTION:Golf B - Golf Ciudad Real"+(c.notas?" - "+c.notas:""));
       lines.push("END:VEVENT");
     });
     lines.push("END:VCALENDAR");
@@ -1720,7 +1716,7 @@ function ModCalendario({data,setData}){
     doc.rect(0, 0, W, 22, "F");
     doc.setTextColor(255,255,255);
     doc.setFontSize(14); doc.setFont("helvetica","bold");
-    doc.text("Golf Ciudad Real C.D. — Listado de Clases", W/2, 10, {align:"center"});
+    doc.text("Golf B · Golf Ciudad Real C.D. — Listado de Clases", W/2, 10, {align:"center"});
     doc.setFontSize(9); doc.setFont("helvetica","normal");
     doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 17, {align:"center"});
 
@@ -1770,7 +1766,7 @@ function ModCalendario({data,setData}){
     doc.rect(0, H-10, W, 10, "F");
     doc.setTextColor(255,255,255);
     doc.setFontSize(7);
-    doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy · "+new Date().toLocaleDateString("es-ES"), W/2, H-4, {align:"center"});
+    doc.text("Golf B · Golf Ciudad Real C.D. · "+new Date().toLocaleDateString("es-ES"), W/2, H-4, {align:"center"});
 
     doc.save("clases-golf-"+new Date().toISOString().slice(0,10)+".pdf");
   }
@@ -1828,7 +1824,7 @@ function ModCalendario({data,setData}){
               calendarId:"primary",
               resource:{
                 summary:titulo,
-                description:"Academia Golf Ciudad Real — "+(c.notas||""),
+                description:"Golf B - Golf Ciudad Real — "+(c.notas||""),
                 start:{dateTime:ini.toISOString(),timeZone:"Europe/Madrid"},
                 end:{dateTime:fin.toISOString(),timeZone:"Europe/Madrid"},
                 colorId:"2",
@@ -2531,7 +2527,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,
         paddingBottom:12,borderBottom:"1px solid #e0eee0"}}>
         <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain"}}/>
-        <div style={{fontSize:12,color:G.soft}}>🏫 Escuela de Golf · Golf Ciudad Real C.D. · Curso 2026/2027</div>
+        <div style={{fontSize:12,color:G.soft}}>⛳ Golf B · Golf Ciudad Real C.D. · Curso 2026/2027</div>
       </div>
 
       {/* Tipo de escuela auto-detectado */}
@@ -3294,8 +3290,8 @@ function ModAnalisis({data,setData}){
     setAiLoading(true);
     const a=alumnos.find(x=>x.id===form.alumnoId);
     const prompt=paraTutor
-      ?`Eres el profesor de golf José Caballero de la José Caballero Golf Academy (Golf Ciudad Real C.D.). Escribe un comentario amable y motivador en español para los padres/tutores del alumno "${a?.nombre}" (${a?.nivel||""}, ${a?.edad||"—"} años). Tipo de golpe: ${form.tipo||"Swing"} con ${form.palo}. Positivos: ${(form.aspectosBuenos||[]).join(", ")||"varios"}. A mejorar: ${(form.aspectosMejorar||[]).join(", ")||"algunos aspectos"}. Breve, cálido, 3 párrafos, nota motivadora final.`
-      :`Eres el profesor de golf José Caballero de la José Caballero Golf Academy. Redacta un informe técnico profesional en español para el alumno "${a?.nombre}" (${a?.nivel||""}). Tipo: ${form.tipo} con ${form.palo}. Positivos: ${(form.aspectosBuenos||[]).join(", ")||"ninguno"}. A mejorar: ${(form.aspectosMejorar||[]).join(", ")||"ninguno"}. 3-4 párrafos, con drills recomendados.`;
+      ?`Eres el profesor de golf José Manuel Caballero Fernández de Golf B (Golf Ciudad Real C.D.). Escribe un comentario amable y motivador en español para los padres/tutores del alumno "${a?.nombre}" (${a?.nivel||""}, ${a?.edad||"—"} años). Tipo de golpe: ${form.tipo||"Swing"} con ${form.palo}. Positivos: ${(form.aspectosBuenos||[]).join(", ")||"varios"}. A mejorar: ${(form.aspectosMejorar||[]).join(", ")||"algunos aspectos"}. Breve, cálido, 3 párrafos, nota motivadora final.`
+      :`Eres el profesor de golf José Manuel Caballero Fernández de Golf B. Redacta un informe técnico profesional en español para el alumno "${a?.nombre}" (${a?.nivel||""}). Tipo: ${form.tipo} con ${form.palo}. Positivos: ${(form.aspectosBuenos||[]).join(", ")||"ninguno"}. A mejorar: ${(form.aspectosMejorar||[]).join(", ")||"ninguno"}. 3-4 párrafos, con drills recomendados.`;
     try{
       const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})});
       const json=await res.json();
@@ -3566,7 +3562,7 @@ function ModPagos({data,setData}){
     const csv=rows.map(r=>r.map(v=>{const s=String(v).replace(/"/g,'""');return s.includes(sep)?`"${s}"`:s;}).join(sep)).join("\r\n");
     const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");a.href=url;a.download="contabilidad-academia.csv";a.click();URL.revokeObjectURL(url);
+    const a=document.createElement("a");a.href=url;a.download="contabilidad-golf-b.csv";a.click();URL.revokeObjectURL(url);
   }
 
   // ── Colores tabs ─────────────────────────────────────────────────
@@ -4139,7 +4135,7 @@ function ModAjustes({data,setData,onLogout}){
       <Card style={{marginBottom:16,borderLeft:"4px solid #2c3e50"}}>
         <h3 style={{margin:"0 0 8px",color:"#2c3e50"}}>👑 PIN de Super-Administrador</h3>
         <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
-          El super-admin tiene acceso completo a toda la academia, incluyendo gestión de profesores y vista global de datos.
+          El super-admin tiene acceso completo a Golf B, incluyendo gestión de profesores y vista global de datos.
         </p>
         <Field label="PIN super-admin (4 dígitos)">
           <Input value={pinSuper} onChange={v=>setPinSuper(v.replace(/\D/g,"").slice(0,4))} placeholder="0000"/>
@@ -4506,7 +4502,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
       <div style={{maxWidth:680,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:32,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:0.95}}/>
+            <img src={LOGO_JCGA} alt="Golf B" style={{height:32,objectFit:"contain",opacity:0.95}}/>
             <img src={LOGO_PGA} alt="PGA España" style={{height:30,objectFit:"contain",marginLeft:4}}/>
             <div style={{marginLeft:4}}>
               <div style={{fontWeight:800,fontSize:15}}>{tutorNombre?"Portal Familiar":"Mi Portal de Golf"}</div>
@@ -8495,7 +8491,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
         <h4 style={{margin:"0 0 8px",color:G.fairway}}>✍️ Firma del profesor</h4>
         <Textarea value={rpt.firmaTexto||""}
           onChange={v=>upd("firmaTexto",v)} rows={3}
-          placeholder="José Manuel Caballero Fernández&#10;PGA España Nº 1908P&#10;Golf Ciudad Real C.D."/>
+          placeholder="José Manuel Caballero Fernández&#10;Jugador Profesional y Técnico Deportivo de Golf&#10;PGA España Member Nº 1908P&#10;Golf B · Golf Ciudad Real C.D."/>
       </Card>
     </div>}
   </div>;
@@ -9397,13 +9393,14 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:920,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:0.95}}/>
-            <img src={LOGO_PGA} alt="PGA España" style={{height:34,objectFit:"contain",marginLeft:4}}/>
-            <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:32,objectFit:"contain",marginLeft:4}}/>
-            <div style={{marginLeft:6}}>
-              <img src={LOGO_JCGA} alt="JCGA" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.85}}/>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:1}}>{nombrePanel}</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:38,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.95}}/>
+            <div style={{width:1,height:30,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_JCGA} alt="Golf B" style={{height:34,objectFit:"contain",opacity:.95}}/>
+            <div style={{width:1,height:30,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.85}}/>
+            <div style={{marginLeft:4}}>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.65)"}}>{nombrePanel}</div>
             </div>
           </div>
           <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
@@ -9496,7 +9493,7 @@ function ModProfesores({data,setData}){
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div>
-        <h3 style={{margin:0,color:G.fairway}}>👨‍🏫 Profesores de la academia</h3>
+        <h3 style={{margin:0,color:G.fairway}}>👨‍🏫 Profesores Golf B</h3>
         <div style={{fontSize:13,color:G.soft,marginTop:2}}>{profesores.length} profesores registrados</div>
       </div>
       <Btn onClick={openNew}>+ Añadir profesor</Btn>
@@ -9561,7 +9558,7 @@ function ModProfesores({data,setData}){
 
     {/* Resumen global */}
     {profesores.length>0&&<Card style={{marginTop:16,background:"#f9f9f9"}}>
-      <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>📊 Resumen global de la academia</div>
+      <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>📊 Resumen global Golf B</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
         {[
           [(data.alumnos||[]).length,"Alumnos totales","👤"],
@@ -9649,11 +9646,15 @@ function SuperAdminShell({data,setData,onLogout}){
     <div style={{background:"linear-gradient(135deg,#2c3e50,#1a252f)",color:"#fff",padding:"0 16px"}}>
       <div style={{maxWidth:980,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
-            <div>
-              <div style={{fontWeight:800,fontSize:16}}>José Caballero Golf Academy</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>👑 Panel Administrador</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:40,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.95}}/>
+            <div style={{width:1,height:32,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_JCGA} alt="Golf B" style={{height:36,objectFit:"contain",opacity:.95}}/>
+            <div style={{width:1,height:32,background:"rgba(255,255,255,.25)"}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:38,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.85}}/>
+            <div style={{marginLeft:4}}>
+              <div style={{fontWeight:700,fontSize:13,color:"rgba(255,255,255,.9)"}}>Golf B</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.55)"}}>👑 Super Admin</div>
             </div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -9706,7 +9707,7 @@ function SuperAdminShell({data,setData,onLogout}){
 // ═══════════════════════════════════════════════════════════════════
 // ROOT
 // ═══════════════════════════════════════════════════════════════════
-const LOGO_JCGA = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNCIgdmlld0JveD0iMCAwIDY4MCAzODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjY4MCIgaGVpZ2h0PSIzODAiIGZpbGw9IiMwODA4MDgiLz4KICA8cGF0aCBkPSJNIDI1NSAxOTUgQyAyNjggMTMwIDMxMCA3OCAzNjAgODggQyA0MDAgOTYgNDE4IDEyOCA0MDggMTY4IiBmaWxsPSJub25lIiBzdHJva2U9IiMxYTVjMmEiIHN0cm9rZS13aWR0aD0iMzIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0gMjU1IDE5NSBDIDI2OCAxMzAgMzEwIDc4IDM2MCA4OCBDIDQwMCA5NiA0MTggMTI4IDQwOCAxNjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjQwOCIgY3k9IjE2OCIgcj0iMjQiIGZpbGw9IiMwODA4MDgiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8Y2lyY2xlIGN4PSI0MDgiIGN5PSIxNjgiIHI9IjE1IiBmaWxsPSIjMWE1YzJhIi8+CiAgPGNpcmNsZSBjeD0iNDA4IiBjeT0iMTY4IiByPSI3IiBmaWxsPSIjYzhhODRiIi8+CiAgPHBhdGggZD0iTSA0MDggMTY4IEMgNDQ1IDEzOCA0NzIgMTQ4IDQ2OCAxODIgQyA0NjQgMjA4IDQ0OCAyMTggNDQwIDIyNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzhhODRiIiBzdHJva2Utd2lkdGg9IjAuOCIgc3Ryb2tlLWRhc2hhcnJheT0iMyA3IiBvcGFjaXR5PSIwLjQ1Ii8+CiAgPGxpbmUgeDE9IjE3MiIgeTE9IjIyNiIgeDI9IjUwOCIgeTI9IjIyNiIgc3Ryb2tlPSIjMWE1YzJhIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8bGluZSB4MT0iMTcyIiB5MT0iMjI5IiB4Mj0iNTA4IiB5Mj0iMjI5IiBzdHJva2U9IiNjOGE4NGIiIHN0cm9rZS13aWR0aD0iMC41IiBvcGFjaXR5PSIwLjQiLz4KICA8bGluZSB4MT0iNDQwIiB5MT0iMTg2IiB4Mj0iNDQwIiB5Mj0iMjI2IiBzdHJva2U9IiNmMGViZTAiIHN0cm9rZS13aWR0aD0iMS4yIiBvcGFjaXR5PSIwLjciLz4KICA8cGF0aCBkPSJNIDQ0MCAxODYgTCA0NjAgMTk2IEwgNDQwIDIwNiBaIiBmaWxsPSIjYzhhODRiIi8+CiAgPGVsbGlwc2UgY3g9IjI3MiIgY3k9IjIzMCIgcng9IjI4IiByeT0iNCIgZmlsbD0iIzFhNWMyYSIgb3BhY2l0eT0iMC40Ii8+CiAgPGNpcmNsZSBjeD0iMjcyIiBjeT0iMTg2IiByPSIxMSIgZmlsbD0iI2YwZWJlMCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNzIiIHkxPSIxOTciIHgyPSIyNjQiIHkyPSIyMjYiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNzIiIHkxPSIxOTciIHgyPSIyODAiIHkyPSIyMjYiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNjQiIHkxPSIyMDgiIHgyPSIyOTYiIHkyPSIxOTgiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyOTYiIHkxPSIxOTgiIHgyPSIyNTYiIHkyPSIxOTYiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSIyMjAiIHkxPSIyNTQiIHgyPSI0NjAiIHkyPSIyNTQiIHN0cm9rZT0iIzFhNWMyYSIgc3Ryb2tlLXdpZHRoPSIwLjgiLz4KICA8dGV4dCB4PSIzNDAiIHk9IjI4OCIgZm9udC1mYW1pbHk9IidIZWx2ZXRpY2EgTmV1ZScsSGVsdmV0aWNhLEFyaWFsLHNhbnMtc2VyaWYiIGZpbGw9IiNmMGViZTAiIGxldHRlci1zcGFjaW5nPSI3IiBmb250LXdlaWdodD0iMjAwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5KT1PDiSBDQUJBTExFUk88L3RleHQ+CiAgPGxpbmUgeDE9IjIwNSIgeTE9IjMwNCIgeDI9IjMxOCIgeTI9IjMwNCIgc3Ryb2tlPSIjYzhhODRiIiBzdHJva2Utd2lkdGg9IjAuNSIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjMwNCIgcj0iMiIgZmlsbD0iI2M4YTg0YiIvPgogIDxsaW5lIHgxPSIzNjIiIHkxPSIzMDQiIHgyPSI0NzUiIHkyPSIzMDQiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIwLjUiLz4KICA8dGV4dCB4PSIzNDAiIHk9IjMzMiIgZm9udC1mYW1pbHk9IidIZWx2ZXRpY2EgTmV1ZScsSGVsdmV0aWNhLEFyaWFsLHNhbnMtc2VyaWYiIGZpbGw9IiNjOGE4NGIiIGxldHRlci1zcGFjaW5nPSIxNCIgZm9udC13ZWlnaHQ9IjMwMCIgZm9udC1zaXplPSIxMiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R09MRiBBQ0FERU1ZPC90ZXh0PgogIDx0ZXh0IHg9IjM0MCIgeT0iMzYwIiBmb250LWZhbWlseT0iJ0hlbHZldGljYSBOZXVlJyxIZWx2ZXRpY2EsQXJpYWwsc2Fucy1zZXJpZiIgZmlsbD0iI2YwZWJlMCIgbGV0dGVyLXNwYWNpbmc9IjMiIGZvbnQtd2VpZ2h0PSIxMDAiIGZvbnQtc2l6ZT0iOSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgb3BhY2l0eT0iMC4zNSI+Q0lVREFEIFJFQUw8L3RleHQ+Cjwvc3ZnPgo=";
+const LOGO_JCGA = "data:image/png;base64,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";
 
 export default function App(){
   const [data,setDataRaw]   = useState(loadData);
@@ -9773,11 +9774,19 @@ export default function App(){
   // Pantalla de carga
   if(!fbReady) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
-      display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
-      <img src={LOGO_JCGA} alt="José Caballero Golf Academy" style={{width:200,objectFit:"contain",borderRadius:10,marginBottom:8}}/>
+      display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}}>
+      {/* Tres logos */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:20,marginBottom:4}}>
+        <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:64,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.95}}/>
+        <div style={{width:1,height:50,background:"rgba(255,255,255,.25)"}}/>
+        <img src={LOGO_JCGA} alt="Golf B" style={{height:56,objectFit:"contain",opacity:.95}}/>
+        <div style={{width:1,height:50,background:"rgba(255,255,255,.25)"}}/>
+        <img src={LOGO_PGA} alt="PGA España" style={{height:60,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
+      </div>
+      <div style={{color:"rgba(255,255,255,.55)",fontSize:12,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Plataforma de Gestión Golf</div>
       <div style={{color:"rgba(255,255,255,.7)",fontSize:14}}>Conectando con el servidor...</div>
-      <div style={{width:44,height:44,border:"4px solid rgba(255,255,255,.25)",
-        borderTop:"4px solid white",borderRadius:"50%",
+      <div style={{width:40,height:40,border:"3px solid rgba(255,255,255,.2)",
+        borderTop:"3px solid white",borderRadius:"50%",
         animation:"spin 1s linear infinite"}}/>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
