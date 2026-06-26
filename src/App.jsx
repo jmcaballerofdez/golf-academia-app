@@ -1297,7 +1297,9 @@ function PantallaRegistro({onVolver}){
 
 function LoginScreen({data,onLogin}){
   const [pin,setPin]=useState("");
+  const [mostrarPin,setMostrarPin]=useState(false);
   const [mostrarRegistro,setMostrarRegistro]=useState(false);
+  const [mostrarRecuperar,setMostrarRecuperar]=useState(false);
   const [recordar,setRecordar]=useState(()=>localStorage.getItem("gcr_recordar")==="1");
 
   // Auto-login si hay PIN guardado (se re-ejecuta cuando cargan los datos)
@@ -1415,7 +1417,7 @@ function LoginScreen({data,onLogin}){
           Plataforma Gestión Clases de Golf
         </div>
 
-        {/* Campo de clave */}
+        {/* Campo de clave con ojito */}
         <div style={{fontSize:13,color:G.soft,marginBottom:12,fontWeight:600}}>
           {intentando?"✔ Identificado…":"Introduce tu clave de acceso"}
         </div>
@@ -1423,16 +1425,23 @@ function LoginScreen({data,onLogin}){
         {error&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,
           padding:"8px 12px",fontSize:13,marginBottom:12}}>{error}</div>}
 
-        <div style={{marginBottom:14}}>
-          <input type="password" value={pin}
+        <div style={{marginBottom:14,position:"relative"}}>
+          <input type={mostrarPin?"text":"password"} value={pin}
             onChange={e=>setPin(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter"&&pin.length>0)intentarAcceso(pin);}}
             placeholder="Tu clave de acceso"
             autoComplete="current-password"
             style={{width:"100%",boxSizing:"border-box",border:"2px solid #d0e0d0",
-              borderRadius:12,padding:"14px 16px",fontSize:18,textAlign:"center",
-              fontFamily:"inherit",letterSpacing:2}}/>
+              borderRadius:12,padding:"14px 48px 14px 16px",fontSize:18,textAlign:"center",
+              fontFamily:"inherit",letterSpacing:mostrarPin?1:2}}/>
+          <button onClick={()=>setMostrarPin(v=>!v)}
+            style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",
+              background:"none",border:"none",cursor:"pointer",fontSize:20,color:G.soft,
+              padding:4,lineHeight:1}}>
+            {mostrarPin?"🙈":"👁️"}
+          </button>
         </div>
+
         <button onClick={()=>intentarAcceso(pin)} disabled={pin.length===0}
           style={{width:"100%",background:G.fairway,color:"white",border:"none",
             borderRadius:12,padding:"14px 0",fontSize:16,fontWeight:700,
@@ -1444,6 +1453,35 @@ function LoginScreen({data,onLogin}){
         <div style={{fontSize:11,color:"#ccc",marginTop:14}}>
           Tu clave te identifica automáticamente como profesor o alumno
         </div>
+
+        {/* Olvidé mi clave */}
+        <div style={{marginTop:10,textAlign:"center"}}>
+          <button onClick={()=>setMostrarRecuperar(v=>!v)}
+            style={{background:"none",border:"none",color:G.soft,fontSize:12,
+              cursor:"pointer",textDecoration:"underline"}}>
+            ¿Olvidaste tu clave?
+          </button>
+        </div>
+
+        {mostrarRecuperar&&<div style={{background:"#f0f7f0",borderRadius:10,
+          padding:"14px 16px",marginTop:10,fontSize:13,color:G.ink,textAlign:"left"}}>
+          <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>🔑 Recuperar acceso</div>
+          <p style={{margin:"0 0 8px",color:G.soft,lineHeight:1.5}}>
+            Si eres <b>alumno</b>, contacta con tu profesor para que te indique o restablezca tu PIN.
+          </p>
+          <p style={{margin:"0 0 8px",color:G.soft,lineHeight:1.5}}>
+            Si eres <b>profesor</b>, accede con el PIN de Super-Administrador (<b>Ajustes → Acceso</b>) y restablece tu clave desde ahí.
+          </p>
+          <p style={{margin:0,color:G.soft,lineHeight:1.5}}>
+            Si no recuerdas el PIN de Super-Admin, el PIN por defecto es <b>0000</b>.
+          </p>
+          <button onClick={()=>setMostrarRecuperar(false)}
+            style={{marginTop:10,background:"none",border:"1px solid #ccc",
+              borderRadius:6,padding:"4px 12px",fontSize:12,cursor:"pointer",color:G.soft}}>
+            Cerrar
+          </button>
+        </div>}
+
         <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,justifyContent:"center"}}>
           <input type="checkbox" id="recordar" checked={recordar}
             onChange={e=>{setRecordar(e.target.checked);
