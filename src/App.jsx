@@ -1,0 +1,10500 @@
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
+         addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
+} from "firebase/firestore";
+import { getAuth, signInAnonymously } from "firebase/auth";
+
+// ─── Firebase Config ──────────────────────────────────────────────
+// ── Google Calendar Configuración ────────────────────────────────
+const GCAL_CLIENT_ID = "532891287117-do4egt1ssit9eqmfg6ugtvfkal361d1o.apps.googleusercontent.com";
+const GCAL_SCOPES = "https://www.googleapis.com/auth/calendar";
+const GCAL_DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
+
+// ── EmailJS Configuración ─────────────────────────────────────────
+const EMAILJS_CONFIG = {
+  serviceId: "service_4vak30q",
+  templateProfesor: "template_2dwd6gs",
+  templateAlumno: "template_1npsgx8",
+  publicKey: "_ylIbA5NuK_OsByYY",
+};
+
+// ─── Cargar jsPDF dinámicamente ──────────────────────────────────
+function cargarJsPDF(){
+  if(window.jspdf) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload=()=>resolve();
+    s.onerror=()=>reject(new Error("jsPDF no cargó"));
+    document.head.appendChild(s);
+  });
+}
+
+async function generarPDFClase(clase, alumnoNombre){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  let y = 0;
+
+  // Paleta GCR + PGA
+  const VERDE = [15, 80, 30];
+  const AZUL  = [0, 48, 87];
+  const DORADO= [180, 140, 60];
+  const BLANCO= [255, 255, 255];
+  const GRIS  = [240, 242, 244];
+
+  // Cabecera azul marino
+  doc.setFillColor(...AZUL);
+  doc.rect(0, 0, W, 35, "F");
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 35, W, 3, "F");
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 38, W, 16, "F");
+
+  // Logos (GCR: proporción ~1:1.5; PGA: cuadrado)
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 2, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_PGA, "JPEG", W-30, 3, 22, 22); } catch(e){}
+
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(18); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 14, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 22, {align:"center"});
+  doc.setFontSize(8);
+  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 29, {align:"center"});
+  doc.setFontSize(12); doc.setFont("helvetica","bold");
+  doc.text("RESUMEN DE CLASE", W/2, 50, {align:"center"});
+
+  y = 62;
+
+  // Datos de la clase
+  doc.setTextColor(30,30,30);
+  doc.setFontSize(11);
+  const fmtISO2 = (iso) => { if(!iso) return ""; const p=iso.split("-"); return p.length===3?p[2]+"/"+p[1]+"/"+p[0]:iso; };
+  const filas = [
+    ["Alumno:", alumnoNombre],
+    ["Fecha:", fmtISO2(clase.fecha) || "—"],
+    ["Hora:", clase.horaInicio || clase.hora || "—"],
+    ["Duracion:", (clase.duracion||"60")+" min"],
+    ["Tipo:", clase.tipo || "—"],
+    ["Zona:", clase.zona || "—"],
+    ["Asistencia:", clase.asistio ? "Asistio" : "Pendiente"],
+  ];
+  filas.forEach(([k,v],i)=>{
+    const even = i%2===0;
+    doc.setFillColor(...(even ? [240,242,244] : [255,255,255]));
+    doc.rect(15, y-4, W-30, 7, "F");
+    doc.setFillColor(180,140,60);
+    doc.rect(15, y-4, 2, 7, "F");
+    doc.setFont("helvetica","bold"); doc.setTextColor(0,48,87);
+    doc.text(k, 20, y+0.5);
+    doc.setFont("helvetica","normal"); doc.setTextColor(30,30,30);
+    doc.text(String(v), 65, y+0.5);
+    y += 7;
+  });
+
+  if(clase.contenido){
+    y += 3;
+    doc.setFont("helvetica","bold"); doc.text("Contenido / Notas:", 15, y);
+    y += 6;
+    doc.setFont("helvetica","normal");
+    const lines = doc.splitTextToSize(clase.contenido, W-30);
+    doc.text(lines, 15, y);
+    y += lines.length * 5 + 4;
+  }
+
+  // Pie de página
+  doc.setFillColor(...DORADO);
+  doc.rect(0, H-13, W, 2, "F");
+  doc.setFillColor(...AZUL);
+  doc.rect(0, H-11, W, 11, "F");
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(7); doc.setFont("helvetica","normal");
+  doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
+
+  doc.save("clase-" + (clase.fecha||"golf") + "-" + alumnoNombre.replace(/\s+/g,"_") + ".pdf");
+}
+
+async function generarPDFInforme(rpt, alumnoNombre){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  let y = 0;
+
+  // Paleta: verde GCR + azul marino PGA + dorado PGA
+  const VERDE = [15, 80, 30];      // Verde oscuro Golf Ciudad Real
+  const AZUL  = [0, 48, 87];       // Azul marino PGA España
+  const DORADO= [180, 140, 60];    // Dorado PGA España
+  const BLANCO= [255, 255, 255];
+  const GRIS  = [240, 242, 244];
+
+  // ── CABECERA ─────────────────────────────────────────────────────
+  // Franja azul marino PGA
+  doc.setFillColor(...AZUL);
+  doc.rect(0, 0, W, 38, "F");
+
+  // Franja dorada decorativa
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 38, W, 3, "F");
+
+  // Franja verde GCR
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 41, W, 18, "F");
+
+  // Logos en cabecera (GCR: proporción ~1:1.5; PGA: cuadrado)
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_PGA, "JPEG", W-30, 4, 22, 22); } catch(e){}
+
+  // Texto cabecera
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(18); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 16, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 25, {align:"center"});
+  doc.setFontSize(8);
+  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 33, {align:"center"});
+
+  doc.setFontSize(13); doc.setFont("helvetica","bold");
+  doc.text("INFORME DE SEGUIMIENTO", W/2, 53, {align:"center"});
+
+  y = 70;
+
+  // Caja del título del informe
+  doc.setFillColor(240, 248, 240);
+  doc.roundedRect(15, y-8, W-30, 26, 4, 4, "F");
+  doc.setDrawColor(26, 92, 42);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(15, y-8, W-30, 26, 4, 4, "S");
+
+  doc.setTextColor(26, 92, 42);
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  const tituloLines = doc.splitTextToSize(rpt.titulo || "Informe de Seguimiento", W-40);
+  doc.text(tituloLines, W/2, y+2, {align:"center"});
+  y += 28;
+
+  // Helper para formatear fechas ISO a dd/mm/yyyy
+  const fmtISO = (iso) => {
+    if(!iso) return "";
+    const p = iso.split("-");
+    if(p.length===3) return p[2]+"/"+p[1]+"/"+p[0];
+    return iso;
+  };
+
+  // Datos del alumno en tabla compacta (sin emojis para jsPDF)
+  const datosRows = [
+    ["Alumno:", alumnoNombre],
+    ["Fecha de emision:", fmtISO(rpt.fechaCreacion)],
+  ];
+  if(rpt.fechaDesde && rpt.fechaHasta){
+    datosRows.push(["Periodo evaluado:", fmtISO(rpt.fechaDesde) + " a " + fmtISO(rpt.fechaHasta)]);
+  }
+
+  doc.setFontSize(10);
+  datosRows.forEach(([k, v]) => {
+    doc.setFillColor(245, 250, 245);
+    doc.rect(15, y-4, W-30, 8, "F");
+    doc.setFont("helvetica","bold"); doc.setTextColor(26, 92, 42);
+    doc.text(k, 18, y+1);
+    doc.setFont("helvetica","normal"); doc.setTextColor(30, 30, 30);
+    doc.text(String(v), 75, y+1);
+    y += 9;
+  });
+
+  y += 6;
+
+  // ── SECCIONES ────────────────────────────────────────────────────
+  const secciones = [
+    { titulo: "RESUMEN DEL PERIODO", texto: rpt.resumenTexto, color: VERDE },
+    { titulo: "OBJETIVOS LOGRADOS", texto: rpt.objetivosLogrados, color: [0, 100, 60] },
+    { titulo: "PROXIMOS OBJETIVOS", texto: rpt.objetivosProximos, color: AZUL },
+    { titulo: "PLAN DE TRABAJO", texto: rpt.planTrabajo, color: [80, 40, 120] },
+  ];
+
+  secciones.forEach(({titulo, texto, color}) => {
+    if(!texto) return;
+    if(y > 240){ doc.addPage(); y = 20; }
+
+    // Cabecera de sección con franja dorada izquierda
+    doc.setFillColor(...color);
+    doc.roundedRect(15, y-5, W-30, 9, 2, 2, "F");
+    doc.setFillColor(...DORADO);
+    doc.rect(15, y-5, 3, 9, "F");
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(10); doc.setFont("helvetica","bold");
+    doc.text(titulo, 22, y+1);
+    y += 13;
+
+    // Contenido con fondo gris suave
+    doc.setFillColor(...GRIS);
+    const lines = doc.splitTextToSize(texto, W-34);
+    const h = lines.length * 5.5 + 6;
+    doc.rect(15, y-4, W-30, h, "F");
+    doc.setTextColor(30,30,30);
+    doc.setFontSize(10); doc.setFont("helvetica","normal");
+    lines.forEach(line => {
+      if(y > 270){ doc.addPage(); y = 20; }
+      doc.text(line, 18, y);
+      y += 5.5;
+    });
+    y += 8;
+  });
+
+  // ── FIRMA ────────────────────────────────────────────────────────
+  if(y > 250) { doc.addPage(); y = 20; }
+  y += 4;
+
+  // Caja firma con borde dorado (ampliada para imagen de firma)
+  doc.setFillColor(...GRIS);
+  doc.rect(15, y-4, W-30, 36, "F");
+  doc.setDrawColor(...DORADO);
+  doc.setLineWidth(0.8);
+  doc.rect(15, y-4, W-30, 36, "S");
+
+  // Franja superior dorada
+  doc.setFillColor(...DORADO);
+  doc.rect(15, y-4, W-30, 3, "F");
+
+  doc.setTextColor(...AZUL);
+  doc.setFontSize(10); doc.setFont("helvetica","bold");
+  const firma0 = rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández";
+  doc.text(firma0, 20, y+5);
+  doc.setFont("helvetica","normal"); doc.setTextColor(60,60,60); doc.setFontSize(9);
+  (rpt.firmaTexto?.split("\n").slice(1)||["Jugador Profesional y Técnico Deportivo de Golf","PGA de España Nº 1908P","Golf Ciudad Real C.D."]).forEach((l,i)=>{
+    doc.text(l, 20, y+11+(i*4.5));
+  });
+
+  // Imagen de firma manuscrita a la derecha
+  try { doc.addImage(FIRMA_JOSE, "JPEG", W-68, y-2, 50, 32); } catch(e){}
+  doc.setFontSize(8); doc.setTextColor(...AZUL);
+  doc.text("Firma del Técnico Deportivo", W-43, y+32, {align:"center"});
+
+  // ── PIE DE PÁGINA ─────────────────────────────────────────────────
+  const totalPages = doc.internal.getNumberOfPages();
+  for(let i=1; i<=totalPages; i++){
+    doc.setPage(i);
+    // Franja dorada
+    doc.setFillColor(...DORADO);
+    doc.rect(0, H-13, W, 2, "F");
+    // Franja azul marino
+    doc.setFillColor(...AZUL);
+    doc.rect(0, H-11, W, 11, "F");
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
+    if(totalPages>1){
+      doc.text("Pag. "+i+" / "+totalPages, W-12, H-5, {align:"right"});
+    }
+  }
+
+  doc.save("informe-" + alumnoNombre.replace(/\s+/g,"_") + "-" + (rpt.fechaCreacion||"golf") + ".pdf");
+}
+
+// ─── Notificar clase al alumno por email (via Firestore→Make→Gmail) ──
+async function notificarClaseAlumnoEmail(clase, alumno){
+  if(!alumno?.email) return;
+  try {
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
+    await setDoc(doc(db, "academia_emails", "clase_" + clase.id), {
+      tipo: "clase",
+      id: clase.id,
+      alumnoNombre: alumno.nombre || "",
+      alumnoEmail: alumno.email || "",
+      fecha: clase.fecha || "",
+      horaInicio: clase.horaInicio || clase.hora || "",
+      duracion: clase.duracion || "60",
+      tipoClase: clase.tipo || "",
+      zona: clase.zona || "",
+      contenido: clase.contenido || "",
+      enlace,
+      enviadoAt: serverTimestamp(),
+    });
+  } catch(e){ console.warn("Notify clase email error:", e); }
+}
+
+// Cargar el SDK de EmailJS dinámicamente
+function cargarEmailJS(){
+  if(window.emailjs) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js";
+    s.onload=()=>{
+      try{ window.emailjs.init({publicKey:EMAILJS_CONFIG.publicKey}); }catch(e){console.warn("EmailJS init:",e);}
+      resolve();
+    };
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+
+// Enviar emails de un nuevo registro
+async function enviarEmailsRegistro(datos){
+  try{
+    await cargarEmailJS();
+    if(!window.emailjs) return;
+    // Email al profesor
+    await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
+      nombre_alumno: datos.nombre||"",
+      email_alumno: datos.email||"",
+      telefono_alumno: datos.telefono||"",
+      tipo_escuela: datos.tipoEscuela||"",
+      dias_preferencia: (datos.diasPreferencia||[]).join(", "),
+      horario_preferencia: datos.horarioPreferencia||"",
+    }).catch(e=>console.warn("Email profesor:",e));
+    // Email de bienvenida al alumno (solo si tiene email)
+    if(datos.email){
+      await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
+        nombre_alumno: datos.nombre||"",
+        email_alumno: datos.email,
+      }).catch(e=>console.warn("Email alumno:",e));
+    }
+  }catch(e){ console.warn("Error enviando emails:", e); }
+}
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDQMYwKTt05hfSPW-Trl7NYPGyDFKA76dQ",
+  authDomain: "golf-ciudad-real-50819.firebaseapp.com",
+  projectId: "golf-ciudad-real-50819",
+  storageBucket: "golf-ciudad-real-50819.firebasestorage.app",
+  messagingSenderId: "447720199984",
+  appId: "1:447720199984:web:312a8a1140d95554821af5"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db  = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+// ─── Firestore helpers ────────────────────────────────────────────
+const DB_DOC = "academia/datos";
+
+async function cargarDatosFirebase() {
+  try {
+    const snap = await getDoc(doc(db, "academia", "datos"));
+    if (snap.exists()) return { ...makeDefaultData(), ...snap.data() };
+  } catch(e) { console.warn("Firebase load error:", e); }
+  return null;
+}
+
+async function guardarDatosFirebase(data) {
+  try {
+    // Remove foto fields from alumnos to save space (keep locally)
+    const dataToSave = {
+      ...data,
+      alumnos: (data.alumnos||[]).map(a => ({...a, foto:""})),
+      _ts: Date.now()
+    };
+    await setDoc(doc(db, "academia", "datos"), dataToSave);
+  } catch(e) { console.warn("Firebase save error:", e); }
+}
+
+async function notificarNuevoRegistro(alumno) {
+  try {
+    await addDoc(collection(db, "notificaciones"), {
+      tipo: "nuevo_registro",
+      nombre: alumno.nombre,
+      fechaNacimiento: alumno.fechaNacimiento||"",
+      tipoEscuela: alumno.tipoEscuela||"",
+      telefono: alumno.telefono||"",
+      email: alumno.email||"",
+      timestamp: serverTimestamp(),
+      leida: false,
+    });
+  } catch(e) { console.warn("Notificacion error:", e); }
+}
+
+// ─── Sincronizar clase individual en subcolección (para Make/Google Calendar) ─
+async function sincronizarClaseFirestore(clase, alumnos) {
+  try {
+    const alumno = (alumnos||[]).find(a => a.id === clase.alumnoId);
+    await setDoc(doc(db, "academia_clases", clase.id), {
+      id: clase.id,
+      fecha: clase.fecha || "",
+      horaInicio: clase.hora || clase.horaInicio || "10:00",
+      duracion: clase.duracion || "60",
+      tipo: clase.tipo || "",
+      zona: clase.zona || "",
+      contenido: clase.contenido || "",
+      asistio: clase.asistio || false,
+      alumnoId: clase.alumnoId || null,
+      alumnoNombre: alumno?.nombre || "",
+      alumnoEmail: alumno?.email || "",
+      gcalEventId: clase.gcalEventId || null,
+      gcalSyncAt: serverTimestamp(),
+    });
+  } catch(e) { console.warn("Sync clase error:", e); }
+}
+
+async function eliminarClaseFirestore(claseId) {
+  try {
+    await deleteDoc(doc(db, "academia_clases", claseId));
+  } catch(e) { console.warn("Delete clase error:", e); }
+}
+
+// u2500u2500u2500 Sincronizar informe publicado en subcoleccion (para Make/Gmail) u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+async function publicarInformeFirestore(informe, alumno) {
+  try {
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/?informe=${informe.id}`;
+    await setDoc(doc(db, "academia_emails", "informe_" + informe.id), {
+      tipo: "informe",
+      id: informe.id,
+      titulo: informe.titulo || "",
+      alumnoId: informe.alumnoId || "",
+      alumnoNombre: alumno?.nombre || "",
+      alumnoEmail: alumno?.email || "",
+      fechaCreacion: informe.fechaCreacion || "",
+      fechaDesde: informe.fechaDesde || "",
+      fechaHasta: informe.fechaHasta || "",
+      enlace,
+      publicadoAt: serverTimestamp(),
+    });
+  } catch(e) { console.warn("Publish informe error:", e); }
+}
+
+// ─── Palette ─────────────────────────────────────────────────────────────────
+const G = {
+  fairway:"#1a5c2a", grass:"#2e7d3c", mist:"#e8f5eb", sand:"#f5f0e8",
+  ink:"#1a2e1d", soft:"#6b8f6e", white:"#ffffff", flag:"#c8a84b",
+  danger:"#c0392b", sky:"#3a7abf", purple:"#7b5ea7", lavender:"#f0ebfa",
+  orange:"#d4651a",
+};
+
+const STORAGE_KEY = "gcr_academy_v3";
+function uid() { return Date.now().toString(36)+Math.random().toString(36).slice(2); }
+function today() { return new Date().toISOString().slice(0,10); }
+function fmtDate(d) {
+  if (!d) return "—";
+  const [y,m,day] = d.split("-");
+  return `${day}/${m}/${y}`;
+}
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const DIAS  = ["L","M","X","J","V","S","D"];
+
+// ─── Default data ─────────────────────────────────────────────────────────────
+const DEFAULT_ADMIN_PIN = "1234";
+
+function makeDefaultData() {
+  return {
+    adminPin: DEFAULT_ADMIN_PIN,
+    alumnos: [],
+    clases: [],
+    estadisticas: [],
+    bonos: [],
+    pagos: [],
+    analisis: [],
+    slots: [],
+    reservas: [],
+    asignaciones: [],
+    resultadosTest: [],
+    tareas: [],
+    mensajes: [],
+    programas: [],
+    informes: [],
+    labels: {},
+    superAdminPin: "0000",
+    profesores: [],
+    permisosPortal: {
+      inicio: true,
+      calendario: true,
+      reservas: true,
+      analisis: true,
+      stats: true,
+      informes: true,
+      ejercicios: true,
+      mensajes: true,
+      miperfil: true,
+    },
+    ingresos: [],
+    gastos: [],
+    categoriasIngreso: [
+      {nombre:"Clase individual",precio:60},
+      {nombre:"Bono clases",precio:500},
+      {nombre:"Cuota mensual",precio:120},
+      {nombre:"Clase grupo",precio:35},
+      {nombre:"Clase empresa",precio:80},
+      {nombre:"Torneo",precio:0},
+      {nombre:"Evento",precio:0},
+      {nombre:"Otro",precio:0},
+    ],
+    categoriasGasto: [
+      {nombre:"Material deportivo",precio:0},
+      {nombre:"Desplazamiento",precio:0},
+      {nombre:"Formación/Licencias",precio:0},
+      {nombre:"Cuota autónomo",precio:0},
+      {nombre:"Asesoría/Gestoría",precio:0},
+      {nombre:"Publicidad",precio:0},
+      {nombre:"Equipamiento",precio:0},
+      {nombre:"Ropa/Uniformes",precio:0},
+      {nombre:"Seguro",precio:0},
+      {nombre:"Otro",precio:0},
+    ],
+  };
+}
+
+function loadData() {
+  try {
+    const r = localStorage.getItem(STORAGE_KEY);
+    if (r) {
+      const parsed = JSON.parse(r);
+      const def = makeDefaultData();
+      // Merge: existing data takes priority, missing keys get defaults
+      return { ...def, ...parsed };
+    }
+  } catch(e) {}
+  return makeDefaultData();
+}
+
+function saveData(d) {
+  try {
+    const json = JSON.stringify(d);
+    localStorage.setItem(STORAGE_KEY, json);
+    // Also save timestamp
+    localStorage.setItem(STORAGE_KEY + "_ts", new Date().toISOString());
+  } catch(e) {
+    console.warn("Error guardando datos:", e);
+  }
+}
+
+// ─── Base UI ─────────────────────────────────────────────────────────────────
+function Badge({color,children}){
+  const m={green:[G.mist,G.fairway],gold:["#fdf6e3","#a07c10"],blue:["#e8f0fb",G.sky],red:["#fdecea",G.danger],gray:["#f0f0f0","#555"],purple:[G.lavender,G.purple]};
+  const[bg,tc]=m[color]||m.gray;
+  return <span style={{background:bg,color:tc,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{children}</span>;
+}
+function Btn({onClick,color="primary",small,children,disabled,full}){
+  const s={primary:[G.grass,G.white],secondary:[G.mist,G.fairway],danger:[G.danger,G.white],gold:[G.flag,G.white],sky:[G.sky,G.white],purple:[G.purple,G.white]};
+  const[bg,tc]=s[color]||s.primary;
+  return <button onClick={onClick} disabled={disabled}
+    style={{background:disabled?"#ccc":bg,color:tc,border:"none",borderRadius:8,padding:small?"5px 12px":"9px 18px",fontSize:small?12:14,fontWeight:600,cursor:disabled?"not-allowed":"pointer",width:full?"100%":"auto"}}
+    onMouseEnter={e=>{if(!disabled)e.currentTarget.style.opacity=".82";}}
+    onMouseLeave={e=>{e.currentTarget.style.opacity="1";}}>{children}</button>;
+}
+function Card({children,style}){return <div style={{background:G.white,borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",padding:20,...style}}>{children}</div>;}
+function Modal({title,onClose,children,wide}){
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+    <div style={{background:G.white,borderRadius:16,width:"100%",maxWidth:wide?700:520,maxHeight:"93vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}}>
+      <div style={{background:G.fairway,color:G.white,padding:"14px 18px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:1}}>
+        <span style={{fontWeight:700,fontSize:15}}>{title}</span>
+        <button onClick={onClose} style={{background:"none",border:"none",color:G.white,fontSize:20,cursor:"pointer",lineHeight:1}}>✕</button>
+      </div>
+      <div style={{padding:20}}>{children}</div>
+    </div>
+  </div>;
+}
+function Field({label,children}){return <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:4}}>{label}</label>{children}</div>;}
+function Input({value,onChange,type="text",placeholder,maxLength}){
+  return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} maxLength={maxLength}
+    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>;
+}
+function Sel({value,onChange,options}){
+  return <select value={value} onChange={e=>onChange(e.target.value)}
+    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+    {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+  </select>;
+}
+function Textarea({value,onChange,placeholder,rows=3}){
+  return <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
+    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}/>;
+}
+function Divider({label}){
+  return <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
+    <div style={{flex:1,height:1,background:"#e5e5e5"}}/>
+    {label&&<span style={{fontSize:11,color:G.soft,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>}
+    <div style={{flex:1,height:1,background:"#e5e5e5"}}/>
+  </div>;
+}
+
+const NIVELES=["Iniciación","Intermedio","Avanzado","Competición"];
+const PALO_OPTIONS=["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","6-hierro","7-hierro","8-hierro","9-hierro","PW","SW","Putter"];
+const ASPECTOS=["Agarre","Postura","Alineación","Backswing","Impacto","Follow-through","Ritmo","Peso","Cabeza","Rotación de caderas","Posición de los pies","Extensión de brazos"];
+const ZONAS=["Campo de prácticas","Green de prácticas","Hoyo 1","Sala de teoría","Campo exterior"];
+
+// ═══════════════════════════════════════════════════════
+// LOGIN SCREEN
+// ═══════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// ETIQUETAS PERSONALIZABLES DE LA APP
+// ═══════════════════════════════════════════════════════════════════
+const DEFAULT_LABELS = {
+  // ── Navegación instructor
+  nav_calendario:"Calendario", nav_alumnos:"Alumnos", nav_clases:"Clases",
+  nav_estadisticas:"Estadísticas", nav_analisis:"Vídeo Análisis",
+  nav_ejercicios:"Ejercicios & Tests", nav_mensajes:"Mensajes",
+  nav_tareas:"Tareas", nav_pagos:"Pagos", nav_ajustes:"Ajustes",
+  // ── App general
+  app_nombre:"José Caballero Golf Academy", app_subtitulo:"Golf Ciudad Real C.D.",
+  app_profesor:"Profesor", app_alumno:"Alumno",
+  // ── Ficha de alumno
+  campo_nombre:"Nombre completo", campo_edad:"Edad", campo_nivel:"Nivel",
+  campo_telefono:"Teléfono", campo_email:"Email",
+  campo_fechaAlta:"Fecha de alta", campo_notas:"Notas",
+  campo_pin:"PIN de acceso", campo_tutores:"Padres / Tutores",
+  // ── Estadísticas de juego
+  campo_golpes:"Golpes", campo_fairways:"Fairways (%)", campo_gir:"GIR (%)",
+  campo_putts:"Putts", campo_bunkers:"Bunkers", campo_handicap:"Hándicap",
+  campo_hoyos:"Hoyos", campo_distancia:"Distancia (m)",
+  // ── Clases
+  campo_tipo_clase:"Tipo de clase", campo_zona:"Zona",
+  campo_duracion:"Duración", campo_contenido:"Contenido / Objetivo", campo_asistio:"Asistencia",
+  // ── Pagos y bonos
+  campo_importe:"Importe (€)", campo_concepto:"Concepto",
+  campo_metodo:"Método de pago", campo_bonos:"Bonos de clases",
+  campo_fechaCompra:"Fecha de compra", campo_plazas:"Plazas",
+  // ── Vídeo análisis
+  campo_tipo_golpe:"Tipo de golpe", campo_palo:"Palo", campo_videourl:"URL del vídeo",
+  campo_positivos:"Aspectos positivos", campo_mejorar:"A mejorar",
+  campo_tecnico:"Informe técnico", campo_tutores_msg:"Mensaje para padres/tutores",
+  campo_valoracion:"Valoración",
+  // ── Tareas
+  campo_tarea_titulo:"Título de tarea", campo_prioridad:"Prioridad",
+  campo_estado:"Estado", campo_asignado:"Asignado a", campo_zona_trabajo:"Zona de trabajo",
+  campo_recurrente:"Tarea recurrente", campo_fechaFin:"Fecha de fin",
+  // ── Grupos de edad
+  grupo_pollitos:"Pollitos", grupo_pares:"Pares", grupo_birdies:"Birdies",
+  grupo_eagles:"Eagles", grupo_albatros:"Albatros",
+  // ── Portal alumno
+  portal_inicio:"Inicio", portal_clases:"Clases", portal_analisis:"Análisis",
+  portal_stats:"Estadísticas", portal_ejercicios:"Ejercicios",
+  portal_mensajes:"Mensajes", portal_pin:"Mi PIN",
+};
+
+function useLabels(data){
+  const saved=data.labels||{};
+  return (key)=>saved[key]!==undefined?saved[key]:DEFAULT_LABELS[key]||key;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// LOGOS EMBEBIDOS
+// ═══════════════════════════════════════════════════════════════════
+const LOGO_GCR = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCAB4AFADASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAUDBAYCAQf/xAA6EAACAQMBBQUECQIHAAAAAAABAgMABBEFEhMhMVEGFCJBYTJxobEjM0KBkcHR4fAVUhYkNlNic5L/xAAYAQEBAQEBAAAAAAAAAAAAAAAAAQMEAv/EAB8RAQACAQMFAAAAAAAAAAAAAAABEQIDEkEhIiMxcf/aAAwDAQACEQMRAD8A+kUitLRdZR7u8d3RmIjjDYCgfnT08jSDTbxbLs/G+NuRnZUT+5smgL7TdIslG8idpG9iNXJZqrR9nnunEjoLOLyTJZj76cadp5iY3V0d5eScWY/Y9BTGgTR9m7FFwwkkPUtj5UT6LbQW8kkDzQsilhsSHyFOK5kQSRsh5MCDQVdIZ30yB5XaR2GSzHjzq7SvQpCLZ7SQ/TWzFSOozwNNKAooooPDyNZjs5G11KryD6K0BCD/AJE5z/PStOeRpR2ZjCaXtDm7sT8vyoHFKde1uHR7cFhvJ3+rjzz9T6U1r5d2iuzddobhpCTHG+7AHko4cPjUlnqZbY6HA1a5uZbd3vN6Z8o8R2oY7djyyw5nnXdrqeoW4YpPLctbNu7mRiHhVPJhjByP1qm4R4L2zF09lp5HeIEuE8Up9D0yK6OzKlrf3VqLbTp13DR2j4MhGcEj3ijK5aCGddTle606VBeweFwPYlXy+7+etXI9aiQhL2OS1l5EMpIPuNZrTbuS3v7J7iULJFJ3QWzrsyCM8mPXyrcMiuMMoYdCM1W2GVwprq9i8yRJOGdzgAA1epPrsUcNikyRqpilVgVAHnTej2DypV2dYf09o/OKRlPzprSKyk7j2gubV+EdwdtPf/M0D2vlnaa0e0126VgQrtvFPUHjX1NhtKRkjI5jmKy+t2+oRDeS2ltqtuo5tHiRB935VJZ6kXDL22qnNtcXEm/uLUhI4ZVGwUxjn1Hr6Uwks2ju7u3ktTNfyAT24tX8EWTnOPLyqj3jQbg/S2V1aN57mQOPwau47zRbNibW2vbh8YzJNu8/+ajH7Jlpcpu9YhWKfvctwiPdPJHgxFTnC9OQFbmsvolvqEq7yK0ttKt2HNY8yuPv/OtQo2VAyTgczzNWG2Hoq7RMP6esXnLIqj501HKkV5J37tBbWqcY7c7b+/8AmKfVWgpH2ls2lt0u4ciWA5JHPH7U8rxgGUggEHgQaBZpOpi6RYZ8JcgZx5OOopnWcmsora6Fpc7S28jZt5gcGJv7c1dEmp2XheMXsQ+2pw49486DKdurSODU4po0Cb5Mtgc2B5/KjsLaRz6nNNIgfcplcjOGJ5/Ope2l2l5DaOIZopEZlIkXHPH6Udi7tLOG7cwzSyOygCNc8s/rU5c9eRvaV6tqgtUaKDD3JGceSDqa4Mmp3vhSMWUR+2xy59w8qpQ2UVzdG1t8tbxsDcTE5Mrf25quhY7NWbRW73U2TLOc5PPH708rwAKAAAAOAAr2gKKKKCG6toru3aGZdpG+HqKW2t1LYTLZX7ZU8IZzyYdD604qG5torqFopkDIfhQIu3EW3oW3/tyq3zH50dh4tjQdvH1krN8h+VV9eiu7TRbq1lDXNqVzHJ9pMEEA0aDFdXei2trEGtrULmST7T5JJAozrvszurqTUJmsrBsIOE045KOg9aZWttFaW6wwrsovx9TRbW0VrCsUKBUX41NRoKKKKArzaGcZGemaTpPJqt/NCjtHZwHDFDgyHpnpV06ZZFNk20eOuOP486C5RVPT7d7WKSJmLKJCUJOTs+VU7WQ6vcTO5Pc4m2EQHAc9T+lBfv4xcafcxL4i8TLgdSKLCIwafbREYKRKpHuFQXGlW7pmBRbzD2ZI/CQfu51Fo1895FLBcgd4hOy/r60SuTWis+lrD/iR4dk7oRbYTJxnhT+ivaKQ63BGL6xIGN7Lh8EjaHDnVy70qB7dhAojl5o20RxoKPZY7tbuB+EqSZYH8Kd3BmCZgEZbo+cfCqNzpzC975ZSLFORh1b2XHrUu/vihHc028c96Nn5ZoIdOvLjUrSWRkjjXiigE5zj96rdlXHcZYjwdJDke8ftV3R7KSwszFKysxct4fuqOXTpYL1rywZQz/WRP7L+voaBnSLR12tb1KVfY2tn78/tTB3v5UKJDHAx4bbPtY9wHOpLO0Sxtt3ENo8yx5sepoF6f6rk/wCj9Kc0mFrfjV2vRHBhk2NjeHl78VZlS9uJoVkSKKBXDPhyS2OQ5daCrr4LXOnBWKEy8GAzjlVmWyujLbsbt5lSUMyMqjh14CotTtLy6urd4khCQPtDac5bl6cOVNIi7IDIgRvMBsj8aBZaNCbdO9n/ADe34wfb2s8MenwxVfEW43gwUjvCXI8lz8uVFFBLemF4LuZSpRigDg8CQeOK7aZLe4klgI3Ai44PhL58IHrRRQRrIY7S+tZz41QyLlskgj9fmKktQDNZm1PDY+m2eWNnhn1zRRQRamA17KEUM24BOD4l8XEgdQONE7wPeuwkhZDEhLOTk8eOMeeKKKCS7um7wtxGcxWzBX8XX2uH4fga7We3i1O5kZ1xukIOeZ45x8PhRRQf/9k=";
+const LOGO_GCR_PDF = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCACWAGQDASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAUDBAYCBwH/xAA/EAABAwMBBQQHBQcDBQAAAAABAgMEAAURIQYSEzFBIlFhkRQycYGhsdEVI0JSwRYzNVNz4fAHQ3IkNDZig//EABgBAQEBAQEAAAAAAAAAAAAAAAABAgME/8QAHBEBAQADAQEBAQAAAAAAAAAAAAECAxEhIjJB/9oADAMBAAIRAxEAPwD06kdyckz7qLXGeLLaUb7y08/Z8vOnlI4f/ls7+kn5JoD9loHVyQT37w+lUbja7LbwA87IU4fVbSoFR+GlNbvc1sLRDhJ4kx31R+Qd5r7a7O3EPpEg8eWvVTitcHwoM8xs9LmL4iGzFZPLiqyrypmzslGSBxpLqz/6gAfrWiooEf7Lw06tvSEHvCh9KgaalQL9FhNznnWnElSkr1wBnT4Vo6R3M+j7R26QrRCwWyfHX60DyiiigKKKKAooooCs25LTBv8Ac5K9QhlOB3nCcCtJWPnxjM2wVHOdxSklY7wEgmgcWCEpLarhK7UqT2iT+FPQU4oAwMCigKVv3+3NS0xEPF+Ss7oaZG8c+3kPOsvtntG6ZC7XAcKEJ0ecScFR/Lnu76XRmZU7Z9bcGFGT6AsrXLSrC14ydD7P0qdcstnvI2Z2nt7bjrUgPsvNKwttTZKkjv7OdPGp7pGbu9t/6ZxKljDjS0nr086xaZjTMqPKsnpUNh8BqVJfTvpyTzyc6ipYHEt85+22RtqbKSQ6iUhe72dMpUORHTn1p1Jsv9a+zXMTWeC/2JbXZcQdCcdaZ0gTHi3+K3PirVGlp0UpOhSsc0qHhXQkX6GN12K3MSPxoOCf89lV2l6e0VnpN7ujTCnTai0lPNS1EgfKnrDofYbdTyWkKHvoJKKKKApBFQFbYy1n8LQ+Saf0ijnh7YSUn/cZBHkPpQPahmvejQn3/wCU2pfkM1NUMxn0iE+x/MbUjzGKFeMB3MoPPDiZXvLz+LXJrTkRX71vyW5FqtMxGUpB3EukDrjQf531lnEKbcUhYKVJJBB6GnKJr90tyGpUxndt6d9thwY4qRzGepxpisvFjTG3tzbqxNsVsltfZ7SipK3E9pQ3sgezOtVzI4luiqt8B2K5BVuyZjPdyOo599TXB1NwlQrmqA7b7acNOvN6bwzry6dK6iht+4TbPZriI9teRvqU6M5wMEJJwf7CjZ1sq7FYu823wJPpMbcDyXDz3tAdevOtXWS2Ld9K9WO02iE1wOKj/dJOSfgPOtbWo76/yqXVActcpJ/lK+VQ7Pr37JGPckjyJFTXVYbtcpR/lK+VQbOpKbHGB6gn4mjZlRRRQFZu9r9A2ghTjohQ3VH4H4GtJSnaWGZdqWUDK2Tvp/X4UDYHIyNagmPOsMlxmOqQQdUIUArHhnn7KVbMXQS4giuq+/ZGBn8SaeUHnlzZ2dulwddVMft0lZytt5nQK/Tzqmdkn3hm3T4UwdyHMHyreXixQLw3iS1h0Dsuo0UPr7682v1mkWKaltbm+hY3m3E6Z+hqV5s8ee2G32DtM5bkwJC0NQ2zkBx1OB7xrirFyjw5DMdu8XuE2mKjdS3Ea3j06+7urIOPvOgBx1awOilE1uNn9i2g23KuxK1KAUGBoB/y7/ZUTH68kMtmpcRMZEOzQ5LkdKsrkOAJST1Oep8AK0dcttoabS22hKEJGAlIwBQ44hptTjiglCRkk9BWnpxnISbWSuFbkxkntvqAwOeBqf0ptBZ9HgsM9UIAPtxWWjuKvu0iXSD6OzqAeiRy8zWwooooooCgjIwaKKDFy7cu3XvEZwtKcO9GVnAJ/Kfl5VoLXeG5avR5I4EtGim1aZPhU91t6LjDUyrsrGqFflNKIrbF2SqFc0Fu4R9N8aKUB18aDSVjf9R2t6DDex6jik59o/tTQN3y3aNKROZHIK0WB/ntpNtdclzLIWn4L7DiHEqyodnu5++lY2TuNYyA1x58dnGd9xKfM17VXjthWlu9xHFIUsIcCt1IyTjWvRTdLpK7MG2KQD+N44x8qkc9M8tOX32o7RdfcShCeZUayt3uTlyjrWneagIOAeReV0Aph9kFeZd9ll4IG9uA4Qmo7eybvOTNcb3IMc7sdrGAfHFV3XNnLb6BACnE4ee7SvAdBTaiigKKKKAooooCld4tZlbsqIrhzGdUKGm94GmlFAstF1TNSWH08KW3o42dPeK+bTNcbZ2cjGfuiry1/Si7WkTCmRGXwZjeqHB18DVVq5mSw/bLkgMS1NqRroleRjSiWdnGQ2Ca4m0QXj920pX6frXpbjiGm1OOKCUJGSSdBXnuwbrMR2fMkqCENoSjJ5kkk4HlWiS3K2hcC3gpi3JOUo/E5UjnqnyFF3aKVup3m7a0rU8i6a0DbaGm0ttpCUJGAB0FfGmkMtJbaSEISMADpXdV1FFFFAUUUUBRXxRCQSogAcyapKu8IKKUOqdI58JCl/ECgvUVRau8F10NB/dcJwErSUnPvFXqAqpcLdGuDW5IRqPVWPWT7Klky48VIMh1KM8gTqfYOtVTeYIIC3Ftg8itpSQfeRQZrZKwsF6a5Ky4GJKmkpPI46nzragADAGAKp22OhhD621pWmQ8p4FJyNcfSpJM2NEx6Q6G88sg0ZxnJxYoqpHuUOS4G2H0rUegBq3RoUVUkXOFGcLb8hKFDoQa4+2LfjPpScd+D9KC9RVNF0guJyiSgj30UCdx1d7vSoYWRCjnKwk43yP71omm0NNhtpCUISMBKRgCstseSmZNQ5+8wPgTmtWeWlBRukBMxtCkJTx2lpUhR8DqKmnSkwoTsleobTnHeegpfNvbsF1tuRAWFOaIw4CDUe0qnV2BSnG+GrfTvJ3s4Ge/yoPuz7CpDZukvtvvE7hP4EjTTupy42h1socSFJUMEEZBqhYFpXZYxSdAnHvBNMaDMMuKsd+EQKJhyCClJPq5/vT26AG1ygRkcJXypBtWCq4wQj1zp8dK0Fy/hkr+kr5UC7ZMAWZJA1K1Zp1SbZT+Co/5qpzQJNrgDaASNQ6nHxppB/7CP/ST8hSva3+D/wD0T+tSxWLmYTJRNZALacAsctPbQQTbGt+W49FfbaQs5Kd3Pa60VcsbbzcAok5LodXvHHM550UC2fCkWy7fakJsutLP3raeYzz+tOItyhymwtp9GvNKjgj3V8RNcfStcRgOtpJAUV7u+RzxpVdZYfmoZctzSluNcXeWBkDuOnPNAs2kkMvz7e2y4lxSFkqCTnGo+laKVHRKiuR3PVcTg+FUob7YhOyWITbfDKhupIGcc9cV2Z7vGYaEYFT7ZWPvOWOfTxFAptT7ljeXAuIKWFKy09js09cnxG2uIuS0EYznfFcMSG5anWHmt1xrG+2sAjB5Ed4qG3pgSOI5HiNIU2sp9QA+B99BSjRnLpeBcn0KRHa0YSoYKvHHxpheJLLNukJddQlSmlBKSdTp0FcN3F1bTroiEoZWpK91YJ054HWrOWZMdMhttDu8nKN4DX6UCbZidFatQadfbbWlZyFqxV1+6Nuzo0SE8la1ry4pOoCRqRnxrmPLYe9GUuChCJOQhXZOviMVI3Jw4/woKAWFbiilQBOe7TxoKO1shn7O4AdSXeIDuA5I50ztUlh+CwGnUKUlpO8kHUadRRPeixQhx5lKi4sJJ3RoO8+AolvIgBtbUZCuIsN9nCdTy6UF2igZwMjBooETMxNkbMB1KnOHktKT1BOQD3HXxqRMk/bzAcHb4HDVu8t44Vp4UUUEKJPorr1pKd5x1ai2vPZAV3+zNSTZSIl2jZSpSWGik+OcY+VFFBzKcUy29NXoqYEtoCT6ie/2866S4m33gJSXFofaSFA4yCOR8tKKKCK3zSpuRHaR94+6tSCo6De76atoRbrYEaqSyjXHM0UUCSAr0WJGmpyoMktOoUc8+qe4189LjCVKecjqWtToW2c4wRyz7xRRQXHVpnvS23lOIDLJQQjGD+bn4geVVXbgXbXEDqSXG3UlRzz3daKKC6brIeJVEbbDY0+8znPuooooP//Z";
+const LOGO_PGA = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCABQAFADASIAAhEBAxEB/8QAGwAAAQUBAQAAAAAAAAAAAAAABgABBAUHAgP/xAAwEAACAQMDAwIFAwQDAAAAAAABAgMABBEFEiETMUEGYSIyUXGBFEKRM1Kh8GLB0f/EABoBAAMBAQEBAAAAAAAAAAAAAAADBAEGBQL/xAAsEQABAwMBBQcFAAAAAAAAAAABAAIDBBESMSEysdHhBRQVIkGRoRNSYXHw/9oADAMBAAIRAxEAPwDSaVKg31Hrs1w8tjpm4pH/AFpU7n6gVhNk2GF0rrBWmq+p7Wxk6EA/VXOcbUPAPuaGbzXdWuo5Xa5FssbhWji4I/PmqeeWKJHigbfG+1txHIIz2NRpZXlcu7FmPcnuaV5nK2SSlo9jtp9z0UyRonQmW4klkEmCSxOVz3/iu91vHNK1tczxqqZj7gl/ocVW5pZNH0ypvG2XtgbfsckSWWu6tbMdtytxGkYkbqnI58Z7+cUTaV6mtb4pFOptZ2Hwh/lf7Gs2DkfXng481J6xu5oxPIFUALnGMCi7mqmOSlrNjdh9j1WvUqDvT2vtDItneOz27NsguG+v9pPn70Y00OuopoXROsVQerNVOn6f0omxPcZUEftXyaAHnRYEEQaN9pWQ7vnq81y5a79Q3DrJGBbDpqsgyD3zx/NDcr75C20LnnAHApW+5WySCjpchvHieQXBOTSpYNNTlyjnFxyOqVKlTkEHBBB+hGK1YmpwSDxTUqF9NcWnIahTIepdvHD1OACFDHgDvWg+ltTN7ZNBK4ee2OwsDncPBrNEPOP8GiXQLz9Pr1qwSOJJ16ZRTng8gnApA8jl1UcnfKXI6jiOap3RZ47i5eYCTfkIeS2T3qGkrxSdSN2R15DKcEVOfEMVxA0cQZHI3MwDd/A7nt/moKKrybXkWNT3YgkD+KIvVT9tXxZbS54BHHqATtoEL26v1WeNmMYwTlOe3vVfO9qPTO3UjGb3Y20cGTdn4c4847+3en1nVNOv9HW1iuyskbIQXjYBtq48UJ8D6U5eLJIAdm1Ft/Zpo3p1XgUC5kKI0uPiyRuOD48AfmqnSLu8gnWdoJbq35DZQvjxkHwakvrUN/ov6C9LRzIF2SgZUleASBz24P4NNoGpQ6O1w0kvX6gTCQ5PZsknIA7VqwkFwINgqX9NMLhYHjZJWIG1htx7/aiufTbXUfTELaeNz24JQkfExHzqfv8AMKp45bRzf3T3gW6lZukrRlhgnnPHkcVL9N60llLMLudI4WGQqxc7h2PA/FYsZiDY+qHR3qXDcCLp4jQOjhxIPm4PavTWDZSXzTWD5ilO4xlSCh8j7V3GrvZxRAQkSSAcH4xk/Sky6he72MLNeDpcK0122a09RTIqxbbn41aQ4C5zn/vj7UOTJ05GXIODjIOQa0f1ZpR1DT+rEuZ4MsAP3L5FAUkQniDJ8UvmNEwFUe3+5zRuuT5IxWUuI3hxHMKDUm3uUht5Ymj3F2Vg3GVwD2++f8VGIwcUqeuVIcxxB1VkdSi2vts4kZscgZXgnPB9j9q5TUI4zmO3A3IEcZ4OM4YeQe3scc96r6ehGZXtcSxSpEEi6bIu1iD8wzwT714UqcDNZdABe6w1KdAS3FEPpuxjuNetzFJ1Y4x1WO3GMdgfzVVar0d0pk6Tqm+PK53+KP8A0vpr2lm9zcDFzdHewx8o8Ck7zrrqo2dzpcPU8TyV7Qb6i0Ga3kkvtMB2uMyxKMkf8h/vFGVKmObcKKGZ0TrhZJLDDMskkGI44kXPUblj7V6Pod4IUlRBJuAJVT8S+xFHmoembG9uVuFTpShtzbRw/wBxUa40eZJC8e4HJJKHOSfrUFRJNCRgLj3T6ltPVAG1j89Vn7208Zw8Min3U0kt5pDiOGRj7KTRsYrtMAycZ5BHjH/tJY7xwBvAJH7Rmp/E3aYi/wDfhQeGt+5Co0W8Fu8zoECDdtJ+I/iuYIIYejLdfFDKDjptzkY7/wA0bW+kXLuHkd/HzcD6dvevfTPTFjYzmdh1pdxK7xwn2FU08k018xYK+mbT0oJG989FV+ntBlneK81Eu0UX9CKTuR4J9vajGlSq9rbJE0zpXXK//9k=";
+const LOGO_ENG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCABUAFADASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAYDBAUBAgf/xAA3EAACAQMCAwYDBwIHAAAAAAABAgMABBEFIQYSMRMUMkFRYSJxgRUzQmKRocEjJDVScnOisdH/xAAXAQADAQAAAAAAAAAAAAAAAAAAAQID/8QAIhEAAgICAgICAwAAAAAAAAAAAAECERIhAzETUQRBkbHw/9oADAMBAAIRAxEAPwD6TRRRQAV4mljgiaWVwkaDLMegFEkiRjLMB6DPWk8NHr9jczzXTtcKGaO2DEKig7AjzJxSbS2wNG44sswj93huZ1UbuiYA+tUNI4qih09FuoLpuU4aXxjOfWtC6vbeTRZIbGLEUkB5Qm3UdKj0K9to7aUQQkWssrMgxjbAHT6GsX8jjVu+tF+Kb+jbsL+21G37a1kEiZwdsEH3q1SjHFZwRXeo2t33FmmYQhT/AE2A8iPQkGmHSb3v+m29yQFaRcke/nWyafRBdooopgKWtcXtY30tta26uYjyl3Jxnz2FUrPjDU55SBZRTKgLuIwwIUdT1NaWqcJLqGrNdC47KKTd1C5Ofb51t6dpdppkPZ2sQXPiY7s3zNBOysyWHEmlBtmRh8Lfijb+DSbNJccNNLZywxyMx545A3UdMkdauz6nHp2rzy6PhYZMrIrglGceaKNzj9Ky71brU7s3E8Esspwu/LGNtum5rPkjGaxkrKUnF2uyG3l1KeyYRT8kHMwIG2Nix8thXnn1GwtmVZ+WIDp1xkDptt4hUjafcxGVBbRKI0Zmy7kbHBHXr7VI2l3jRg9jA6MFO0jYwfr5ftSwj1j+guXs5aX819YrpcVsrzSDs0PMAMe+fOnbQNCi0m3DSESXRHxP5L7D2pEis57eWO4S1lVkIdWjYONvPlO+K2ZeJru7tu6yMkaucSyxoRIqeeFP8GiEYwulVjcnLsk13i+eO9aDTWjEcexkI5uY+ePar/DHE7alN3S8VVnxlHXYPjqMetcvOErC90+E6c4iYLlJM5EgO+9U9D4UvbPVYri4eIRxHm+Fslq1I3Y7VFcMVt5WHUISP0qWl7jO7kttGAjdo+1kCMy9Qvnik3RQmpcSWbMO0jjLxIpBHM4xvsB039a9s19c3ZgSG5nmOcjnwMefh8vrW1p8Gm291pYgtl7O5V5WluCC45c49hUM17bu15bz3bKZ4kAlic3BjCsSQSAAM+221So0tsVmT3DUZFybGPHbdie0ySHPrk7detee43yPEosomeSRo0Eecll69D+9bFlrAteRILW7mgluWkxKATInKMHJ8wRmvEWqFJIHe0uuWOaftCAMgSdMe4ouHsdMypJrzT7gwypdWso+LCSE/XB6/rQ95Jd9kAYpZEdSpUcjjHljoevlWnZXlvbTTW1pfTCdrcJFPcjlCtzZ5Rnwgj96sy6bp15d3AdEeRxEpkicBRIVPMFxtzHqM7HcbU69MVjJw3kaFbA5GOYb+gYitSlXgi6meG7tJXd1t3whfqB6U1U4vQwpV4+/weH/AHh/0aaqyuIdNj1PTHjdmUx/1FKjJyB0ofQCBblZrCOW7JdI+ZFZ32jAwQAPck1LLenmm7iplLEBCityKAW+Q8xt0rNlaO3ZVhiBJUMHk+I7jOw6Cq8s0sv3kjsPQnYfSsPFm7ZXkxVI1jcyKSywKjsMuJJlxkJyjA9N871F2srXHaCFW5po5SFlU+EdB/FS6TZ2kxhcmNnH3iMM5z7evuM1BrUFtDdTCFR4l2GwTbJGPes1jnhX9+S3ljkS96EaRJNC0T4YNJKmVyAQh98ZqxBMbOG4u9Ok5JVwWaI5jOAMjB2xkkj9qwY55Yvu5GQegO36VYidLiRY5IwGcgc8Xwnr5joa0fG47RC5L0xw4AdpftCVzzO7gsT5mnOl7g/TUstL7ZXZzc/H8QxgdBTDW0SQrhGRg9K7WBqmqzz3n2XpOGuT97N+GEf+1QCRrFh2OoS2sbq8kDFVAPjQ7gf6hnGKyXVkOHVlP5hivrVvoljDYd0eFZkJ5naQZLt/mJ9arPwxp7DEfeIR6JMf5zU010Jqz5vp8lvFN2txluQEogXIY4ON87b4q/ql33nS4HeJI5GbHiy3KBnPyz60warwgwjL2rd4x+BgFkHyYbH5GodJ4OkdQ9z/AG4/MoaQ/Tov7ms5cdyUvspNpOIlLucDc+1X7O3ZJkMpETuQqc+2CduY+gGa+hx8LWKeKW6kHmDLyj/iBV6HR9PgtZLeO1jEUow4IyW+ZO9abfZKVFm1hS2tYYI/BGgQfICpqWoLyXh+8SxvmL6e+1vcN1T8rUyAgjI3FUM7UEFpb2zyvBEkbStzOVHiNFFAE9FFFABRRRQAUUUUAQXdpBe27QXMYkjbqDUkaLFGsaDlRAFUDyAoooA//9k=";
+
+const FIRMA_JOSE = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8PESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCABzAJYDASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAMFBgQCBwH/xABAEAABBAIAAwUEBggDCQAAAAABAAIDBAURBhIhEzFBYYEyUXGRFBUiQqGxBxYjQ1JicsEzgvBTc4OSosLR0uH/xAAXAQEBAQEAAAAAAAAAAAAAAAAAAQID/8QAHhEBAQEAAgEFAAAAAAAAAAAAAAERAiFRAxIxQWH/2gAMAwEAAhEDEQA/APriIiAiIgIiICIiAq7PZIYnD2LQHNI1vLEwd7nno0D1IVis+5wznEnZa3TxLg93ufOR0/5Rv1KsFjgqMmNwtSpPIZZo4x2jz4uPU/iV3oil7BERAREQEREBERAREQEREBERAREQVfEGUGKxckrSO2eCyIH+LXf6d68cM436swkEb9maT9rK5x2S53U7VLI79YeJoW9HVYiSzXixp6n/ADO0PgFsVq9TAREWQREQEREBERAREQEREBERAREQFXZR0lgMoV3Oa+f23t+5H4n4nuHxXdNKyCF8sh5WMBc4+QVTGZo6M92RurdzTY2H7gPRjfx2fVWCLhqlHF9KtRjUb3mKH/dtOvz2r5Q1K7alWKBnsxtDfipkoIiKAiIgIiICIiAiIgIiICIiAiLjyd11KruJoksyHkhjJ9t57vTxPkggsvGRyH0Bo3DBqSwfee9rP7lSSn6Rl4oQNsrs7V39R6N/DZXvHU/q6iGyyc8p3JNKfvOPUn/XgosN+2rPuu9q28yD+nuaPkB81RYovEsscET5ZntZGwbc5x0AFnPrfISZnH2HDsMTYldBGxw+3IS0lr3e4EjoPmkmjTIiqsjxFj8bMYJHvlsgbMEDC94Hnru9VBaosRd4hyeRu1LuFxduWrSe76Rt7W9q0jRa0b6kd/xGlZVeN6FuISRV7RZvlJDAeU+II3sEe5avGwaVFw1M1QuuDIbDRIfuPBa75FdyyCIiAiIgIiICIvMsrIYnySuDGMBc5zjoADxQeLVqGnWksWJBHFGNucfBcNCCS1YOStsLZHDlgid+6Z/7Hx+SirxuzU7LlgEUWHmrwuHtnwkd/YequFfgVfEMj/qw1oXamtvbAzXhzd59Btd47KnVAJDIoWa2e4ABVpBu8SjxioRb/wCI/wD8NH4r3r63tnfWjXdrXhM8f9o/E/BB4jgfmpGWbbC2k0h0Nd33z4PePyC7Mlj48lSfWkLmbIcx7PaY4HYcPMFdaJop47Obrt7OalBacBps0UvIHeZaR09NrN3eE8xLkJsiXwSMsyiSxj43uYH6Guj+/egOnQFbxElwU1PMVKsUdWSnYocg5RE+E8rR5ObsaXFc4dxmfJyWLtfR7L+hsViC2Qjpp7e53r1WmJABJ7gs1wjbrRcNR2JZ4YxNJNOdvA0HSOPX0V/YKK3i83QOrNBt6Ifvah6/Esd/YrowPFcVe6atu22OoI3OItbY+Jw10HN3gjfTw0o85+k+lBK+rheytTjYM0kgZE31PeqDHxYHL2X3+LM4y/Y5vswRB3Zs+Q6rpOHW8ojWzceC/M6twzj5snMO+XXJE3zLitHifrE0WHLdgLRO3Ng3ytHu2e9Yt97h3EQS2MBZtVZT17KvC9zHf5CNfLS8U/0h32SsZPirNyI6BkjruiePMg9D6ELN4+Ir6IiqcVxLj8uZGQvfFNH7UNhvZvA9+j3jzCLngtkVHLgr8zXtdxBdaHf7NkbSPXlUdfhV0ZJnzeWn3/FY5dfIK5Bb5DJVMVVNm9O2GEEN53d2z3Kmhu1uIy2WaQQ0In7bDI4NdMR3OcPBvuB7/FfruB8JM3VqvJa+1zbsTvf19SpYODOH6zg6LE1gR727/NXods2bxdZwZNkKsbtbDTK0H81wWON+Hq3OJMpCSwEkM278lYRYTFwPD4sfVY4dxETd/kqDjp8NfDwUYa7O1yFhldoY0Akb2QPiBr1SSW4KvEccYsUpBLHdks3ZXSzCKBxLA7oOvk0AKzHG9OsxkNTEZJ8TGgNLa5aNequ8JiG4upp/K+zJ9qV4Hj7h5DuCs9BW3j4Rkf1xyUx5qvDlt0Z7nSHW/QBQN4g4qmcWtwzIyegJY46+ZC2qKe6eFYiSTjKZnKQ6M774mRt/MleRjOKLjA2axaYAep+lNYf+lq2lq3BSrvsWpmQwsG3PedALC5fiu5lGuGOlOOxo9q5INSSD+QH2R5nr7lqW36RnuJHsxlyWrKZsjbbHzSNF2R3I3R9rwCYL9Gd6zVq2L8dXkdGHNicXN1vr9rXUnqrzh/hn6zlbI+u6DEteJHdrvtLrh1Bdvry769e/4L6JrXctX1LJkMYeLgezD/hMxcX9MBXYOELfI0DIxxnx5K//ANWsRctqsxFwfJo9vlZnHw5I2t/sVKOD67j+1vXHN1rQkDfxAWiRNFDBwZhonF0kEth/cHTzOeQPcNnoivkTaCIigIiICjkrwzSRSSxMe+I8zHOGy061sKREBERAXHeyLamo443T2X+xCzvPmfcPNLNmR7nV6WjN4vcNtj+PvPkvdSlHUDiNvlf1kld1c8/68EGLyXDfEudzRkvS0o6bNdi0lz2s955Om3eZKu8bwdSqSssXZJMhaadh8+uVp/lYOgWiRavK0O5ERZBERAREQEREBERAREQEREBR2CWwSEHR5SiIEEbIomtY0NGtqREQEREBERAREQEREBERB//Z";
+
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIRM MODAL — Reemplaza golfConfirm() que no funciona en artifact
+// ═══════════════════════════════════════════════════════════════════
+function ConfirmModal({msg, onOk, onCancel}){
+  return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,
+    background:"rgba(0,0,0,.55)",zIndex:9999,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{background:"#fff",borderRadius:16,padding:28,maxWidth:360,width:"100%",
+      boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
+      <div style={{fontSize:22,textAlign:"center",marginBottom:12}}>⚠️</div>
+      <div style={{fontSize:15,color:"#1a2e1d",textAlign:"center",
+        lineHeight:1.6,marginBottom:24}}>{msg}</div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onCancel}
+          style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",
+            borderRadius:10,padding:"12px 0",fontSize:15,fontWeight:600,cursor:"pointer"}}>
+          Cancelar
+        </button>
+        <button onClick={onOk}
+          style={{flex:1,background:"#c0392b",color:"#fff",border:"none",
+            borderRadius:10,padding:"12px 0",fontSize:15,fontWeight:700,cursor:"pointer"}}>
+          Eliminar
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
+
+// ─── Exportar base de datos a Excel ──────────────────────────────
+function exportarExcel(data){
+  const alumnos = data.alumnos||[];
+  const stats   = data.estadisticas||[];
+  const clases  = data.clases||[];
+  const pagos   = data.pagos||[];
+  const mensajes= data.mensajes||[];
+
+  // Build CSV-style content for each sheet, then combine in HTML table format
+  // Use XLSX-compatible HTML that Excel can open
+  function calcEdad(fn){
+    if(!fn) return "";
+    const hoy=new Date(), nac=new Date(fn);
+    let e=hoy.getFullYear()-nac.getFullYear();
+    if(hoy.getMonth()-nac.getMonth()<0||(hoy.getMonth()-nac.getMonth()===0&&hoy.getDate()<nac.getDate()))e--;
+    return e;
+  }
+
+  function sheet(nombre, cabeceras, filas){
+    let html=`<table border="1"><thead><tr style="background:#1a5c2a;color:white">`;
+    cabeceras.forEach(c=>html+=`<th>${c}</th>`);
+    html+=`</tr></thead><tbody>`;
+    filas.forEach(f=>{
+      html+=`<tr>`;
+      f.forEach(v=>html+=`<td>${v??""}</td>`);
+      html+=`</tr>`;
+    });
+    html+=`</tbody></table>`;
+    return html;
+  }
+
+  const alumnosSheet = sheet(
+    "Alumnos",
+    ["Nombre","F.Nacimiento","Edad","Nivel","Teléfono","Email","Escuela","Alta","Activo","RGPD","Imagen autorizada","Alergias","Intolerancias","Lesiones","Equipo","Notas"],
+    alumnos.map(a=>[
+      a.nombre, a.fechaNacimiento||a.edad||"", calcEdad(a.fechaNacimiento),
+      a.nivel, a.telefono, a.email,
+      a.tipoEscuela==="adultos"?"Adultos":"Infantil",
+      a.fechaAlta, a.activo?"Sí":"No",
+      a.rgpdAceptado?"Sí":"No", a.imagenAutorizada?"Sí":"No",
+      a.alergias||"", a.intolerancias||"", a.lesiones||"", a.equipo||"", a.notas
+    ])
+  );
+
+  const statsSheet = sheet(
+    "Estadísticas",
+    ["Alumno","Fecha","Hoyos","Golpes","Fairways%","GIR%","Putts","Bunkers","Hándicap","Palo","Distancia","Notas"],
+    stats.map(s=>{
+      const a=alumnos.find(x=>x.id===s.alumnoId);
+      return [a?.nombre||s.alumnoId, s.fecha, s.hoyos, s.golpes,
+        s.fairwaysPorcentaje, s.greensRegulacion, s.putts,
+        s.bunkers, s.handicap, s.palo, s.distancia, s.notas];
+    })
+  );
+
+  const clasesSheet = sheet(
+    "Clases",
+    ["Alumno","Fecha","Hora","Tipo","Zona","Duración","Asistió","Contenido","Observaciones"],
+    clases.map(c=>{
+      const a=alumnos.find(x=>x.id===c.alumnoId);
+      return [a?.nombre||c.alumnoId, c.fecha, c.hora,
+        c.tipo, c.zona, c.duracion,
+        c.asistio?"Sí":c.asistio===false?"No":"—",
+        c.contenido, c.observaciones];
+    })
+  );
+
+  const pagosSheet = sheet(
+    "Pagos",
+    ["Alumno","Fecha","Concepto","Importe (€)","Método","Notas"],
+    pagos.map(p=>{
+      const a=alumnos.find(x=>x.id===p.alumnoId);
+      return [a?.nombre||p.alumnoId, p.fecha, p.concepto,
+        p.importe, p.metodo, p.notas];
+    })
+  );
+
+  // Tutores sheet (for minors)
+  const tutoresRows = [];
+  alumnos.forEach(a=>{
+    (a.tutores||[]).forEach(t=>{
+      tutoresRows.push([a.nombre, t.nombre, t.relacion, t.dni||"", t.telefono, t.email]);
+    });
+  });
+  const tutoresSheet = sheet(
+    "Tutores",
+    ["Alumno","Tutor","Relación","DNI/NIE","Teléfono","Email"],
+    tutoresRows
+  );
+
+  // Build full HTML workbook
+  const fecha = new Date().toISOString().slice(0,10);
+  const html = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office"
+          xmlns:x="urn:schemas-microsoft-com:office:excel"
+          xmlns="http://www.w3.org/TR/REC-html40">
+    <head><meta charset="UTF-8">
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 11pt; }
+      th { background: #1a5c2a; color: white; padding: 6px 10px; }
+      td { padding: 4px 8px; }
+      h2 { color: #1a5c2a; margin-top: 20px; }
+    </style>
+    </head>
+    <body>
+    <h1 style="color:#1a5c2a">Golf Ciudad Real — Base de Datos Exportada ${fecha}</h1>
+    <h2>📋 Alumnos (${alumnos.length})</h2>${alumnosSheet}
+    <h2>📊 Estadísticas (${stats.length} rondas)</h2>${statsSheet}
+    <h2>📅 Clases (${clases.length})</h2>${clasesSheet}
+    <h2>💶 Pagos (${pagos.length})</h2>${pagosSheet}
+    <h2>👨‍👩‍👦 Tutores / Padres (${tutoresRows.length})</h2>${tutoresSheet}
+    </body></html>`;
+
+  const blob = new Blob([html], {type:"application/vnd.ms-excel;charset=utf-8"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url;
+  a.download = `golf-academia-bbdd-${fecha}.xls`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// PANTALLA DE AUTO-REGISTRO DE ALUMNOS
+// ═══════════════════════════════════════════════════════════════════
+function PantallaRegistro({onVolver}){
+  const [step,   setStep]  = useState(1); // 1=datos, 2=legal, 3=ok
+  const [form,   setForm]  = useState({
+    nombre:"", fechaNacimiento:"", telefono:"", email:"", dniAlumno:"",
+    alergias:"", intolerancias:"", lesiones:"", medicacion:"",
+    diasPreferencia:[], horarioPreferencia:"",
+    tutorNombre:"", tutorDni:"", tutorTelefono:"", tutorEmail:"", tutorRelacion:"",
+    rgpdAceptado:false, imagenAutorizada:false, aceptaCondiciones:false,
+    pinElegido:"",
+  });
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  function calcularEdad(fn){
+    if(!fn) return null;
+    const hoy=new Date(), nac=new Date(fn);
+    let e=hoy.getFullYear()-nac.getFullYear();
+    if(hoy.getMonth()-nac.getMonth()<0||(hoy.getMonth()-nac.getMonth()===0&&hoy.getDate()<nac.getDate()))e--;
+    return e;
+  }
+
+  const edad = calcularEdad(form.fechaNacimiento);
+  const esMenor = edad!==null && edad<18;
+
+  function autoNivelReg(fn){
+    const e=calcularEdad(fn);
+    if(e===null) return "";
+    if(e>=5&&e<=7) return "prebenjamin";
+    if(e>=8&&e<=10) return "benjamin";
+    if(e>=11&&e<=12) return "alevin";
+    if(e>=13&&e<=14) return "infantil";
+    if(e>=15&&e<=16) return "cadete";
+    if(e>=17&&e<=18) return "boys_girls";
+    if(e>=19&&e<=21) return "sub21";
+    return "";
+  }
+
+  async function enviarRegistro(){
+    // Validaciones — todos los campos obligatorios
+    if(!form.nombre.trim()){setError("El nombre es obligatorio.");return;}
+    if(!form.fechaNacimiento){setError("La fecha de nacimiento es obligatoria.");return;}
+    if(!form.telefono.trim()){setError("El teléfono es obligatorio.");return;}
+    if(!form.email.trim()){setError("El email es obligatorio.");return;}
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)){setError("El email no es válido. Revísalo, por favor.");return;}
+    if(!form.diasPreferencia||form.diasPreferencia.length===0){setError("Selecciona al menos un día de clase preferido.");return;}
+    if(!form.horarioPreferencia){setError("Selecciona un horario preferido.");return;}
+    if(form.pinElegido.length<6){setError("La clave debe tener al menos 6 caracteres.");return;}
+    if(!form.rgpdAceptado){setError("Debes aceptar la política de protección de datos.");return;}
+    if(esMenor){
+      if(!form.tutorNombre||!form.tutorNombre.trim()){setError("El nombre del tutor legal es obligatorio.");return;}
+      if(!form.tutorDni||!form.tutorDni.trim()){setError("El DNI del tutor legal es obligatorio.");return;}
+      if(!form.tutorTelefono||!form.tutorTelefono.trim()){setError("El teléfono del tutor es obligatorio.");return;}
+      if(!form.aceptaCondiciones){setError("El tutor legal debe aceptar las condiciones.");return;}
+    }
+    if(!esMenor&&(!form.dniAlumno||!form.dniAlumno.trim())){setError("El DNI/NIE es obligatorio.");return;}
+
+    setLoading(true);
+    setError("");
+
+    // Validación duplicados — comprueba pendientes Y alumnos activos
+    try {
+      // Comprobar en registros pendientes (Firebase)
+      const pendSnap = await getDocs(collection(db,"registros_pendientes"));
+      const pendientes = pendSnap.docs.map(d=>d.data());
+      const yaEnPendientes = pendientes.some(p=>
+        (form.email&&p.email&&p.email.toLowerCase()===form.email.toLowerCase()) ||
+        (form.telefono&&p.telefono&&p.telefono.replace(/\s/g,"")===form.telefono.replace(/\s/g,"")) ||
+        (form.nombre.trim().toLowerCase()===( p.nombre||"").trim().toLowerCase() && form.fechaNacimiento===p.fechaNacimiento)
+      );
+      if(yaEnPendientes){
+        setError("Ya tienes una solicitud pendiente de aprobación. El profesor te confirmará el acceso en breve. Si tienes dudas, contacta con el club.");
+        setLoading(false);
+        return;
+      }
+      // Comprobar en alumnos ya activos (datos de la app)
+      const alumnosActivos = data?.alumnos||[];
+      const yaActivo = alumnosActivos.some(a=>
+        (form.email&&a.email&&a.email.toLowerCase()===form.email.toLowerCase()) ||
+        (form.telefono&&a.telefono&&a.telefono.replace(/\s/g,"")===form.telefono.replace(/\s/g,"")) ||
+        (form.nombre.trim().toLowerCase()===(a.nombre||"").trim().toLowerCase() && form.fechaNacimiento===a.fechaNacimiento)
+      );
+      if(yaActivo){
+        setError("Ya estás registrado como alumno. Introduce tu PIN para acceder. Si no lo recuerdas, contacta con el profesor.");
+        setLoading(false);
+        return;
+      }
+    } catch(e){ console.warn("Duplicate check error:", e); }
+    try {
+      const nuevoAlumno = {
+        id: uid(),
+        nombre: form.nombre.trim(),
+        fechaNacimiento: form.fechaNacimiento,
+        nivel: autoNivelReg(form.fechaNacimiento),
+        telefono: form.telefono,
+        email: form.email,
+        pin: form.pinElegido,
+        alergias: form.alergias,
+        intolerancias: form.intolerancias,
+        lesiones: form.lesiones,
+        tipoEscuela: esMenor ? "infantil" : "adultos",
+        activo: false, // pendiente de activación por el profesor
+        rgpdAceptado: form.rgpdAceptado,
+        rgpdFirmante: esMenor ? form.tutorNombre : form.nombre,
+        rgpdFecha: today(),
+        imagenAutorizada: form.imagenAutorizada,
+        imagenFirmante: esMenor ? form.tutorNombre : form.nombre,
+        aceptaCondiciones: form.aceptaCondiciones,
+        firmaLegal: esMenor ? form.tutorNombre : "",
+        firmaDni: esMenor ? form.tutorDni : "",
+        firmaFecha: today(),
+        firmaRelacion: esMenor ? form.tutorRelacion : "",
+        tutores: esMenor ? [{
+          nombre: form.tutorNombre,
+          relacion: form.tutorRelacion,
+          dni: form.tutorDni,
+          telefono: form.tutorTelefono,
+          email: form.tutorEmail,
+        }] : [],
+        foto: "",
+        fechaAlta: today(),
+        notas: "Registro online — pendiente de activación por el profesor",
+        pendienteActivacion: true,
+      };
+
+      // Save to Firebase pending collection
+      await addDoc(collection(db,"registros_pendientes"), {
+        ...nuevoAlumno,
+        timestamp: serverTimestamp(),
+      });
+
+      // Send notification to professor
+      await notificarNuevoRegistro({
+        ...nuevoAlumno,
+        tipo: esMenor ? "nuevo_registro" : "nuevo_alumno_adulto",
+      });
+
+      // Enviar emails automáticos (aviso al profesor + bienvenida al alumno)
+      enviarEmailsRegistro(nuevoAlumno);
+
+      setStep(3);
+    } catch(e){
+      console.error(e);
+      setError("Error al enviar el registro. Comprueba tu conexión e inténtalo de nuevo.");
+    }
+    setLoading(false);
+  }
+
+  const PinDots = ({val}) => <div style={{display:"flex",gap:8,margin:"8px 0"}}>
+    {[0,1,2,3,4,5].map(i=><div key={i} style={{width:14,height:14,borderRadius:"50%",
+      background:i<val.length?"#c0392b":"#ddd"}}/>)}
+  </div>;
+
+  if(step===3) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"white",borderRadius:20,padding:32,maxWidth:380,width:"100%",textAlign:"center"}}>
+        <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:80,marginBottom:16,objectFit:"contain"}}/>
+        <div style={{fontSize:56,marginBottom:12}}>✅</div>
+        <h2 style={{color:G.fairway,marginBottom:12}}>¡Registro enviado!</h2>
+        <p style={{color:"#555",fontSize:14,lineHeight:1.6,marginBottom:20}}>
+          Tu solicitud ha sido enviada al profesor. <b>En breve recibirás confirmación</b> y podrás acceder a la app con tu PIN.
+        </p>
+        <div style={{background:G.mist,borderRadius:10,padding:14,marginBottom:20}}>
+          <div style={{fontSize:12,color:G.soft,marginBottom:4}}>Tu PIN de acceso</div>
+          <div style={{fontSize:28,fontWeight:800,color:"#c0392b",letterSpacing:6}}>{form.pinElegido}</div>
+          <div style={{fontSize:11,color:G.soft,marginTop:4}}>Guárdalo bien — lo necesitarás para entrar</div>
+        </div>
+        <div style={{fontSize:13,color:G.soft,marginBottom:20}}>
+          URL de la app: <b style={{color:G.sky}}>golf-ciudad-real.netlify.app</b>
+        </div>
+        <button onClick={onVolver} style={{background:G.fairway,color:"white",border:"none",
+          borderRadius:10,padding:"12px 24px",fontSize:15,fontWeight:700,cursor:"pointer",width:"100%"}}>
+          Volver al inicio
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:"100vh",background:G.sand,padding:"0 0 40px"}}>
+      {/* Header */}
+      <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,
+        padding:"20px 20px 16px",color:"white",textAlign:"center"}}>
+        <div style={{fontSize:24,marginBottom:4}}>⛳</div>
+        <div style={{fontWeight:800,fontSize:18}}>Golf Ciudad Real Academy</div>
+        <div style={{fontSize:13,opacity:.8}}>Formulario de inscripción</div>
+      </div>
+
+      {/* Indicador de pasos */}
+      <div style={{display:"flex",background:"white",padding:"12px 20px",
+        borderBottom:"1px solid #eee",gap:8,alignItems:"center"}}>
+        {[["1","Datos personales"],["2","Consentimientos"]].map(([n,l],i)=>(
+          <div key={n} style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
+            <div style={{width:26,height:26,borderRadius:"50%",
+              background:step>=Number(n)?G.fairway:"#ddd",
+              color:"white",fontWeight:700,fontSize:13,
+              display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {n}
+            </div>
+            <span style={{fontSize:12,color:step>=Number(n)?G.fairway:"#aaa",fontWeight:step===Number(n)?700:400}}>
+              {l}
+            </span>
+            {i<1&&<div style={{flex:1,height:2,background:step>1?G.fairway:"#eee",borderRadius:2}}/>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{maxWidth:520,margin:"0 auto",padding:"16px 16px 0"}}>
+
+        {/* ── PASO 1 ── */}
+        {step===1&&<div>
+          <Card style={{marginBottom:12}}>
+            <h3 style={{margin:"0 0 14px",color:G.fairway}}>👤 Datos del alumno</h3>
+            <Field label="Nombre completo *">
+              <Input value={form.nombre} onChange={v=>setForm(f=>({...f,nombre:v}))} placeholder="Nombre y apellidos"/>
+            </Field>
+            <Field label="Fecha de nacimiento *">
+              <Input type="date" value={form.fechaNacimiento}
+                onChange={v=>setForm(f=>({...f,fechaNacimiento:v}))}/>
+            </Field>
+            {edad!==null&&<div style={{background:esMenor?"#e8f0fb":G.mist,borderRadius:8,
+              padding:"6px 12px",marginBottom:10,fontSize:13,fontWeight:600,
+              color:esMenor?"#2e5fa3":G.fairway}}>
+              {esMenor?"🧒 Escuela Infantil (menor de 18 años)":"🏌️ Escuela de Adultos"} · {edad} años
+            </div>}
+            {!esMenor&&<Field label="DNI / NIE">
+              <Input value={form.dniAlumno} onChange={v=>setForm(f=>({...f,dniAlumno:v}))} placeholder="DNI o NIE del alumno"/>
+            </Field>}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <Field label="Teléfono">
+                <Input value={form.telefono} onChange={v=>setForm(f=>({...f,telefono:v}))} placeholder="Teléfono"/>
+              </Field>
+              <Field label="Email">
+                <Input value={form.email} onChange={v=>setForm(f=>({...f,email:v}))} placeholder="Email"/>
+              </Field>
+            </div>
+
+            {/* Días y horario preferencia */}
+            <Field label="📅 Días de clase preferidos">
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
+                {["Miércoles","Jueves","Sábado","Domingo"].map(dia=>(
+                  <label key={dia} style={{display:"flex",alignItems:"center",gap:8,
+                    background:form.diasPreferencia.includes(dia)?"#e8f5eb":"#f8f8f8",
+                    borderRadius:8,padding:"8px 10px",cursor:"pointer",
+                    border:form.diasPreferencia.includes(dia)?"2px solid #1a5c2a":"2px solid #eee",
+                    fontWeight:form.diasPreferencia.includes(dia)?700:400,
+                    fontSize:14,color:form.diasPreferencia.includes(dia)?"#1a5c2a":"#555"}}>
+                    <input type="checkbox"
+                      checked={form.diasPreferencia.includes(dia)}
+                      onChange={e=>setForm(f=>({...f,
+                        diasPreferencia:e.target.checked
+                          ?[...f.diasPreferencia,dia]
+                          :f.diasPreferencia.filter(d=>d!==dia)
+                      }))}
+                      style={{width:16,height:16}}/>
+                    {dia}
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <Field label="⏰ Horario preferido">
+              <select value={form.horarioPreferencia}
+                onChange={e=>setForm(f=>({...f,horarioPreferencia:e.target.value}))}
+                style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+                  padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+                <option value="">Seleccionar horario...</option>
+                <option value="Mañana (9:00-12:00)">Mañana (9:00-12:00)</option>
+                <option value="Mediodía (12:00-15:00)">Mediodía (12:00-15:00)</option>
+                <option value="Tarde (15:00-18:00)">Tarde (15:00-18:00)</option>
+                <option value="Tarde-noche (18:00-21:00)">Tarde-noche (18:00-21:00)</option>
+                <option value="Sin preferencia">Sin preferencia</option>
+              </select>
+            </Field>
+          </Card>
+
+          <Card style={{marginBottom:12}}>
+            <h3 style={{margin:"0 0 14px",color:"#880E4F"}}>🏥 Información médica</h3>
+            <Field label="🤧 Alergias">
+              <Textarea value={form.alergias} onChange={v=>setForm(f=>({...f,alergias:v}))}
+                rows={2} placeholder="Alergia al polen, látex, medicamentos... (déjalo en blanco si no aplica)"/>
+            </Field>
+            <Field label="🥛 Intolerancias alimentarias">
+              <Textarea value={form.intolerancias} onChange={v=>setForm(f=>({...f,intolerancias:v}))}
+                rows={2} placeholder="Lactosa, gluten... (déjalo en blanco si no aplica)"/>
+            </Field>
+            <Field label="🩹 Lesiones / Condiciones físicas">
+              <Textarea value={form.lesiones} onChange={v=>setForm(f=>({...f,lesiones:v}))}
+                rows={2} placeholder="Lesiones, asma, epilepsia... (déjalo en blanco si no aplica)"/>
+            </Field>
+            <Field label="💊 Medicación habitual o de emergencia">
+              <Textarea value={form.medicacion||""} onChange={v=>setForm(f=>({...f,medicacion:v}))}
+                rows={2} placeholder="Inhalador, adrenalina (EpiPen), insulina... (déjalo en blanco si no aplica)"/>
+            </Field>
+          </Card>
+
+          {esMenor&&<Card style={{marginBottom:12}}>
+            <h3 style={{margin:"0 0 14px",color:"#2e5fa3"}}>👨‍👩‍👦 Padre / Madre / Tutor legal</h3>
+            <Field label="Nombre completo del tutor *">
+              <Input value={form.tutorNombre} onChange={v=>setForm(f=>({...f,tutorNombre:v}))} placeholder="Nombre y apellidos"/>
+            </Field>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <Field label="Relación">
+                <select value={form.tutorRelacion} onChange={e=>setForm(f=>({...f,tutorRelacion:e.target.value}))}
+                  style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+                    fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+                  <option value="">Seleccionar...</option>
+                  <option value="Padre">Padre</option>
+                  <option value="Madre">Madre</option>
+                  <option value="Tutor legal">Tutor legal</option>
+                  <option value="Otro">Otro</option>
+                </select>
+              </Field>
+              <Field label="DNI / NIE">
+                <Input value={form.tutorDni} onChange={v=>setForm(f=>({...f,tutorDni:v}))} placeholder="DNI del tutor"/>
+              </Field>
+            </div>
+            <Field label="Teléfono del tutor">
+              <Input value={form.tutorTelefono} onChange={v=>setForm(f=>({...f,tutorTelefono:v}))} placeholder="Teléfono"/>
+            </Field>
+            <Field label="Email del tutor">
+              <Input value={form.tutorEmail} onChange={v=>setForm(f=>({...f,tutorEmail:v}))} placeholder="Email"/>
+            </Field>
+          </Card>}
+
+          <Card style={{marginBottom:16}}>
+            <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>🔐 Elige tu clave de acceso</h3>
+            <p style={{fontSize:13,color:G.soft,margin:"0 0 10px"}}>
+              Esta clave la usarás para entrar a la app. Mínimo 6 caracteres. Puede contener letras, números y símbolos para mayor seguridad. Puedes cambiarla después.
+            </p>
+            <Field label="Clave de acceso (mínimo 6 caracteres)">
+              <Input type="password" value={form.pinElegido}
+                onChange={v=>setForm(f=>({...f,pinElegido:v.slice(0,20)}))}
+                placeholder="Ej: Golf2026!" maxLength={20}/>
+            </Field>
+            <div style={{fontSize:12,marginTop:6}}>
+              {form.pinElegido.length>0&&form.pinElegido.length<6&&<span style={{color:"#c0392b"}}>⚠ Mínimo 6 caracteres</span>}
+              {form.pinElegido.length>=6&&<span style={{color:"#1a5c2a"}}>✓ Clave válida</span>}
+            </div>
+          </Card>
+
+          {error&&<div style={{background:"#fdecea",color:"#c0392b",borderRadius:8,
+            padding:"10px 14px",fontSize:13,marginBottom:12}}>{error}</div>}
+
+          <button onClick={()=>{
+            if(!form.nombre.trim()||!form.fechaNacimiento||form.pinElegido.length<4){
+              setError("Rellena nombre, fecha de nacimiento y PIN antes de continuar.");
+            } else { setError(""); setStep(2); }
+          }} style={{width:"100%",background:G.fairway,color:"white",border:"none",
+            borderRadius:12,padding:"14px 0",fontSize:16,fontWeight:700,cursor:"pointer"}}>
+            Siguiente →
+          </button>
+        </div>}
+
+        {/* ── PASO 2 ── */}
+        {step===2&&<div>
+          <Card style={{marginBottom:12}}>
+            <h3 style={{margin:"0 0 10px",color:G.fairway}}>🔒 Protección de datos (RGPD)</h3>
+            <div style={{background:"#f0f8f0",borderRadius:8,padding:10,fontSize:12,
+              color:"#444",lineHeight:1.6,marginBottom:12}}>
+              <b>Responsable:</b> Golf Ciudad Real C.D. · <b>Finalidad:</b> Gestión de la Escuela de Golf. 
+              <b> Base legal:</b> Consentimiento (Art. 6.1.a RGPD). 
+              <b> Derechos:</b> Acceso y supresión → golf@golfciudadreal.es
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",
+              background:G.mist,borderRadius:8,padding:10}}>
+              <input type="checkbox" checked={form.rgpdAceptado}
+                onChange={e=>setForm(f=>({...f,rgpdAceptado:e.target.checked}))}
+                style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+              <label style={{fontSize:13,lineHeight:1.5,cursor:"pointer"}}>
+                {esMenor
+                  ?"Acepto el tratamiento de los datos del menor conforme al RGPD y LO 3/2018, como padre/madre/tutor legal."
+                  :"Acepto el tratamiento de mis datos conforme al RGPD (UE 2016/679) y la LO 3/2018."}
+              </label>
+            </div>
+          </Card>
+
+          <Card style={{marginBottom:12}}>
+            <h3 style={{margin:"0 0 10px",color:"#c8a84b"}}>📸 Autorización de imagen {esMenor&&"(LO 1/1996)"}</h3>
+            {esMenor&&<div style={{background:"#fff8e1",borderRadius:8,padding:8,fontSize:12,
+              color:"#6B4E0A",marginBottom:10}}>
+              La publicación de imágenes de menores requiere autorización expresa (LO 1/1996).
+            </div>}
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",
+              background:"#fff8e1",borderRadius:8,padding:10}}>
+              <input type="checkbox" checked={form.imagenAutorizada}
+                onChange={e=>setForm(f=>({...f,imagenAutorizada:e.target.checked}))}
+                style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+              <label style={{fontSize:13,lineHeight:1.5,cursor:"pointer"}}>
+                {esMenor
+                  ?"Autorizo la captación y publicación de imágenes del menor en actividades de la Escuela de Golf (web, redes sociales, materiales formativos)."
+                  :"Autorizo la captación y publicación de mis imágenes en actividades de la Escuela de Golf."}
+              </label>
+            </div>
+          </Card>
+
+          {esMenor&&<Card style={{marginBottom:12}}>
+            <h3 style={{margin:"0 0 10px",color:"#c0392b"}}>✍️ Confirmación legal del tutor (Art. 162 CC)</h3>
+            <div style={{background:"#fdecea",borderRadius:8,padding:10,fontSize:12,
+              color:"#555",marginBottom:10,lineHeight:1.5}}>
+              El padre/madre/tutor declara ser el representante legal del menor y acepta el Reglamento Interno de la Escuela de Golf Ciudad Real C.D.
+            </div>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",
+              background:"#fdecea",borderRadius:8,padding:10}}>
+              <input type="checkbox" checked={form.aceptaCondiciones}
+                onChange={e=>setForm(f=>({...f,aceptaCondiciones:e.target.checked}))}
+                style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+              <label style={{fontSize:13,lineHeight:1.5,cursor:"pointer",fontWeight:600}}>
+                Declaro ser el representante legal del menor y acepto todas las condiciones.
+              </label>
+            </div>
+          </Card>}
+
+          {!esMenor&&<Card style={{marginBottom:12}}>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",
+              background:"#fdecea",borderRadius:8,padding:10}}>
+              <input type="checkbox" checked={form.aceptaCondiciones}
+                onChange={e=>setForm(f=>({...f,aceptaCondiciones:e.target.checked}))}
+                style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+              <label style={{fontSize:13,lineHeight:1.5,cursor:"pointer",fontWeight:600}}>
+                Acepto el Reglamento Interno de la Escuela de Golf Ciudad Real C.D. y las condiciones de participación.
+              </label>
+            </div>
+          </Card>}
+
+          {error&&<div style={{background:"#fdecea",color:"#c0392b",borderRadius:8,
+            padding:"10px 14px",fontSize:13,marginBottom:12}}>{error}</div>}
+
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            <button onClick={()=>setStep(1)}
+              style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",
+                borderRadius:12,padding:"14px 0",fontSize:15,fontWeight:600,cursor:"pointer"}}>
+              ← Atrás
+            </button>
+            <button onClick={enviarRegistro} disabled={loading}
+              style={{flex:2,background:loading?"#aaa":G.fairway,color:"white",border:"none",
+                borderRadius:12,padding:"14px 0",fontSize:15,fontWeight:700,cursor:"pointer"}}>
+              {loading?"Enviando...":"✅ Enviar inscripción"}
+            </button>
+          </div>
+
+          <div style={{fontSize:11,color:G.soft,textAlign:"center",lineHeight:1.5}}>
+            Tu solicitud será revisada por el profesor. Recibirás confirmación cuando tu acceso esté activado.
+          </div>
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+function LoginScreen({data,onLogin}){
+  const [pin,setPin]=useState("");
+  const [mostrarRegistro,setMostrarRegistro]=useState(false);
+  const [recordar,setRecordar]=useState(()=>localStorage.getItem("gcr_recordar")==="1");
+
+  // Auto-login si hay PIN guardado (se re-ejecuta cuando cargan los datos)
+  const [autoLoginHecho,setAutoLoginHecho]=useState(false);
+  useEffect(()=>{
+    if(autoLoginHecho) return;
+    const recordar = localStorage.getItem("gcr_recordar")==="1";
+    const pinGuardado = localStorage.getItem("gcr_pin_saved");
+    if(recordar && pinGuardado && data){
+      // Comprobar super-admin
+      if(pinGuardado===(data.superAdminPin||"0000")){
+        setAutoLoginHecho(true); onLogin({role:"superadmin"}); return;
+      }
+      // Comprobar admin principal
+      if(pinGuardado===(data.adminPin||DEFAULT_ADMIN_PIN)){
+        setAutoLoginHecho(true); onLogin({role:"admin",profesorId:null}); return;
+      }
+      // Comprobar profesores adicionales
+      const profe=(data.profesores||[]).find(pr=>pr.activo&&pr.pin===pinGuardado);
+      if(profe){ setAutoLoginHecho(true); onLogin({role:"profesor",profesorId:profe.id,profesorNombre:profe.nombre}); return; }
+      // Comprobar alumnos activos
+      const alumno=(data.alumnos||[]).find(a=>a.activo&&a.pin===pinGuardado);
+      if(alumno){ setAutoLoginHecho(true); onLogin({role:"alumno",alumnoId:alumno.id}); return; }
+      // Comprobar tutores con PIN propio
+      for(const al of (data.alumnos||[])){
+        if(!al.activo) continue;
+        const tutor=(al.tutores||[]).find(t=>t.pin&&t.pin===pinGuardado);
+        if(tutor){ setAutoLoginHecho(true); onLogin({role:"tutor",alumnoId:al.id,tutorNombre:tutor.nombre}); return; }
+      }
+    }
+  },[data,autoLoginHecho]);
+  const [error,setError]=useState("");
+  const [intentando,setIntentando]=useState(false);
+
+  const PinDot=({filled})=><div style={{width:16,height:16,borderRadius:"50%",
+    background:filled?G.fairway:"#d0e0d0",transition:"background .15s"}}/>;
+
+  function intentarAcceso(p){
+    if(!p||p.length===0) return;
+    setError("");
+    // Comprobar super-admin (acceso total)
+    if(p===(data.superAdminPin||"0000")){
+      setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
+      setTimeout(()=>{ onLogin({role:"superadmin"}); setIntentando(false); },300);
+      return;
+    }
+    // Comprobar clave de administrador (profesor principal)
+    if(p===(data.adminPin||DEFAULT_ADMIN_PIN)){
+      setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
+      setTimeout(()=>{ onLogin({role:"admin",profesorId:null}); setIntentando(false); },300);
+      return;
+    }
+    // Comprobar profesores adicionales
+    const profesor=(data.profesores||[]).find(pr=>pr.activo&&pr.pin===p);
+    if(profesor){
+      setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
+      setTimeout(()=>{ onLogin({role:"profesor",profesorId:profesor.id,profesorNombre:profesor.nombre}); setIntentando(false); },300);
+      return;
+    }
+    // Comprobar alumnos activos
+    const alumno = (data.alumnos||[]).find(a=>a.activo&&a.pin===p);
+    if(alumno){
+      setIntentando(true);
+      const recordar=localStorage.getItem("gcr_recordar")==="1";
+      if(recordar) localStorage.setItem("gcr_pin_saved",p);
+      setTimeout(()=>{ onLogin({role:"alumno",alumnoId:alumno.id}); setIntentando(false); },300);
+      return;
+    }
+    // Comprobar tutores con PIN propio
+    for(const al of (data.alumnos||[])){
+      if(!al.activo) continue;
+      const tutor=(al.tutores||[]).find(t=>t.pin&&t.pin===p);
+      if(tutor){
+        setIntentando(true);
+        const recordar=localStorage.getItem("gcr_recordar")==="1";
+        if(recordar) localStorage.setItem("gcr_pin_saved",p);
+        setTimeout(()=>{ onLogin({role:"tutor",alumnoId:al.id,tutorNombre:tutor.nombre}); setIntentando(false); },300);
+        return;
+      }
+    }
+    // Clave incorrecta
+    setError("Clave incorrecta. Inténtalo de nuevo.");
+    setPin("");
+  }
+
+  if(mostrarRegistro) return <PantallaRegistro onVolver={()=>setMostrarRegistro(false)}/>;
+
+  return (
+    <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${G.fairway} 0%,#0f3518 100%)`,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
+      <div style={{background:G.white,borderRadius:24,padding:"32px 28px",width:"100%",
+        maxWidth:340,textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
+        margin:"auto"}}>
+
+        {/* Logo JCGA */}
+        <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
+          <img src={LOGO_JCGA} alt="José Caballero Golf Academy"
+            style={{width:"100%",maxWidth:280,objectFit:"contain",borderRadius:12}}/>
+        </div>
+
+        <div style={{fontWeight:800,fontSize:19,color:G.fairway,marginBottom:2}}>
+          José Caballero Golf Academy
+        </div>
+        <div style={{fontSize:12,color:G.soft,marginBottom:6}}>Golf Ciudad Real C.D.</div>
+        <div style={{fontSize:11,color:"#aaa",marginBottom:24}}>🏫 Escuela de Golf · Curso 2026/2027</div>
+
+        {/* Campo de clave */}
+        <div style={{fontSize:13,color:G.soft,marginBottom:12,fontWeight:600}}>
+          {intentando?"✔ Identificado…":"Introduce tu clave de acceso"}
+        </div>
+
+        {error&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,
+          padding:"8px 12px",fontSize:13,marginBottom:12}}>{error}</div>}
+
+        <div style={{marginBottom:14}}>
+          <input type="password" value={pin}
+            onChange={e=>setPin(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter"&&pin.length>0)intentarAcceso(pin);}}
+            placeholder="Tu clave de acceso"
+            autoComplete="current-password"
+            style={{width:"100%",boxSizing:"border-box",border:"2px solid #d0e0d0",
+              borderRadius:12,padding:"14px 16px",fontSize:18,textAlign:"center",
+              fontFamily:"inherit",letterSpacing:2}}/>
+        </div>
+        <button onClick={()=>intentarAcceso(pin)} disabled={pin.length===0}
+          style={{width:"100%",background:G.fairway,color:"white",border:"none",
+            borderRadius:12,padding:"14px 0",fontSize:16,fontWeight:700,
+            cursor:pin.length===0?"default":"pointer",opacity:pin.length===0?0.5:1,
+            boxShadow:"0 4px 12px rgba(26,92,42,.3)"}}>
+          🔓 Entrar
+        </button>
+
+        <div style={{fontSize:11,color:"#ccc",marginTop:14}}>
+          Tu clave te identifica automáticamente como profesor o alumno
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,justifyContent:"center"}}>
+          <input type="checkbox" id="recordar" checked={recordar}
+            onChange={e=>{setRecordar(e.target.checked);
+              if(e.target.checked){localStorage.setItem("gcr_recordar","1");if(pin)localStorage.setItem("gcr_pin_saved",pin);}
+              else{localStorage.removeItem("gcr_pin_saved");localStorage.setItem("gcr_recordar","0");}
+            }}
+            style={{width:16,height:16,cursor:"pointer"}}/>
+          <label htmlFor="recordar" style={{fontSize:12,color:"#ccc",cursor:"pointer"}}>
+            Recordar mi acceso en este dispositivo
+          </label>
+        </div>
+        <div style={{borderTop:"1px solid #e0e0e0",marginTop:16,paddingTop:16}}>
+          <button onClick={()=>setMostrarRegistro(true)}
+            style={{width:"100%",background:G.fairway,color:"white",
+              border:"none",borderRadius:10,
+              padding:"12px 0",fontSize:14,fontWeight:700,cursor:"pointer",
+              boxShadow:"0 4px 12px rgba(26,92,42,.3)"}}>
+            📝 Inscribirme en la Escuela de Golf
+          </button>
+          <div style={{fontSize:11,color:G.soft,marginTop:8}}>
+            ¿Primera vez? Regístrate aquí
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════
+// SHARED: MINI CALENDAR
+// ═══════════════════════════════════════════════════════
+function MiniCalendar({selected,onChange,markedDates=[]}){
+  const [view,setView]=useState(()=>{
+    const d=selected?new Date(selected+"T12:00:00"):new Date();
+    return {y:d.getFullYear(),m:d.getMonth()};
+  });
+  const {y,m}=view;
+  const firstDay=new Date(y,m,1).getDay(); // 0=Sun
+  const offset=(firstDay+6)%7; // Mon=0
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const cells=[];
+  for(let i=0;i<offset;i++) cells.push(null);
+  for(let d=1;d<=daysInMonth;d++) cells.push(d);
+
+  function fmt(d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+  function prevMonth(){ setView(v=>v.m===0?{y:v.y-1,m:11}:{y:v.y,m:v.m-1}); }
+  function nextMonth(){ setView(v=>v.m===11?{y:v.y+1,m:0}:{y:v.y,m:v.m+1}); }
+
+  return (
+    <div style={{userSelect:"none"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:G.fairway,padding:"0 6px"}}>‹</button>
+        <span style={{fontWeight:700,color:G.fairway,fontSize:14}}>{MESES[m]} {y}</span>
+        <button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:G.fairway,padding:"0 6px"}}>›</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,textAlign:"center"}}>
+        {DIAS.map(d=><div key={d} style={{fontSize:11,fontWeight:700,color:G.soft,padding:"4px 0"}}>{d}</div>)}
+        {cells.map((d,i)=>{
+          if(!d) return <div key={i}/>;
+          const iso=fmt(d);
+          const isSel=iso===selected;
+          const isToday=iso===today();
+          const isMarked=markedDates.includes(iso);
+          return <div key={i} onClick={()=>onChange(iso)}
+            style={{padding:"6px 2px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:isSel||isToday?700:400,
+              background:isSel?G.fairway:isToday?"#e8f5eb":"transparent",
+              color:isSel?G.white:isToday?G.fairway:G.ink,
+              position:"relative",transition:"background .12s"}}
+            onMouseEnter={e=>{if(!isSel)e.currentTarget.style.background="#e8f5eb";}}
+            onMouseLeave={e=>{if(!isSel)e.currentTarget.style.background=isSel?G.fairway:"transparent";}}>
+            {d}
+            {isMarked&&!isSel&&<div style={{width:4,height:4,borderRadius:"50%",background:G.grass,margin:"1px auto 0"}}/>}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN: CALENDARIO DE SLOTS
+// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// PANEL PDF CALENDARIO (Profesor sube, Alumnos descargan)
+// ═══════════════════════════════════════════════════════════════════
+function PanelPdfCalendario({esProfesor}){
+  const [pdfInfo,setPdfInfo]   = useState(null);  // {nombre, url, subidoEl}
+  const [cargando,setCargando] = useState(true);
+  const [subiendo,setSubiendo] = useState(false);
+  const [msg,setMsg]           = useState("");
+
+  // Cargar info del PDF desde Firestore al montar
+  useEffect(()=>{
+    getDoc(doc(db,"academia","calendario_pdf"))
+      .then(snap=>{
+        if(snap.exists()) setPdfInfo(snap.data());
+      })
+      .catch(()=>{})
+      .finally(()=>setCargando(false));
+  },[]);
+
+  async function subirPDF(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    if(file.type!=="application/pdf"){
+      setMsg("⚠️ Solo se permiten archivos PDF."); return;
+    }
+    if(file.size > 5*1024*1024){
+      setMsg("⚠️ El PDF no puede superar 5 MB."); return;
+    }
+    setSubiendo(true);
+    setMsg("Subiendo PDF...");
+    try{
+      const reader = new FileReader();
+      reader.onload = async (ev)=>{
+        const base64 = ev.target.result; // data:application/pdf;base64,...
+        const info = {
+          nombre: file.name,
+          url: base64,
+          subidoEl: new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"long",year:"numeric"}),
+        };
+        await setDoc(doc(db,"academia","calendario_pdf"), info);
+        setPdfInfo(info);
+        setMsg("✅ Calendario subido correctamente.");
+        setSubiendo(false);
+      };
+      reader.readAsDataURL(file);
+    }catch(err){
+      setMsg("❌ Error al subir: "+err.message);
+      setSubiendo(false);
+    }
+  }
+
+  async function eliminarPDF(){
+    if(!confirm("¿Eliminar el PDF del calendario?")) return;
+    await setDoc(doc(db,"academia","calendario_pdf"),{});
+    setPdfInfo(null);
+    setMsg("PDF eliminado.");
+  }
+
+  function descargarPDF(){
+    if(!pdfInfo?.url) return;
+    const a = document.createElement("a");
+    a.href = pdfInfo.url;
+    a.download = pdfInfo.nombre || "calendario.pdf";
+    a.click();
+  }
+
+  return <div style={{background:"#f0f7f0",border:"2px solid #1a5c2a22",borderRadius:14,
+    padding:"18px 20px",marginBottom:20}}>
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+      <div style={{fontSize:28}}>📄</div>
+      <div>
+        <div style={{fontWeight:800,fontSize:15,color:G.fairway}}>
+          Calendario de la Academia
+        </div>
+        <div style={{fontSize:12,color:G.soft}}>
+          {esProfesor
+            ? "Sube el PDF del calendario de clases para que los alumnos puedan descargarlo"
+            : "Descarga el calendario de clases de la academia"}
+        </div>
+      </div>
+    </div>
+
+    {cargando && <div style={{color:G.soft,fontSize:13}}>Cargando...</div>}
+
+    {!cargando && pdfInfo?.url && (
+      <div style={{background:"#fff",borderRadius:10,padding:"14px 16px",
+        display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <div style={{fontSize:32}}>📋</div>
+        <div style={{flex:1,minWidth:160}}>
+          <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{pdfInfo.nombre}</div>
+          {pdfInfo.subidoEl&&<div style={{fontSize:12,color:G.soft,marginTop:2}}>
+            Subido el {pdfInfo.subidoEl}
+          </div>}
+        </div>
+        <button onClick={descargarPDF}
+          style={{background:G.fairway,color:"#fff",border:"none",borderRadius:8,
+            padding:"10px 18px",fontSize:13,fontWeight:700,cursor:"pointer",
+            display:"flex",alignItems:"center",gap:6}}>
+          ⬇️ Descargar PDF
+        </button>
+        {esProfesor&&<button onClick={eliminarPDF}
+          style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:8,
+            padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          🗑️ Eliminar
+        </button>}
+      </div>
+    )}
+
+    {!cargando && !pdfInfo?.url && (
+      <div style={{background:"#fff",borderRadius:10,padding:"18px",textAlign:"center",
+        color:G.soft,fontSize:13}}>
+        {esProfesor
+          ? "No hay ningún PDF subido todavía."
+          : "El profesor todavía no ha subido el calendario. Vuelve más tarde."}
+      </div>
+    )}
+
+    {esProfesor && (
+      <div style={{marginTop:12}}>
+        <label style={{display:"inline-flex",alignItems:"center",gap:8,
+          background:"#1a5c2a",color:"#fff",borderRadius:8,
+          padding:"10px 16px",fontSize:13,fontWeight:700,
+          cursor:subiendo?"not-allowed":"pointer",opacity:subiendo?0.6:1}}>
+          {subiendo?"⏳ Subiendo...":"📤 Subir nuevo PDF"}
+          <input type="file" accept="application/pdf"
+            onChange={subirPDF} disabled={subiendo}
+            style={{display:"none"}}/>
+        </label>
+        <div style={{fontSize:11,color:G.soft,marginTop:6}}>
+          Máximo 5 MB · Solo archivos PDF
+        </div>
+      </div>
+    )}
+
+    {msg&&<div style={{marginTop:10,fontSize:13,color:msg.startsWith("✅")?"#1a5c2a":msg.startsWith("⚠️")||msg.startsWith("❌")?"#c0392b":G.soft,
+      fontWeight:600}}>{msg}</div>}
+  </div>;
+}
+
+function ModCalendario({data,setData}){
+  const [diaVer,setDiaVer]=useState(today());
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [verReservas,setVerReservas]=useState(null);
+
+  function exportarICS(){
+    const clases=(data.clases||[]).filter(c=>c.fecha);
+    if(clases.length===0){ alert("No hay clases para exportar."); return; }
+    const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Golf Ciudad Real//Academia//ES","CALSCALE:GREGORIAN"];
+    clases.forEach(c=>{
+      const alumno=(data.alumnos||[]).find(a=>a.id===c.alumnoId);
+      const titulo="Clase golf"+(alumno?" - "+alumno.nombre:"");
+      const [y,m,d]=c.fecha.split("-");
+      const hi=(c.horaInicio||"10:00").replace(":","");
+      const hEnd=c.horaFin?c.horaFin.replace(":",""): String(Number(hi.slice(0,2))+1).padStart(2,"0")+hi.slice(2);
+      const dt=y+m.padStart(2,"0")+d.padStart(2,"0");
+      lines.push("BEGIN:VEVENT");
+      lines.push("UID:"+c.id+"@golfciudadreal");
+      lines.push("DTSTART;TZID=Europe/Madrid:"+dt+"T"+hi+"00");
+      lines.push("DTEND;TZID=Europe/Madrid:"+dt+"T"+hEnd+"00");
+      lines.push("SUMMARY:"+titulo);
+      lines.push("DESCRIPTION:Academia Golf Ciudad Real"+(c.notas?" - "+c.notas:""));
+      lines.push("END:VEVENT");
+    });
+    lines.push("END:VCALENDAR");
+    const blob=new Blob([lines.join("\r\n")],{type:"text/calendar"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="clases-golf.ics"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+
+  function exportarClasesExcel(){
+    const clases = (data.clases||[]).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    const rows = [["Fecha","Hora","Duración (min)","Alumno","Tipo","Zona","Contenido","Asistencia"]];
+    clases.forEach(c=>{
+      const alumno = (data.alumnos||[]).find(a=>a.id===c.alumnoId);
+      rows.push([
+        c.fecha||"",
+        c.horaInicio||c.hora||"",
+        c.duracion||"60",
+        alumno?.nombre||"—",
+        c.tipo||"",
+        c.zona||"",
+        c.contenido||"",
+        c.asistio?"Asistió":"Pendiente",
+      ]);
+    });
+    const sep=";";
+    const csv=rows.map(r=>r.map(v=>{ const s=String(v).replace(/"/g,'""'); return s.includes(sep)||s.includes('"')||s.includes('\n')?`"${s}"`:s; }).join(sep)).join("\r\n");
+    const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url; a.download="clases-golf.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportarClasesPDF(){
+    await cargarJsPDF();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+
+    // Cabecera
+    doc.setFillColor(26, 92, 42);
+    doc.rect(0, 0, W, 22, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(14); doc.setFont("helvetica","bold");
+    doc.text("Golf Ciudad Real C.D. — Listado de Clases", W/2, 10, {align:"center"});
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text("José Manuel Caballero Fernández · PGA España Nº 1908P", W/2, 17, {align:"center"});
+
+    // Tabla
+    const cols = ["Fecha","Hora","Duración","Alumno","Tipo","Zona","Asistencia"];
+    const widths = [25, 18, 22, 50, 30, 45, 22];
+    const clases = (data.clases||[]).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+    let y = 28;
+
+    // Cabecera tabla
+    doc.setFillColor(46, 125, 60);
+    doc.rect(10, y-5, W-20, 8, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(8); doc.setFont("helvetica","bold");
+    let x = 10;
+    cols.forEach((col,i)=>{ doc.text(col, x+2, y); x+=widths[i]; });
+    y += 5;
+
+    // Filas
+    clases.forEach((c,idx)=>{
+      if(y > H-15){ doc.addPage(); y=20; }
+      const alumno = (data.alumnos||[]).find(a=>a.id===c.alumnoId);
+      const fila = [
+        c.fecha||"",
+        c.horaInicio||c.hora||"",
+        (c.duracion||"60")+"min",
+        alumno?.nombre||"—",
+        c.tipo||"",
+        c.zona||"",
+        c.asistio?"✓ Asistió":"Pendiente",
+      ];
+      doc.setFillColor(idx%2===0?245:255, idx%2===0?248:255, idx%2===0?245:255);
+      doc.rect(10, y-4, W-20, 7, "F");
+      doc.setTextColor(30,30,30);
+      doc.setFont("helvetica","normal"); doc.setFontSize(8);
+      x = 10;
+      fila.forEach((val,i)=>{
+        const txt = doc.splitTextToSize(String(val), widths[i]-2);
+        doc.text(txt[0]||"", x+2, y);
+        x+=widths[i];
+      });
+      y+=7;
+    });
+
+    // Pie
+    doc.setFillColor(26, 92, 42);
+    doc.rect(0, H-10, W, 10, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(7);
+    doc.text("Golf Ciudad Real C.D. · José Caballero Golf Academy · "+new Date().toLocaleDateString("es-ES"), W/2, H-4, {align:"center"});
+
+    doc.save("clases-golf-"+new Date().toISOString().slice(0,10)+".pdf");
+  }
+
+  function cargarGapi(){
+    if(window.gapi) return Promise.resolve();
+    return new Promise((res,rej)=>{
+      const s=document.createElement("script");
+      s.src="https://apis.google.com/js/api.js";
+      s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
+  }
+  function cargarGis(){
+    if(window.google?.accounts) return Promise.resolve();
+    return new Promise((res,rej)=>{
+      const s=document.createElement("script");
+      s.src="https://accounts.google.com/gsi/client";
+      s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function getTokenClient(callback){
+    await cargarGapi();
+    await new Promise(res=>window.gapi.load("client",res));
+    await window.gapi.client.init({discoveryDocs:[GCAL_DISCOVERY_DOC]});
+    await cargarGis();
+    return window.google.accounts.oauth2.initTokenClient({
+      client_id:GCAL_CLIENT_ID, scope:GCAL_SCOPES, callback
+    });
+  }
+
+  async function exportarClases(){
+    setGcalSyncing(true);
+    setGcalMsg("Conectando con Google Calendar...");
+    try{
+      const tc=await getTokenClient(async resp=>{
+        if(resp.error){setGcalMsg("Error: "+resp.error);setGcalSyncing(false);return;}
+        setGcalReady(true);
+        const clases=(data.clases||[]).filter(c=>c.fecha);
+        let ok=0;
+        const clasesExportadas=new Set((data.clases||[]).filter(c=>c.gcalExportado).map(c=>c.id));
+        const clasesPendientes=clases.filter(c=>!clasesExportadas.has(c.id));
+        for(const c of clasesPendientes){
+          const alumno=(data.alumnos||[]).find(a=>a.id===c.alumnoId);
+          const titulo="🏌️ Clase golf"+(alumno?" — "+alumno.nombre:"");
+          const [y,m,d]=c.fecha.split("-");
+          const hi=c.horaInicio||"10:00";
+          const [hh,mm]=hi.split(":").map(Number);
+          const ini=new Date(Number(y),Number(m)-1,Number(d),hh,mm);
+          const fin=new Date(ini.getTime()+60*60*1000);
+          try{
+            await window.gapi.client.calendar.events.insert({
+              calendarId:"primary",
+              resource:{
+                summary:titulo,
+                description:"Academia Golf Ciudad Real — "+(c.notas||""),
+                start:{dateTime:ini.toISOString(),timeZone:"Europe/Madrid"},
+                end:{dateTime:fin.toISOString(),timeZone:"Europe/Madrid"},
+                colorId:"2",
+              }
+            });
+            // Marcar como exportada en la app para no duplicar
+            setData(d=>({...d,clases:(d.clases||[]).map(x=>x.id===c.id?{...x,gcalExportado:true}:x)}));
+            ok++;
+          }catch(e){}
+        }
+        setGcalMsg(ok>0?"✅ "+ok+" clases exportadas a Google Calendar":"✅ Todo ya estaba exportado");
+        setGcalSyncing(false);
+      });
+      tc.requestAccessToken({prompt:gcalReady?"":"consent"});
+    }catch(e){setGcalMsg("Error: "+e.message);setGcalSyncing(false);}
+  }
+
+  async function importarEventos(){
+    setGcalSyncing(true);
+    setGcalMsg("Importando eventos de Google Calendar...");
+    try{
+      const tc=await getTokenClient(async resp=>{
+        if(resp.error){setGcalMsg("Error: "+resp.error);setGcalSyncing(false);return;}
+        const ahora=new Date();
+        const en30d=new Date(ahora.getTime()+30*24*60*60*1000);
+        const r=await window.gapi.client.calendar.events.list({
+          calendarId:"primary",timeMin:ahora.toISOString(),timeMax:en30d.toISOString(),
+          maxResults:50,singleEvents:true,orderBy:"startTime"
+        });
+        const evts=(r.result.items||[]);
+        const existentes=new Set((data.clases||[]).map(c=>c.id));
+        const nuevas=evts.map(e=>({
+          id:"gcal_"+e.id, gcalId:e.id, alumnoId:null,
+          fecha:e.start?.dateTime?e.start.dateTime.split("T")[0]:e.start?.date||"",
+          horaInicio:e.start?.dateTime?e.start.dateTime.split("T")[1].slice(0,5):"",
+          tipo:"importada", notas:e.summary+(e.description?" — "+e.description:""), activa:true,
+        })).filter(c=>!existentes.has(c.id));
+        if(nuevas.length>0){
+          setData({...data,clases:[...(data.clases||[]),...nuevas]});
+          setGcalMsg("✅ "+nuevas.length+" eventos importados desde Google Calendar");
+        }else{
+          setGcalMsg("✅ Ya estás sincronizado — sin eventos nuevos");
+        }
+        setGcalSyncing(false);
+      });
+      tc.requestAccessToken({prompt:gcalReady?"":"consent"});
+    }catch(e){setGcalMsg("Error: "+e.message);setGcalSyncing(false);}
+  }
+
+  const slots=data.slots||[];
+  const reservas=data.reservas||[];
+  const alumnos=data.alumnos||[];
+
+  const markedDates=[...new Set(slots.map(s=>s.fecha))];
+  const slotsDelDia=slots.filter(s=>s.fecha===diaVer).sort((a,b)=>a.hora.localeCompare(b.hora));
+
+  function openNew(){
+    setForm({fecha:diaVer,hora:"10:00",duracion:"60",zona:"Campo de prácticas",tipo:"Individual",plazas:"1",notas:""});
+    setModal("new");
+  }
+  function openEdit(s){setForm({...s});setModal(s.id);}
+
+  function save(){
+    if(!form.fecha||!form.hora) return;
+    const updated=modal==="new"
+      ?[...slots,{...form,id:uid(),alumnosIds:[]}]
+      :slots.map(s=>s.id===modal?{...form}:s);
+    setData({...data,slots:updated});setModal(null);
+  }
+
+  function eliminarSlot(id){
+    if(!confirm("¿Eliminar este hueco? Se cancelarán las reservas asociadas.")) return;
+    const updSlots=slots.filter(s=>s.id!==id);
+    const updReservas=reservas.filter(r=>r.slotId!==id);
+    setData({...data,slots:updSlots,reservas:updReservas});
+  }
+
+  function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
+
+  function reservasDeSlot(slotId){return reservas.filter(r=>r.slotId===slotId&&r.estado!=="cancelada");}
+
+  function cancelarReserva(rid){
+    setData({...data,reservas:reservas.map(r=>r.id===rid?{...r,estado:"cancelada"}:r)});
+  }
+
+  const SlotCard=({s})=>{
+    const res=reservasDeSlot(s.id);
+    const plazas=Number(s.plazas||1);
+    const libre=plazas-res.length;
+    return <Card style={{marginBottom:10}}>
+      <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+        <div style={{background:libre>0?G.mist:"#fdecea",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:52,flexShrink:0}}>
+          <div style={{fontSize:15,fontWeight:800,color:libre>0?G.fairway:G.danger}}>{s.hora}</div>
+          <div style={{fontSize:10,color:G.soft}}>{s.duracion}min</div>
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,color:G.ink}}>{s.tipo} · {s.zona}</div>
+          <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+            {res.length}/{plazas} plaza{plazas>1?"s":""} ocupada{res.length!==1?"s":""}
+            {libre===0&&<span style={{color:G.danger,fontWeight:600}}> · COMPLETO</span>}
+          </div>
+          {res.length>0&&<div style={{fontSize:12,color:G.fairway,marginTop:4}}>
+            👤 {res.map(r=>alumnoNombre(r.alumnoId)).join(", ")}
+          </div>}
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {res.length>0&&<Btn small color="sky" onClick={()=>setVerReservas(s.id)}>Reservas</Btn>}
+          <Btn small color="secondary" onClick={()=>openEdit(s)}>✎</Btn>
+          <Btn small color="danger" onClick={()=>eliminarSlot(s.id)}>✕</Btn>
+        </div>
+      </div>
+    </Card>;
+  };
+
+  return <div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,marginBottom:20}}>
+      {[[slots.length,"Huecos totales",G.fairway],[slots.filter(s=>s.fecha>=today()).length,"Próximos",G.grass],[reservas.filter(r=>r.estado!=="cancelada").length,"Reservas activas",G.sky]].map(([v,l,c])=>(
+        <Card key={l} style={{textAlign:"center"}}>
+          <div style={{fontSize:26,fontWeight:800,color:c}}>{v}</div>
+          <div style={{fontSize:12,color:G.soft,marginTop:2}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* ── Google Calendar panel ── */}
+    <div style={{background:"#f8f8f8",borderRadius:12,padding:"12px 16px",
+      marginBottom:16,display:"flex",flexWrap:"wrap",alignItems:"center",gap:10}}>
+      <div style={{fontSize:20}}>📅</div>
+      <div style={{flex:1,minWidth:160}}>
+        <div style={{fontWeight:700,fontSize:13,color:G.fairway}}>Google Calendar</div>
+        <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+          Exporta tus clases en Excel o PDF
+        </div>
+      </div>
+      <button onClick={exportarClasesExcel}
+        style={{background:"#217346",color:"#fff",border:"none",borderRadius:8,
+          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📊 Exportar CSV
+      </button>
+      <button onClick={exportarClasesPDF}
+        style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:8,
+          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📄 Exportar PDF
+      </button>
+      <a href="https://calendar.google.com" target="_blank" rel="noreferrer"
+        style={{background:"#4285f4",color:"#fff",border:"none",borderRadius:8,
+          padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",
+          textDecoration:"none"}}>
+        📅 Abrir Google Calendar
+      </a>
+    </div>
+
+    {/* ── PDF Calendario para alumnos ── */}
+    <PanelPdfCalendario esProfesor={true}/>
+
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+      {/* Calendario */}
+      <Card>
+        <MiniCalendar selected={diaVer} onChange={setDiaVer} markedDates={markedDates}/>
+      </Card>
+      {/* Huecos del día */}
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <h3 style={{margin:0,color:G.ink,fontSize:15}}>📅 {fmtDate(diaVer)}</h3>
+          <Btn small onClick={openNew}>+ Añadir hueco</Btn>
+        </div>
+        {slotsDelDia.length===0
+          ?<div style={{color:G.soft,fontSize:13,padding:16,textAlign:"center",background:G.mist,borderRadius:10}}>Sin huecos este día.</div>
+          :slotsDelDia.map(s=><SlotCard key={s.id} s={s}/>)
+        }
+      </div>
+    </div>
+
+    {/* Modal nuevo/editar slot */}
+    {modal&&<Modal title={modal==="new"?"Nuevo hueco de clase":"Editar hueco"} onClose={()=>setModal(null)}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Fecha *"><Input type="date" value={form.fecha||""} onChange={v=>setForm({...form,fecha:v})}/></Field>
+        <Field label="Hora *"><Input type="time" value={form.hora||"10:00"} onChange={v=>setForm({...form,hora:v})}/></Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Duración (min)"><Sel value={form.duracion||"60"} onChange={v=>setForm({...form,duracion:v})} options={["30","45","60","90","120"].map(v=>({value:v,label:v+"min"}))}/></Field>
+        <Field label="Tipo"><Sel value={form.tipo||"Individual"} onChange={v=>setForm({...form,tipo:v})} options={TIPOS_CLASE.map(t=>({value:t.id,label:t.label}))}/></Field>
+        <Field label="Plazas"><Sel value={form.plazas||"1"} onChange={v=>setForm({...form,plazas:v})} options={["1","2","3","4","6","8"].map(v=>({value:v,label:v}))}/></Field>
+      </div>
+      <Field label="Zona"><Sel value={form.zona||"Campo de prácticas"} onChange={v=>setForm({...form,zona:v})} options={ZONAS.map(v=>({value:v,label:v}))}/></Field>
+      <Field label="Notas (visible al alumno)"><Textarea value={form.notas||""} onChange={v=>setForm({...form,notas:v})} placeholder="Info adicional para el alumno…"/></Field>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={save}>Guardar</Btn>
+      </div>
+    </Modal>}
+
+    {/* Modal ver reservas del slot */}
+    {verReservas&&<Modal title="Reservas de este hueco" onClose={()=>setVerReservas(null)}>
+      {reservasDeSlot(verReservas).length===0
+        ?<div style={{color:G.soft,textAlign:"center",padding:20}}>Sin reservas activas.</div>
+        :reservasDeSlot(verReservas).map(r=>(
+          <Card key={r.id} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+            <div style={{fontSize:20}}>👤</div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,color:G.ink}}>{alumnoNombre(r.alumnoId)}</div>
+              <div style={{fontSize:12,color:G.soft}}>Reservado {fmtDate(r.fechaReserva)}</div>
+            </div>
+            <Badge color={r.estado==="confirmada"?"green":"gray"}>{r.estado}</Badge>
+            <Btn small color="danger" onClick={()=>cancelarReserva(r.id)}>Cancelar</Btn>
+          </Card>
+        ))
+      }
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN: ALUMNOS
+// ═══════════════════════════════════════════════════════════════════
+
+// ─── Componente foto de alumno ───────────────────────────────────
+function FotoAlumno({foto, nombre, size=48}){
+  if(foto) return <img src={foto} alt={nombre}
+    style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",
+      border:"2px solid #d0e0d0",flexShrink:0}}/>;
+  const initials = (nombre||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  return <div style={{width:size,height:size,borderRadius:"50%",
+    background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",
+    display:"flex",alignItems:"center",justifyContent:"center",
+    color:"#fff",fontWeight:800,fontSize:size*0.35,flexShrink:0,
+    border:"2px solid #d0e0d0"}}>
+    {initials}
+  </div>;
+}
+
+function GrupoBadge({a}){
+  const g=GRUPOS_EDAD.find(g=>g.id===a.nivel);
+  return g?<span style={{background:g.color,color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>{g.emoji} {g.nombre}</span>:null;
+}
+
+function EstructuraInfantil({data, setData, alumnos}){
+  const [vista, setVista] = useState("categorias");
+  const [modalGrupo, setModalGrupo] = useState(null);
+  const [formGrupo, setFormGrupo] = useState({});
+
+  // Grupos guardados en data.gruposCurso, o 6 predefinidos si no hay ninguno
+  const GRUPOS_PREDEFINIDOS = [
+    {id:"grupo_a", nombre:"Grupo A", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""},
+    {id:"grupo_b", nombre:"Grupo B", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""},
+    {id:"grupo_c", nombre:"Grupo C", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""},
+    {id:"grupo_d", nombre:"Grupo D", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""},
+    {id:"grupo_e", nombre:"Grupo E", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""},
+    {id:"grupo_f", nombre:"Grupo F", dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""},
+  ];
+  const gruposCurso = (data.gruposCurso && data.gruposCurso.length>0) ? data.gruposCurso : GRUPOS_PREDEFINIDOS;
+
+  const CATS_INF = GRUPOS_EDAD.filter(g=>["prebenjamin","benjamin","alevin","infantil","cadete","boys_girls","sub21"].includes(g.id));
+
+  function editarGrupo(g){ setFormGrupo({...g}); setModalGrupo(g.id); }
+
+  function guardarGrupo(){
+    const actualizado = {...formGrupo};
+    const lista = gruposCurso.some(g=>g.id===actualizado.id)
+      ? gruposCurso.map(g=>g.id===actualizado.id ? actualizado : g)
+      : [...gruposCurso, actualizado];
+    setData({...data, gruposCurso: lista});
+    setModalGrupo(null);
+  }
+
+  function toggleAlumno(aid){
+    setFormGrupo(f=>({...f,
+      alumnoIds: (f.alumnoIds||[]).includes(aid)
+        ? (f.alumnoIds||[]).filter(x=>x!==aid)
+        : [...(f.alumnoIds||[]), aid]
+    }));
+  }
+
+  function nuevoGrupo(){
+    setFormGrupo({id:uid(), nombre:"Grupo "+String.fromCharCode(65+gruposCurso.length), dia:"", horaIni:"", horaFin:"", categoria:"", alumnoIds:[], maxAlumnos:""});
+    setModalGrupo("new");
+  }
+
+  function borrarGrupo(id){
+    setData({...data, gruposCurso: gruposCurso.filter(g=>g.id!==id)});
+  }
+
+  // Agrupar alumnos por categoría
+  const porCat = {};
+  CATS_INF.forEach(c=>{ porCat[c.id]=[]; });
+  porCat["sin"]=[];
+  alumnos.forEach(a=>{
+    if(porCat[a.nivel]!==undefined) porCat[a.nivel].push(a);
+    else porCat["sin"].push(a);
+  });
+
+  return <div>
+    {/* Pestañas */}
+    <div style={{display:"flex",gap:8,marginBottom:16}}>
+      {[["categorias","📋 Por categoría"],["grupos","🗓️ Grupos del curso"]].map(([id,label])=>(
+        <button key={id} onClick={()=>setVista(id)}
+          style={{flex:1,background:vista===id?G.fairway:"#f0f0f0",color:vista===id?"#fff":"#555",
+            border:"none",borderRadius:10,padding:"10px 0",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          {label}
+        </button>
+      ))}
+    </div>
+
+    {/* ── VISTA CATEGORÍAS ── */}
+    {vista==="categorias"&&<div>
+      <div style={{background:"#e8f0fb",borderRadius:10,padding:"10px 14px",
+        marginBottom:14,fontSize:12,color:"#3a7abf",fontWeight:600}}>
+        Alumnos agrupados automáticamente según su edad · Total: {alumnos.length}
+      </div>
+      {CATS_INF.map(cat=>{
+        const lista = porCat[cat.id]||[];
+        return <div key={cat.id} style={{background:"#fff",borderRadius:12,padding:14,
+          marginBottom:10,boxShadow:"0 2px 8px rgba(0,0,0,.06)",borderLeft:`4px solid ${cat.color}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:lista.length?8:0}}>
+            <span style={{fontSize:20}}>{cat.emoji}</span>
+            <span style={{fontWeight:800,fontSize:15,color:cat.color}}>{cat.nombre}</span>
+            <span style={{fontSize:12,color:G.soft}}>({cat.rango})</span>
+            <span style={{marginLeft:"auto",background:cat.color,color:"#fff",
+              borderRadius:12,padding:"2px 10px",fontSize:12,fontWeight:700}}>{lista.length}</span>
+          </div>
+          {lista.length>0
+            ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {lista.map(a=>(
+                  <span key={a.id} style={{display:"flex",alignItems:"center",gap:6,
+                    background:"#f5f5f5",borderRadius:16,padding:"4px 10px 4px 5px",fontSize:12}}>
+                    <FotoAlumno foto={a.foto} nombre={a.nombre} size={24}/>
+                    <span style={{fontWeight:600}}>{a.nombre}</span>
+                    {a.fechaNacimiento&&<span style={{color:G.soft}}>{calcularEdad(a.fechaNacimiento)}a</span>}
+                  </span>
+                ))}
+              </div>
+            : <span style={{fontSize:12,color:"#bbb",fontStyle:"italic"}}>Sin alumnos en esta categoría</span>
+          }
+        </div>;
+      })}
+      {porCat["sin"].length>0&&<div style={{background:"#fff",borderRadius:12,padding:14,
+        marginBottom:10,boxShadow:"0 2px 8px rgba(0,0,0,.06)",borderLeft:"4px solid #ccc"}}>
+        <div style={{fontWeight:700,color:"#888"}}>❓ Sin categoría ({porCat["sin"].length})</div>
+      </div>}
+    </div>}
+
+    {/* ── VISTA GRUPOS ── */}
+    {vista==="grupos"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{fontSize:12,color:G.soft,fontWeight:600}}>
+          Curso 2026-2027 · {gruposCurso.length} grupos
+        </div>
+        <Btn onClick={nuevoGrupo}>+ Nuevo grupo</Btn>
+      </div>
+      {gruposCurso.map(g=>{
+        const alumnosG=(g.alumnoIds||[]).map(id=>alumnos.find(a=>a.id===id)).filter(Boolean);
+        const cat=GRUPOS_EDAD.find(c=>c.id===g.categoria);
+        return <div key={g.id} style={{background:"#fff",borderRadius:12,padding:14,
+          marginBottom:10,boxShadow:"0 2px 8px rgba(0,0,0,.06)",
+          borderLeft:`4px solid ${cat?.color||G.fairway}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                <span style={{fontWeight:800,fontSize:16,color:G.fairway}}>{g.nombre}</span>
+                {cat&&<span style={{background:cat.color,color:"#fff",borderRadius:10,
+                  padding:"2px 8px",fontSize:11,fontWeight:700}}>{cat.emoji} {cat.nombre}</span>}
+              </div>
+              {(g.dia||g.horaIni)&&<div style={{fontSize:13,color:G.ink,marginBottom:8,fontWeight:600}}>
+                {g.dia&&`📅 ${g.dia}`}{g.horaIni&&g.horaFin&&` · ⏰ ${g.horaIni} - ${g.horaFin}`}
+                {g.maxAlumnos&&<span style={{color:G.soft}}> · 👥 máx {g.maxAlumnos}</span>}
+              </div>}
+              {alumnosG.length>0
+                ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {alumnosG.map(a=>(
+                      <span key={a.id} style={{display:"flex",alignItems:"center",gap:5,
+                        background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 5px",fontSize:12}}>
+                        <FotoAlumno foto={a.foto} nombre={a.nombre} size={22}/>
+                        {a.nombre}
+                      </span>
+                    ))}
+                  </div>
+                : <span style={{fontSize:12,color:"#bbb",fontStyle:"italic"}}>
+                    Pulsa "Editar" para configurar el horario y añadir alumnos
+                  </span>
+              }
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginLeft:10,flexShrink:0}}>
+              <Btn small color="secondary" onClick={()=>editarGrupo(g)}>Editar</Btn>
+              <Btn small color="danger" onClick={()=>borrarGrupo(g.id)}>🗑</Btn>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>}
+
+    {/* ── MODAL EDITAR GRUPO ── */}
+    {modalGrupo&&<Modal title={`✏️ ${formGrupo.nombre}`} onClose={()=>setModalGrupo(null)} wide>
+      <Field label="Nombre del grupo">
+        <Input value={formGrupo.nombre||""} onChange={v=>setFormGrupo(f=>({...f,nombre:v}))}
+          placeholder="Ej: Grupo A"/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Día">
+          <select value={formGrupo.dia||""} onChange={e=>setFormGrupo(f=>({...f,dia:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+              padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Día...</option>
+            {["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"].map(d=>(
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Hora inicio">
+          <Input type="time" value={formGrupo.horaIni||""} onChange={v=>setFormGrupo(f=>({...f,horaIni:v}))}/>
+        </Field>
+        <Field label="Hora fin">
+          <Input type="time" value={formGrupo.horaFin||""} onChange={v=>setFormGrupo(f=>({...f,horaFin:v}))}/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Categoría del grupo">
+          <select value={formGrupo.categoria||""} onChange={e=>setFormGrupo(f=>({...f,categoria:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+              padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Mixto / Sin categoría</option>
+            {CATS_INF.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.nombre}</option>)}
+          </select>
+        </Field>
+        <Field label="Máximo alumnos">
+          <Input type="number" value={formGrupo.maxAlumnos||""} onChange={v=>setFormGrupo(f=>({...f,maxAlumnos:v}))}
+            placeholder="Ej: 8"/>
+        </Field>
+      </div>
+
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        👥 Alumnos del grupo ({(formGrupo.alumnoIds||[]).length})
+      </div>
+      <div style={{maxHeight:220,overflowY:"auto",border:"1px solid #eee",borderRadius:10,padding:8}}>
+        {alumnos.length===0
+          ? <div style={{textAlign:"center",color:G.soft,padding:20,fontSize:13}}>
+              No hay alumnos infantiles todavía
+            </div>
+          : alumnos.map(a=>{
+              const sel=(formGrupo.alumnoIds||[]).includes(a.id);
+              const catA=GRUPOS_EDAD.find(c=>c.id===a.nivel);
+              return <label key={a.id} style={{display:"flex",alignItems:"center",gap:10,
+                background:sel?"#e8f5eb":"#fff",borderRadius:8,padding:"8px 10px",
+                marginBottom:4,cursor:"pointer",
+                border:sel?"2px solid #1a5c2a":"2px solid #f0f0f0"}}>
+                <input type="checkbox" checked={sel} onChange={()=>toggleAlumno(a.id)}
+                  style={{width:16,height:16}}/>
+                <FotoAlumno foto={a.foto} nombre={a.nombre} size={26}/>
+                <span style={{fontWeight:600,fontSize:13,flex:1}}>{a.nombre}</span>
+                {a.fechaNacimiento&&<span style={{fontSize:11,color:G.soft}}>{calcularEdad(a.fechaNacimiento)}a</span>}
+                {catA&&<span style={{fontSize:10,background:catA.color,color:"#fff",
+                  borderRadius:6,padding:"1px 6px"}}>{catA.emoji} {catA.nombre}</span>}
+              </label>;
+            })
+        }
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:16}}>
+        <Btn color="secondary" onClick={()=>setModalGrupo(null)}>Cancelar</Btn>
+        <Btn onClick={guardarGrupo}>💾 Guardar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+
+function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
+  const [modal,         setModal]         = useState(null);
+  const [form,          setForm]          = useState({});
+  const [tabTipo,       setTabTipo]       = useState("infantil");
+  const [buscar,        setBuscar]        = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null); // alumno a eliminar
+  const [vistaEstructura, setVistaEstructura] = useState(false); // ver estructura/grupos
+
+  const alumnos = data.alumnos||[];
+
+  // Calcular edad desde fecha de nacimiento
+  function calcularEdad(fechaNac){
+    if(!fechaNac) return null;
+    const hoy = new Date();
+    const nac = new Date(fechaNac);
+    let edad = hoy.getFullYear() - nac.getFullYear();
+    const m = hoy.getMonth() - nac.getMonth();
+    if(m<0||(m===0&&hoy.getDate()<nac.getDate())) edad--;
+    return edad;
+  }
+
+  function esMenor(fechaNac){ return (calcularEdad(fechaNac)||0) < 18; }
+
+  function autoNivel(fechaNac){
+    const edad = calcularEdad(fechaNac);
+    if(edad===null) return "";
+    if(edad>=5  && edad<=7)  return "prebenjamin";
+    if(edad>=8  && edad<=10) return "benjamin";
+    if(edad>=11 && edad<=12) return "alevin";
+    if(edad>=13 && edad<=14) return "infantil";
+    if(edad>=15 && edad<=16) return "cadete";
+    if(edad>=17 && edad<=18) return "boys_girls";
+    if(edad>=19 && edad<=21) return "sub21";
+    return "";
+  }
+
+  // Separar por tipo de escuela
+  const alumnosInfantil = alumnos.filter(a=>{
+    const edad = calcularEdad(a.fechaNacimiento);
+    return edad!==null ? edad<18 : (a.tipoEscuela==="infantil"||!a.tipoEscuela);
+  });
+  const alumnosAdultos = alumnos.filter(a=>{
+    const edad = calcularEdad(a.fechaNacimiento);
+    return edad!==null ? edad>=18 : a.tipoEscuela==="adultos";
+  });
+
+  const alumnosMostrar = (tabTipo==="infantil" ? alumnosInfantil : alumnosAdultos)
+    .filter(a=>!buscar||a.nombre.toLowerCase().includes(buscar.toLowerCase()));
+
+  function openNew(){
+    setForm({
+      nombre:"", fechaNacimiento:"", nivel:"",
+      pin:"", telefono:"", email:"",
+      fechaAlta:today(), notas:"",
+      tutores:[],
+      activo:true,
+      foto:"",
+      tipoEscuela:tabTipo,
+      // Salud
+      alergias:"",
+      intolerancias:"",
+      lesiones:"",
+      // Equipo
+      equipo:"",
+      // RGPD
+      rgpdAceptado:false,
+      rgpdFecha:"",
+      rgpdFirmante:"",
+      imagenAutorizada:false,
+      imagenFirmante:"",
+      // Firma legal
+      firmaLegal:"",
+      firmaFecha:"",
+    });
+    setModal("new");
+  }
+
+  function openEdit(a){ setForm({...a}); setModal(a.id); }
+
+  function save(){
+    if(!form.nombre?.trim()) return;
+    const edad = calcularEdad(form.fechaNacimiento);
+    const tipoAuto = edad!==null ? (edad<18?"infantil":"adultos") : form.tipoEscuela;
+    const reg = {...form, tipoEscuela:tipoAuto, id:form.id||uid()};
+    const updated = alumnos.some(a=>a.id===reg.id)
+      ? alumnos.map(a=>a.id===reg.id?reg:a)
+      : [...alumnos, reg];
+    setData({...data, alumnos:updated});
+    setModal(null);
+  }
+
+  function addTutor(){ setForm(f=>({...f,tutores:[...(f.tutores||[]),{nombre:"",relacion:"",telefono:"",email:""}]}));}
+  function delTutor(i){ setForm(f=>({...f,tutores:(f.tutores||[]).filter((_,j)=>j!==i)}));}
+  function updTutor(i,k,v){ setForm(f=>({...f,tutores:(f.tutores||[]).map((t,j)=>j===i?{...t,[k]:v}:t)}));}
+
+  const edadForm = calcularEdad(form.fechaNacimiento);
+  const menorForm = edadForm!==null && edadForm<18;
+
+  return <div>
+    {/* Header con tipo de escuela */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{display:"flex",gap:6}}>
+        {[["infantil","🧒 Escuela Infantil","#3a7abf"],["adultos","🏌️ Escuela Adultos","#1a5c2a"]].map(([id,label,color])=>(
+          <button key={id} onClick={()=>setTabTipo(id)}
+            style={{background:tabTipo===id?color:"#f0f0f0",color:tabTipo===id?"#fff":"#555",
+              border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {label}
+            <span style={{marginLeft:6,background:tabTipo===id?"rgba(255,255,255,.3)":"#ddd",
+              borderRadius:10,padding:"1px 7px",fontSize:11}}>
+              {id==="infantil"?alumnosInfantil.length:alumnosAdultos.length}
+            </span>
+          </button>
+        ))}
+      </div>
+      <input value={buscar} onChange={e=>setBuscar(e.target.value)}
+        placeholder="🔍 Buscar alumno..."
+        style={{flex:1,minWidth:150,border:"1.5px solid #d0e0d0",borderRadius:8,
+          padding:"8px 12px",fontSize:14,fontFamily:"inherit"}}/>
+      {tabTipo==="infantil"&&<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
+        {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
+      </Btn>}
+      <Btn onClick={openNew}>+ Nuevo alumno</Btn>
+    </div>
+
+    {/* Vista de estructura de grupos */}
+    {tabTipo==="infantil"&&vistaEstructura&&<EstructuraInfantil
+      data={data} setData={setData} alumnos={alumnosInfantil}/>}
+
+    {/* Info de la escuela seleccionada */}
+    {!(tabTipo==="infantil"&&vistaEstructura)&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
+      padding:"8px 14px",marginBottom:14,fontSize:12,
+      color:tabTipo==="infantil"?"#3a7abf":G.fairway,fontWeight:600}}>
+      {tabTipo==="infantil"
+        ? "🧒 Escuela Infantil — menores de 18 años · Requiere autorización de padres/tutores y RGPD"
+        : "🏌️ Escuela Adultos — mayores de 18 años · RGPD obligatorio"}
+    </div>}
+
+    {/* Lista de alumnos */}
+    {!(tabTipo==="infantil"&&vistaEstructura)&&(alumnosMostrar.length===0
+      ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:28,marginBottom:8}}>{tabTipo==="infantil"?"🧒":"🏌️"}</div>
+          <div style={{fontWeight:700}}>Sin alumnos en {tabTipo==="infantil"?"la Escuela Infantil":"la Escuela de Adultos"}</div>
+          <div style={{fontSize:13,marginTop:4}}>Pulsa "+ Nuevo alumno" para añadir el primero.</div>
+        </div>
+      : <div style={{display:"grid",gap:10}}>
+          {alumnosMostrar.map(a=>{
+            const edad = calcularEdad(a.fechaNacimiento);
+            const menor = edad!==null && edad<18;
+            const rgpdOk = a.rgpdAceptado;
+            const imgOk  = a.imagenAutorizada;
+            const firmaOk= !!a.firmaLegal;
+            return <Card key={a.id} style={{borderLeft:`4px solid ${a.activo?G.grass:"#ccc"}`}}>
+              <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                    <FotoAlumno foto={a.foto} nombre={a.nombre} size={40}/>
+                    <span style={{fontWeight:800,fontSize:15,color:G.ink}}>{a.nombre}</span>
+                    {edad!==null&&<span style={{fontSize:12,color:G.soft}}>{edad} años</span>}
+                    <GrupoBadge a={a}/>
+                    {!a.activo&&<Badge color="gray">Inactivo</Badge>}
+                  </div>
+                  {/* Datos de contacto */}
+                  <div style={{fontSize:12,color:G.soft,display:"flex",gap:12,flexWrap:"wrap"}}>
+                    {a.telefono&&<span>📞 {a.telefono}</span>}
+                    {a.email&&<span>✉️ {a.email}</span>}
+                    {a.fechaNacimiento&&<span>🎂 {a.fechaNacimiento}</span>}
+                  </div>
+                  {/* Tutores */}
+                  {(a.tutores||[]).length>0&&<div style={{fontSize:12,color:"#555",marginTop:4}}>
+                    {(a.tutores||[]).map((t,i)=>(
+                      <span key={i} style={{marginRight:10}}>👨‍👩‍👦 {t.nombre} ({t.relacion}) {t.telefono}</span>
+                    ))}
+                  </div>}
+                  {/* Estado legal */}
+                  <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:11,background:rgpdOk?"#e8f5eb":"#fdecea",
+                      color:rgpdOk?G.grass:G.danger,borderRadius:8,padding:"2px 8px",fontWeight:600}}>
+                      {rgpdOk?"✓ RGPD":"⚠ RGPD pendiente"}
+                    </span>
+                    {menor&&<span style={{fontSize:11,background:firmaOk?"#e8f5eb":"#fdecea",
+                      color:firmaOk?G.grass:G.danger,borderRadius:8,padding:"2px 8px",fontWeight:600}}>
+                      {firmaOk?"✓ Autorización legal":"⚠ Autorización pendiente"}
+                    </span>}
+                    {a.alergias&&<span style={{fontSize:11,background:"#FFF3E0",color:"#E65100",borderRadius:8,padding:"2px 8px",fontWeight:600}}>🤧 {a.alergias.length>20?a.alergias.slice(0,20)+"…":a.alergias}</span>}
+                    {a.intolerancias&&<span style={{fontSize:11,background:"#F3E5F5",color:"#6A1B9A",borderRadius:8,padding:"2px 8px",fontWeight:600}}>🥛 {a.intolerancias.length>20?a.intolerancias.slice(0,20)+"…":a.intolerancias}</span>}
+                    {a.lesiones&&<span style={{fontSize:11,background:"#FCE4EC",color:"#880E4F",borderRadius:8,padding:"2px 8px",fontWeight:600}}>🩹 {a.lesiones.length>20?a.lesiones.slice(0,20)+"…":a.lesiones}</span>}
+                    {a.equipo&&<span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:8,padding:"2px 8px",fontWeight:700}}>🏌️ {a.equipo}</span>}
+                    <span style={{fontSize:11,background:imgOk?"#e8f5eb":"#fff8e1",
+                      color:imgOk?G.grass:"#8B6914",borderRadius:8,padding:"2px 8px",fontWeight:600}}>
+                      {imgOk?"✓ Imagen autorizada":"⚠ Imagen no autorizada"}
+                    </span>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:5,flexShrink:0,flexDirection:"column"}}>
+                  <Btn small color="secondary" onClick={()=>openEdit(a)}>Editar</Btn>
+                  <Btn small color={a.activo?"gold":"secondary"}
+                    onClick={()=>setData({...data,alumnos:alumnos.map(x=>x.id===a.id?{...x,activo:!x.activo}:x)})}>
+                    {a.activo?"Inactivar":"Activar"}
+                  </Btn>
+                  <Btn small color="danger" onClick={()=>setConfirmDelete(a)}>
+                    🗑 Borrar
+                  </Btn>
+                </div>
+              </div>
+            </Card>;
+          })}
+        </div>
+    )}
+
+    {/* ══ CONFIRMAR BORRADO ══ */}
+    {confirmDelete&&<ConfirmModal
+      msg={"¿Eliminar a "+confirmDelete.nombre+"? Se borrarán TODOS sus datos (clases, estadísticas, análisis, pagos, mensajes). Esta acción no se puede deshacer."}
+      onCancel={()=>setConfirmDelete(null)}
+      onOk={()=>{
+        const id=confirmDelete.id;
+        setData({...data,
+          alumnos:alumnos.filter(x=>x.id!==id),
+          clases:(data.clases||[]).filter(c=>c.alumnoId!==id),
+          estadisticas:(data.estadisticas||[]).filter(s=>s.alumnoId!==id),
+          analisis:(data.analisis||[]).filter(x=>x.alumnoId!==id),
+          bonos:(data.bonos||[]).filter(x=>x.alumnoId!==id),
+          pagos:(data.pagos||[]).filter(x=>x.alumnoId!==id),
+          asignaciones:(data.asignaciones||[]).filter(x=>x.alumnoId!==id),
+          reservas:(data.reservas||[]).filter(x=>x.alumnoId!==id),
+          mensajes:(data.mensajes||[]).filter(x=>x.alumnoId!==id&&x.de!==id),
+          resultadosTest:(data.resultadosTest||[]).filter(x=>x.alumnoId!==id),
+        });
+        setConfirmDelete(null);
+      }}
+    />}
+
+    {/* ══ MODAL ALTA / EDICIÓN ══ */}
+    {modal&&<Modal title={modal==="new"?"🎓 Nuevo alumno":"✏️ Editar alumno"} onClose={()=>setModal(null)} wide>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,
+        paddingBottom:12,borderBottom:"1px solid #e0eee0"}}>
+        <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain"}}/>
+        <div style={{fontSize:12,color:G.soft}}>🏫 Escuela de Golf · Golf Ciudad Real C.D. · Curso 2026/2027</div>
+      </div>
+
+      {/* Tipo de escuela auto-detectado */}
+      {edadForm!==null&&<div style={{background:menorForm?"#e8f0fb":"#e8f5eb",borderRadius:8,
+        padding:"6px 12px",marginBottom:12,fontSize:13,fontWeight:600,
+        color:menorForm?"#3a7abf":G.fairway}}>
+        {menorForm?"🧒 Escuela Infantil (menor de 18 años)":"🏌️ Escuela de Adultos (mayor de 18 años)"}
+        {edadForm!==null&&` · ${edadForm} años`}
+      </div>}
+
+      {/* ── DATOS PERSONALES ── */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>👤 Datos personales</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+        <Field label="Nombre completo *">
+          <Input value={form.nombre||""} onChange={v=>setForm(f=>({...f,nombre:v}))} placeholder="Nombre y apellidos"/>
+        </Field>
+        <Field label="Fecha de nacimiento">
+          <Input type="date" value={form.fechaNacimiento||""} onChange={v=>{
+            const nivel=autoNivel(v);
+            setForm(f=>({...f,fechaNacimiento:v,...(nivel?{nivel}:{})}));
+          }}/>
+        </Field>
+        <Field label="Nivel / Grupo">
+          <select value={form.nivel||""} onChange={e=>setForm(f=>({...f,nivel:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Sin asignar</option>
+            {GRUPOS_EDAD.map(g=><option key={g.id} value={g.id}>{g.emoji} {g.nombre} ({g.rango})</option>)}
+          </select>
+          {form.nivel&&form.fechaNacimiento&&(()=>{
+            const g=GRUPOS_EDAD.find(x=>x.id===form.nivel);
+            return g?<div style={{marginTop:4,background:g.color,color:"#fff",borderRadius:8,
+              padding:"4px 10px",fontSize:12,fontWeight:700,display:"inline-block"}}>
+              {g.emoji} Asignado automáticamente: {g.nombre}
+            </div>:null;
+          })()}
+        </Field>
+        <Field label="PIN de acceso (4-6 dígitos)">
+          <Input value={form.pin||""} onChange={v=>setForm(f=>({...f,pin:v.replace(/\D/g,"").slice(0,6)}))}
+            placeholder="PIN numérico" maxLength={6}/>
+        </Field>
+        <Field label="Teléfono">
+          <Input value={form.telefono||""} onChange={v=>setForm(f=>({...f,telefono:v}))} placeholder="Teléfono de contacto"/>
+        </Field>
+        <Field label="Email">
+          <Input value={form.email||""} onChange={v=>setForm(f=>({...f,email:v}))} placeholder="Email"/>
+        </Field>
+        <Field label="Fecha de alta">
+          <Input type="date" value={form.fechaAlta||today()} onChange={v=>setForm(f=>({...f,fechaAlta:v}))}/>
+        </Field>
+      </div>
+      <Field label="Notas">
+        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} rows={2} placeholder="Observaciones generales..."/>
+      </Field>
+
+      {/* Asignación de profesores */}
+      {(data.profesores||[]).filter(p=>p.activo).length>0&&<Field label="Profesores asignados">
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:4}}>
+          {(data.profesores||[]).filter(p=>p.activo).map(p=>{
+            const asignado=(form.profesores||[]).includes(p.id);
+            return <div key={p.id} onClick={()=>{
+                const arr=form.profesores||[];
+                setForm(f=>({...f,profesores:asignado?arr.filter(x=>x!==p.id):[...arr,p.id]}));
+              }}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:20,
+                cursor:"pointer",border:`2px solid ${asignado?p.color:"#ddd"}`,
+                background:asignado?p.color+"22":"#f9f9f9",fontSize:13,fontWeight:600,
+                color:asignado?p.color:G.soft}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:asignado?p.color:"#ddd"}}/>
+              {p.nombre}
+            </div>;
+          })}
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:4}}>Selecciona los profesores que trabajan con este alumno</div>
+      </Field>}
+
+      {/* Salud */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🏥 Información médica</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
+        <Field label="🤧 Alergias">
+          <Textarea value={form.alergias||""} onChange={v=>setForm(f=>({...f,alergias:v}))}
+            rows={2} placeholder="Alergia al polen, al látex, picaduras..."/>
+        </Field>
+        <Field label="🥛 Intolerancias alimentarias">
+          <Textarea value={form.intolerancias||""} onChange={v=>setForm(f=>({...f,intolerancias:v}))}
+            rows={2} placeholder="Intolerancia a la lactosa, al gluten..."/>
+        </Field>
+      </div>
+      <Field label="🩹 Lesiones / Condiciones físicas">
+        <Textarea value={form.lesiones||""} onChange={v=>setForm(f=>({...f,lesiones:v}))}
+          rows={2} placeholder="Lesión de rodilla, asma, escoliosis... Indicar restricciones de actividad."/>
+      </Field>
+
+      {/* Equipo */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🏌️ Equipo</div>
+      <Field label="Equipo al que pertenece">
+        <Input value={form.equipo||""} onChange={v=>setForm(f=>({...f,equipo:v}))}
+          placeholder="Nombre del equipo (se asignará más adelante)"/>
+      </Field>
+
+      {/* Foto del alumno */}
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:12,fontWeight:600,color:G.soft,display:"block",marginBottom:8}}>
+          FOTO DEL ALUMNO
+        </label>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <FotoAlumno foto={form.foto} nombre={form.nombre} size={72}/>
+          <div>
+            <label style={{background:G.mist,color:G.fairway,borderRadius:8,
+              padding:"8px 14px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-block"}}>
+              📷 {form.foto?"Cambiar foto":"Subir foto"}
+              <input type="file" accept="image/*" onChange={e=>{
+                const file=e.target.files[0]; if(!file) return;
+                if(file.size>1.5*1024*1024){alert("La foto no puede superar 1.5MB.");return;}
+                const reader=new FileReader();
+                reader.onload=ev=>setForm(f=>({...f,foto:ev.target.result}));
+                reader.readAsDataURL(file);
+              }} style={{display:"none"}}/>
+            </label>
+            {form.foto&&<button onClick={()=>setForm(f=>({...f,foto:""}))}
+              style={{marginLeft:8,background:"none",border:"none",color:G.danger,
+                cursor:"pointer",fontSize:13,fontWeight:600}}>
+              ✕ Quitar foto
+            </button>}
+            <div style={{fontSize:11,color:G.soft,marginTop:4}}>
+              JPG, PNG · Máx. 1.5MB · Se guardará en el perfil del alumno
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Field label="Notas">
+        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} rows={2} placeholder="Observaciones..."/>
+      </Field>
+
+      {/* ── PADRES / TUTORES (siempre visible, obligatorio para menores) ── */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"16px 0 8px",
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        👨‍👩‍👦 Padres / Tutores legales {menorForm&&<span style={{color:G.danger,fontSize:11}}>(obligatorio para menores)</span>}
+      </div>
+      {(form.tutores||[]).map((t,i)=>(
+        <div key={i} style={{background:"#f9f9f9",borderRadius:10,padding:12,marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <span style={{fontWeight:600,color:G.ink,fontSize:13}}>Tutor {i+1}</span>
+            <Btn small color="danger" onClick={()=>delTutor(i)}>✕ Eliminar</Btn>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <Field label="Nombre completo *">
+              <Input value={t.nombre||""} onChange={v=>updTutor(i,"nombre",v)} placeholder="Nombre y apellidos"/>
+            </Field>
+            <Field label="Relación con el alumno">
+              <select value={t.relacion||""} onChange={e=>updTutor(i,"relacion",e.target.value)}
+                style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+                  fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+                <option value="">Seleccionar...</option>
+                <option value="Padre">Padre</option>
+                <option value="Madre">Madre</option>
+                <option value="Tutor legal">Tutor legal</option>
+                <option value="Abuelo/a">Abuelo/a</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </Field>
+            <Field label="DNI/NIE">
+              <Input value={t.dni||""} onChange={v=>updTutor(i,"dni",v)} placeholder="DNI o NIE del tutor"/>
+            </Field>
+            <Field label="Teléfono">
+              <Input value={t.telefono||""} onChange={v=>updTutor(i,"telefono",v)} placeholder="Teléfono directo"/>
+            </Field>
+            <Field label="Email">
+              <Input value={t.email||""} onChange={v=>updTutor(i,"email",v)} placeholder="Email del tutor"/>
+            </Field>
+            <Field label="PIN acceso plataforma (4 dígitos)">
+              <Input value={t.pin||""} onChange={v=>updTutor(i,"pin",v.replace(/\D/g,"").slice(0,4))} placeholder="PIN propio del tutor"/>
+            </Field>
+          </div>
+          {t.pin&&<div style={{fontSize:11,color:"#1a5c2a",marginTop:4,background:"#e8f4e8",borderRadius:6,padding:"4px 8px"}}>
+            ✅ Este tutor puede acceder a la plataforma con su PIN propio
+          </div>}
+        </div>
+      ))}
+      <button onClick={addTutor}
+        style={{background:G.mist,color:G.fairway,border:"none",borderRadius:8,
+          padding:"8px 14px",fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:16}}>
+        + Añadir padre/tutor
+      </button>
+
+      {/* ── RGPD — PROTECCIÓN DE DATOS ── */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🔒 Protección de datos (RGPD)</div>
+      <div style={{background:"#f0f8f0",borderRadius:10,padding:12,marginBottom:12,fontSize:12,
+        color:"#444",lineHeight:1.6}}>
+        <b>Información básica sobre protección de datos:</b><br/>
+        <b>Responsable:</b> Golf Ciudad Real C.D. · <b>Finalidad:</b> Gestión de la Escuela de Golf, seguimiento formativo y comunicación con las familias. <b>Base legal:</b> Consentimiento del interesado (Art. 6.1.a RGPD). <b>Conservación:</b> Durante la relación y 5 años posteriores. <b>Derechos:</b> Acceso, rectificación, supresión, portabilidad y oposición dirigiéndose a golf@golfciudadreal.es. <b>Más información:</b> Puede consultar la política de privacidad completa en recepción o en nuestra web.
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:6}}>
+        <Field label="Nombre del firmante RGPD">
+          <Input value={form.rgpdFirmante||""} onChange={v=>setForm(f=>({...f,rgpdFirmante:v}))}
+            placeholder={menorForm?"Nombre del padre/madre/tutor":"Nombre del alumno"}/>
+        </Field>
+        <Field label="Fecha de aceptación RGPD">
+          <Input type="date" value={form.rgpdFecha||today()} onChange={v=>setForm(f=>({...f,rgpdFecha:v}))}/>
+        </Field>
+      </div>
+      <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:14,
+        background:"#e8f5eb",borderRadius:8,padding:10}}>
+        <input type="checkbox" id="rgpd" checked={!!form.rgpdAceptado}
+          onChange={e=>setForm(f=>({...f,rgpdAceptado:e.target.checked}))}
+          style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+        <label htmlFor="rgpd" style={{fontSize:12,color:G.ink,cursor:"pointer",lineHeight:1.5}}>
+          <b>He leído y acepto el tratamiento de mis datos personales</b> (o los del menor a mi cargo) 
+          conforme al Reglamento General de Protección de Datos (RGPD UE 2016/679) y la LO 3/2018 (LOPDGDD) 
+          para las finalidades descritas. {menorForm&&<b>Como padre/madre/tutor legal del menor, 
+          presto mi consentimiento en su nombre.</b>}
+        </label>
+      </div>
+
+      {/* ── AUTORIZACIÓN DE IMAGEN (especialmente importante para menores) ── */}
+      <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
+        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        📸 Autorización de imagen {menorForm&&<span style={{color:G.danger,fontSize:11}}>(LOPJM - menores)</span>}
+      </div>
+      {menorForm&&<div style={{background:"#fff8e1",borderRadius:8,padding:10,marginBottom:10,
+        fontSize:12,color:"#5a4000",lineHeight:1.5}}>
+        <b>⚠️ Aviso para menores de edad:</b> La captación y uso de imágenes de menores está regulada 
+        por la <b>Ley Orgánica 1/1996 de Protección Jurídica del Menor</b> y la <b>LO 3/2018</b>. 
+        Es necesaria la autorización expresa del padre, madre o tutor legal para publicar fotografías 
+        o vídeos del menor en redes sociales, web o materiales del club.
+      </div>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:6}}>
+        <Field label={menorForm?"Nombre del tutor que autoriza":"Nombre del firmante"}>
+          <Input value={form.imagenFirmante||""} onChange={v=>setForm(f=>({...f,imagenFirmante:v}))}
+            placeholder={menorForm?"Padre/madre/tutor legal":"Nombre del alumno"}/>
+        </Field>
+        <Field label="Fecha">
+          <Input type="date" value={form.imagenFecha||today()} onChange={v=>setForm(f=>({...f,imagenFecha:v}))}/>
+        </Field>
+      </div>
+      <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:14,
+        background:"#e8f5eb",borderRadius:8,padding:10}}>
+        <input type="checkbox" id="imagen" checked={!!form.imagenAutorizada}
+          onChange={e=>setForm(f=>({...f,imagenAutorizada:e.target.checked}))}
+          style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+        <label htmlFor="imagen" style={{fontSize:12,color:G.ink,cursor:"pointer",lineHeight:1.5}}>
+          {menorForm
+            ? <><b>Autorizo, como padre/madre/tutor legal</b>, la captación y publicación de imágenes y vídeos 
+              del menor en actividades de la Escuela de Golf de Golf Ciudad Real C.D. 
+              (web, redes sociales, materiales formativos), siempre con fines divulgativos y sin ánimo comercial.</>
+            : <><b>Autorizo</b> la captación y publicación de mis imágenes y vídeos en actividades 
+              de la Escuela de Golf de Golf Ciudad Real C.D. (web, redes sociales, materiales formativos).</>
+          }
+        </label>
+      </div>
+
+      {/* ── FIRMA LEGAL (para menores) ── */}
+      {menorForm&&<div>
+        <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
+          paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+          ✍️ Confirmación legal del responsable
+        </div>
+        <div style={{background:"#fff0f0",borderRadius:8,padding:10,marginBottom:10,
+          fontSize:12,color:"#555",lineHeight:1.5}}>
+          Al completar este formulario, el padre/madre/tutor legal declara ser el representante legal 
+          del menor y acepta en su nombre las condiciones de participación en la Escuela de Golf, 
+          incluyendo el Reglamento Interno del Club, las normas de seguridad y las condiciones de 
+          cancelación de clases. Esta aceptación tiene validez legal conforme al Art. 162 del Código Civil.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Field label="Nombre del tutor legal (firma digital)">
+            <Input value={form.firmaLegal||""} onChange={v=>setForm(f=>({...f,firmaLegal:v}))}
+              placeholder="Nombre completo del tutor legal"/>
+          </Field>
+          <Field label="DNI/NIE del tutor">
+            <Input value={form.firmaDni||""} onChange={v=>setForm(f=>({...f,firmaDni:v}))}
+              placeholder="DNI o NIE"/>
+          </Field>
+          <Field label="Fecha de la firma">
+            <Input type="date" value={form.firmaFecha||today()} onChange={v=>setForm(f=>({...f,firmaFecha:v}))}/>
+          </Field>
+          <Field label="Relación con el menor">
+            <select value={form.firmaRelacion||""} onChange={e=>setForm(f=>({...f,firmaRelacion:e.target.value}))}
+              style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+                fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+              <option value="">Seleccionar...</option>
+              <option value="Padre">Padre</option>
+              <option value="Madre">Madre</option>
+              <option value="Tutor legal">Tutor legal designado</option>
+            </select>
+          </Field>
+        </div>
+        <div style={{display:"flex",alignItems:"flex-start",gap:10,marginTop:10,
+          background:"#fdecea",borderRadius:8,padding:10}}>
+          <input type="checkbox" id="legal" checked={!!form.aceptaCondiciones}
+            onChange={e=>setForm(f=>({...f,aceptaCondiciones:e.target.checked}))}
+            style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
+          <label htmlFor="legal" style={{fontSize:12,color:G.ink,cursor:"pointer",lineHeight:1.5}}>
+            <b>Declaro ser el padre/madre/tutor legal</b> del menor indicado y acepto en su nombre 
+            el Reglamento Interno de la Escuela de Golf Ciudad Real C.D., las condiciones de participación 
+            y me responsabilizo del cumplimiento de las normas del club por parte del menor.
+          </label>
+        </div>
+      </div>}
+
+      {/* Advertencia si faltan datos legales */}
+      {(!form.rgpdAceptado||(menorForm&&!form.aceptaCondiciones))&&<div style={{
+        background:"#fff8e1",borderRadius:8,padding:10,marginTop:12,
+        fontSize:12,color:"#8B6914",fontWeight:600}}>
+        ⚠️ {!form.rgpdAceptado?"El consentimiento RGPD es obligatorio.":""}
+        {menorForm&&!form.aceptaCondiciones?" La confirmación legal del tutor es obligatoria para menores.":""}
+      </div>}
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:14}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={save} disabled={!form.nombre?.trim()||!form.rgpdAceptado||(menorForm&&!form.aceptaCondiciones)}>
+          💾 Guardar alumno
+        </Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+
+function ModClases({data,setData,profesorId=null,modoAdmin=false}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const clases=data.clases||[];
+  const alumnos=data.alumnos||[];
+  const hoy=today();
+  const sorted=[...clases].sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  const proximas=sorted.filter(c=>c.fecha>=hoy);
+  const pasadas=sorted.filter(c=>c.fecha<hoy).reverse();
+
+  function openNew(){setForm({alumnoId:alumnos[0]?.id||"",fecha:hoy,hora:"10:00",duracion:"60",tipo:"Individual",contenidoEspecifico:"swing_completo",zona:"Campo de prácticas",contenido:"",precio:"",ivaPct:21,retencionPct:0,asistio:false,registradoContablemente:false});setModal("new");}
+  function save(){
+    if(!form.alumnoId||!form.fecha) return;
+    const claseId = modal==="new" ? uid() : modal;
+    const claseGuardada = {...form, id:claseId};
+    const updated=modal==="new"?[...clases,claseGuardada]:clases.map(c=>c.id===modal?claseGuardada:c);
+
+    // ── Gestión contable automática ──────────────────────────────────
+    let nuevosIngresos = data.ingresos||[];
+    const precio = Number(form.precio||0);
+
+    if(form.asistio && precio > 0) {
+      // Buscar si ya existe ingreso para esta clase
+      const yaRegistrado = (data.ingresos||[]).find(i=>i.claseId===claseId);
+      if(!yaRegistrado){
+        const alumno = alumnos.find(a=>a.id===form.alumnoId);
+        const contenidoLabel = CONTENIDOS_CLASE.find(c=>c.id===form.contenidoEspecifico)?.label || form.contenidoEspecifico || form.tipo;
+        const ivaP = Number(form.ivaPct||21);
+        const retP = Number(form.retencionPct||0);
+        const ivaImp = +(precio * ivaP/100).toFixed(2);
+        const retImp = +(precio * retP/100).toFixed(2);
+        const total  = +(precio + ivaImp - retImp).toFixed(2);
+        const nuevoIngreso = {
+          id: uid(),
+          claseId,
+          fecha: form.fecha,
+          categoria: "Clase individual",
+          concepto: contenidoLabel + (alumno ? " — " + alumno.nombre : ""),
+          alumnoId: form.alumnoId,
+          importeBase: precio,
+          ivaPct: ivaP,
+          ivaImporte: ivaImp,
+          retencionPct: retP,
+          retencionImporte: retImp,
+          importeTotal: total,
+          metodo: form.metodoPago||"Efectivo",
+          generadoAutomatico: true,
+        };
+        nuevosIngresos = [...nuevosIngresos, nuevoIngreso];
+      }
+    }
+    // Si se desmarca asistencia, eliminar el ingreso automático vinculado
+    if(!form.asistio){
+      nuevosIngresos = nuevosIngresos.filter(i=>i.claseId!==claseId||!i.generadoAutomatico);
+    }
+
+    setData({...data, clases:updated, ingresos:nuevosIngresos});
+    sincronizarClaseFirestore(claseGuardada, alumnos);
+    if(modal==="new"){
+      const alumno = alumnos.find(a=>a.id===form.alumnoId);
+      notificarClaseAlumnoEmail(claseGuardada, alumno);
+    }
+    setModal(null);
+  }
+  function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
+  const CC=({c})=>{
+    const cLabel=CONTENIDOS_CLASE.find(x=>x.id===c.contenidoEspecifico)?.label||"";
+    return <Card style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:8}}>
+    <div style={{background:c.asistio?G.mist:"#fff3cd",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
+      <div style={{fontSize:11,color:G.soft}}>{c.fecha.slice(5)}</div>
+      <div style={{fontSize:15,fontWeight:800,color:G.fairway}}>{c.hora}</div>
+    </div>
+    <div style={{flex:1}}>
+      <div style={{fontWeight:700,color:G.ink}}>{alumnoNombre(c.alumnoId)}</div>
+      <div style={{fontSize:12,color:G.soft}}>{c.tipo} · {c.zona} · {c.duracion}min</div>
+      {cLabel&&<div style={{fontSize:12,color:G.fairway,marginTop:2,fontWeight:600}}>{cLabel}</div>}
+      {c.contenido&&<div style={{fontSize:12,color:"#555",marginTop:2}}>{c.contenido}</div>}
+      {Number(c.precio||0)>0&&<div style={{fontSize:11,marginTop:3}}>
+        <span style={{background:c.asistio?"#e8f4e8":"#fff3cd",color:c.asistio?G.grass:"#856404",borderRadius:4,padding:"1px 6px",fontWeight:600}}>
+          {c.asistio?"✅ Registrado contablemente":"⏳ "+Number(c.precio).toFixed(2)+"€ pendiente"}
+        </span>
+      </div>}
+    </div>
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+      <Badge color={c.asistio?"green":"gold"}>{c.asistio?"Asistió":"Pendiente"}</Badge>
+      <Btn small color="secondary" onClick={()=>{setForm({...c});setModal(c.id);}}>✎</Btn>
+      <Btn small color="sky" onClick={()=>generarPDFClase(c, alumnoNombre(c.alumnoId))}>PDF</Btn>
+      <Btn small color={c.asistio?"secondary":"sky"} onClick={()=>{
+        const updated={...c,asistio:!c.asistio};
+        const clasesMod=clases.map(x=>x.id===c.id?updated:x);
+        let ingMod=data.ingresos||[];
+        const precio=Number(c.precio||0);
+        if(updated.asistio && precio>0){
+          const yaReg=ingMod.find(i=>i.claseId===c.id&&i.generadoAutomatico);
+          if(!yaReg){
+            const al=alumnos.find(a=>a.id===c.alumnoId);
+            const cLabel=CONTENIDOS_CLASE.find(x=>x.id===c.contenidoEspecifico)?.label||c.tipo||"Clase";
+            const ivaP=Number(c.ivaPct||21),retP=Number(c.retencionPct||0);
+            const ivaImp=+(precio*ivaP/100).toFixed(2),retImp=+(precio*retP/100).toFixed(2);
+            ingMod=[...ingMod,{id:uid(),claseId:c.id,fecha:c.fecha,categoria:"Clase individual",
+              concepto:cLabel+(al?" — "+al.nombre:""),alumnoId:c.alumnoId,
+              importeBase:precio,ivaPct:ivaP,ivaImporte:ivaImp,retencionPct:retP,
+              retencionImporte:retImp,importeTotal:+(precio+ivaImp-retImp).toFixed(2),
+              metodo:c.metodoPago||"Efectivo",generadoAutomatico:true}];
+          }
+        }
+        if(!updated.asistio) ingMod=ingMod.filter(i=>!(i.claseId===c.id&&i.generadoAutomatico));
+        setData({...data,clases:clasesMod,ingresos:ingMod});
+        sincronizarClaseFirestore(updated,alumnos);
+      }}>{c.asistio?"↩":"✔"}</Btn>
+      <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?")){setData({...data,clases:clases.filter(x=>x.id!==c.id)});eliminarClaseFirestore(c.id);}}}> ✕</Btn>
+    </div>
+  </Card>;
+  };
+
+  return <div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:20}}>
+      {[[proximas.length,"Próximas",G.sky],[clases.filter(c=>c.asistio).length,"Realizadas",G.grass],[clases.length,"Total",G.fairway]].map(([v,l,c])=>(
+        <Card key={l} style={{textAlign:"center"}}><div style={{fontSize:26,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:12,color:G.soft,marginTop:2}}>{l}</div></Card>
+      ))}
+    </div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+      <h3 style={{margin:0,color:G.ink}}>Próximas</h3><Btn onClick={openNew}>+ Nueva clase</Btn>
+    </div>
+    {proximas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20}}>Sin clases programadas.</div>}
+    {proximas.map(c=><CC key={c.id} c={c}/>)}
+    {pasadas.length>0&&<><h3 style={{color:G.soft,margin:"16px 0 10px"}}>Pasadas</h3>{pasadas.slice(0,8).map(c=><CC key={c.id} c={c}/>)}</>}
+
+    {modal&&<Modal title={modal==="new"?"Nueva clase":"Editar clase"} onClose={()=>setModal(null)}>
+      <Field label="Alumno *"><Sel value={form.alumnoId||""} onChange={v=>setForm({...form,alumnoId:v})} options={alumnos.map(a=>({value:a.id,label:a.nombre}))}/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Fecha *"><Input type="date" value={form.fecha||""} onChange={v=>setForm({...form,fecha:v})}/></Field>
+        <Field label="Hora"><Input type="time" value={form.hora||"10:00"} onChange={v=>setForm({...form,hora:v})}/></Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Duración"><Sel value={form.duracion||"60"} onChange={v=>setForm({...form,duracion:v})} options={["30","45","60","90","120"].map(v=>({value:v,label:v+"min"}))}/></Field>
+        <Field label="Modalidad"><Sel value={form.tipo||"Individual"} onChange={v=>setForm({...form,tipo:v})} options={TIPOS_CLASE.map(t=>({value:t.id,label:t.label}))}/></Field>
+      </div>
+
+      {/* ── Contenido específico ── */}
+      <Field label="Contenido de la clase">
+        <Sel value={form.contenidoEspecifico||"swing_completo"} onChange={v=>setForm({...form,contenidoEspecifico:v})}
+          options={CONTENIDOS_CLASE.map(c=>({value:c.id,label:c.label+" ("+c.categoria+")"}))}/>
+      </Field>
+      <Field label="Notas / Objetivo"><Textarea value={form.contenido||""} onChange={v=>setForm({...form,contenido:v})} placeholder="Detalles, ejercicios, observaciones…"/></Field>
+      <Field label="Zona"><Sel value={form.zona||"Campo de prácticas"} onChange={v=>setForm({...form,zona:v})} options={ZONAS.map(v=>({value:v,label:v}))}/></Field>
+
+      {/* ── Precio y contabilidad ── */}
+      <div style={{background:"#f0f7f0",borderRadius:10,padding:"12px 14px",marginTop:4}}>
+        <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:10}}>💶 Precio y facturación</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+          <Field label="Precio base (€)">
+            <Input type="number" value={form.precio||""} onChange={v=>setForm({...form,precio:v})} placeholder="0.00"/>
+          </Field>
+          <Field label="IVA (%)">
+            <Sel value={String(form.ivaPct??21)} onChange={v=>setForm({...form,ivaPct:Number(v)})}
+              options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
+          </Field>
+          <Field label="Retención IRPF (%)">
+            <Sel value={String(form.retencionPct??0)} onChange={v=>setForm({...form,retencionPct:Number(v)})}
+              options={["0","7","15","19"].map(v=>({value:v,label:v+"%"}))}/>
+          </Field>
+        </div>
+        <Field label="Método de cobro">
+          <Sel value={form.metodoPago||"Efectivo"} onChange={v=>setForm({...form,metodoPago:v})}
+            options={["Efectivo","Tarjeta","Transferencia","Bizum","Bono"].map(v=>({value:v,label:v}))}/>
+        </Field>
+        {Number(form.precio||0)>0&&<div style={{fontSize:12,color:G.soft,marginTop:6,background:"#fff",borderRadius:6,padding:"6px 10px"}}>
+          Base: <b>{Number(form.precio||0).toFixed(2)}€</b> + IVA {form.ivaPct??21}%: <b style={{color:G.grass}}>{(Number(form.precio||0)*(Number(form.ivaPct??21)/100)).toFixed(2)}€</b>
+          {Number(form.retencionPct||0)>0&&<> − Ret. {form.retencionPct}%: <b style={{color:G.flag}}>{(Number(form.precio||0)*(Number(form.retencionPct||0)/100)).toFixed(2)}€</b></>}
+          {" "} = <b style={{color:G.fairway}}>{(Number(form.precio||0)+Number(form.precio||0)*(Number(form.ivaPct??21)/100)-Number(form.precio||0)*(Number(form.retencionPct||0)/100)).toFixed(2)}€</b>
+          <span style={{marginLeft:8,fontSize:11,color:G.soft}}>Se registrará en contabilidad al marcar asistencia ✔</span>
+        </div>}
+        {Number(form.precio||0)===0&&<div style={{fontSize:11,color:G.soft,marginTop:4}}>Sin precio → no se genera ingreso contable.</div>}
+      </div>
+
+      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}>
+        <input type="checkbox" id="asistioChk" checked={!!form.asistio} onChange={e=>setForm({...form,asistio:e.target.checked})} style={{width:16,height:16}}/>
+        <label htmlFor="asistioChk" style={{fontSize:13,color:G.ink,cursor:"pointer"}}>Marcar como impartida (asistió)</label>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={save}>Guardar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN: ESTADÍSTICAS
+// ═══════════════════════════════════════════════════════════════════
+function ModEstadisticas({data,setData}){
+  const alumnos = (data.alumnos||[]).filter(a=>a.activo);
+  const stats   = data.estadisticas||[];
+
+  const [alumnoSel, setAlumnoSel] = useState("");
+  const [modal,     setModal]     = useState(false);
+  const [form,      setForm]      = useState({});
+
+  // Auto-select first alumno
+  useEffect(()=>{
+    if(alumnos.length>0 && !alumnoSel){
+      setAlumnoSel(alumnos[0].id);
+    }
+  },[alumnos.length]);
+
+  const alumnoActual = alumnos.find(a=>a.id===alumnoSel);
+  const alumnoStats  = stats
+    .filter(s=>s.alumnoId===alumnoSel)
+    .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+
+  function abrirNueva(){
+    setForm({
+      alumnoId: alumnoSel,
+      fecha:    today(),
+      hoyos:    "18",
+      golpes:   "",
+      fairwaysPorcentaje: "",
+      greensRegulacion:   "",
+      putts:    "",
+      bunkers:  "",
+      handicap: "",
+      palo:     "7-hierro",
+      distancia:"",
+      notas:    "",
+    });
+    setModal(true);
+  }
+
+  function guardar(){
+    if(!form.fecha) return;
+    const reg = {...form, alumnoId: alumnoSel, id: form.id||uid()};
+    const updated = stats.some(s=>s.id===reg.id)
+      ? stats.map(s=>s.id===reg.id ? reg : s)
+      : [...stats, reg];
+    setData({...data, estadisticas: updated});
+    setModal(false);
+  }
+
+  function editar(s){ setForm({...s}); setModal(true); }
+
+  function eliminar(id){
+    if(golfConfirm("¿Eliminar esta ronda?"))
+      setData({...data, estadisticas: stats.filter(s=>s.id!==id)});
+  }
+
+  // Mini sparkline chart
+  function Spark({values, color}){
+    if(!values||values.length<2) return null;
+    const nums = values.map(Number).filter(v=>!isNaN(v));
+    if(nums.length<2) return null;
+    const mx=Math.max(...nums), mn=Math.min(...nums), rng=mx-mn||1;
+    const w=100, h=28, p=3;
+    const pts=nums.map((v,i)=>`${p+(i/(nums.length-1))*(w-p*2)},${p+(1-(v-mn)/rng)*(h-p*2)}`).join(" ");
+    const [lx,ly]=pts.split(" ").at(-1).split(",");
+    return <svg width={w} height={h} style={{display:"block"}}>
+      <polyline fill="none" stroke={color} strokeWidth="2" points={pts}/>
+      <circle cx={lx} cy={ly} r="3" fill={color}/>
+    </svg>;
+  }
+
+  // Stats summary for selected alumno
+  const últimas10 = alumnoStats.slice(0,10).reverse();
+
+  if(alumnos.length===0) return (
+    <div style={{textAlign:"center",padding:40,color:G.soft}}>
+      <div style={{fontSize:32,marginBottom:12}}>📊</div>
+      <div style={{fontWeight:700,marginBottom:8}}>Sin alumnos registrados</div>
+      <div style={{fontSize:13}}>Añade alumnos en la pestaña <b>Alumnos</b> para poder registrar estadísticas.</div>
+    </div>
+  );
+
+  return <div>
+    {/* Selector alumno + botón */}
+    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+      <div style={{flex:1,minWidth:180}}>
+        <select value={alumnoSel} onChange={e=>setAlumnoSel(e.target.value)}
+          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+            padding:"9px 12px",fontSize:15,background:"#fff",fontFamily:"inherit",fontWeight:600,color:G.fairway}}>
+          {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+        </select>
+      </div>
+      <Btn onClick={abrirNueva} color="primary">+ Registrar ronda</Btn>
+    </div>
+
+    {/* Gráficas resumen */}
+    {alumnoStats.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
+      {[
+        ["Golpes",     últimas10.map(s=>s.golpes),     G.fairway],
+        ["Hándicap",   últimas10.map(s=>s.handicap),   G.flag],
+        ["Putts",      últimas10.map(s=>s.putts),       G.sky],
+        ["GIR %",      últimas10.map(s=>s.greensRegulacion), G.grass],
+      ].map(([label,vals,color])=>(
+        <Card key={label} style={{padding:10}}>
+          <div style={{fontSize:11,color:G.soft,marginBottom:4}}>{label}</div>
+          <Spark values={vals} color={color}/>
+          <div style={{fontSize:14,fontWeight:700,color,marginTop:2}}>
+            {vals.filter(Boolean).length>0
+              ? vals.filter(Boolean).at(-1)
+              : "—"}
+          </div>
+        </Card>
+      ))}
+    </div>}
+
+    {/* Lista de rondas */}
+    {alumnoStats.length===0
+      ? <div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:28,marginBottom:8}}>⛳</div>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Sin rondas registradas</div>
+          <div style={{fontSize:13}}>Pulsa <b>"+ Registrar ronda"</b> para añadir la primera ronda de <b>{alumnoActual?.nombre}</b>.</div>
+        </div>
+      : <div style={{display:"grid",gap:10}}>
+          {alumnoStats.map(s=>(
+            <Card key={s.id}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
+                <div>
+                  <div style={{fontWeight:700,color:G.ink,fontSize:15,marginBottom:6}}>
+                    📅 {s.fecha} · {s.hoyos} hoyos
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
+                    {[
+                      ["Golpes",    s.golpes,                          G.fairway],
+                      ["Fairways",  s.fairwaysPorcentaje ? s.fairwaysPorcentaje+"%" : "—", G.grass],
+                      ["GIR",       s.greensRegulacion   ? s.greensRegulacion+"%"   : "—", G.sky],
+                      ["Putts",     s.putts,                           G.flag],
+                      ["Bunkers",   s.bunkers,                         G.purple],
+                      ["Hcp",       s.handicap,                        G.danger],
+                    ].map(([k,v,c])=>(
+                      <div key={k} style={{textAlign:"center",minWidth:44}}>
+                        <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
+                        <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:8,fontStyle:"italic"}}>"{s.notas}"</div>}
+                </div>
+                <div style={{display:"flex",gap:6,flexShrink:0}}>
+                  <Btn small color="secondary" onClick={()=>editar(s)}>✎</Btn>
+                  <Btn small color="danger"    onClick={()=>eliminar(s.id)}>✕</Btn>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+    }
+
+    {/* Modal registrar / editar ronda */}
+    {modal&&<Modal title={form.id?"Editar ronda":"Registrar nueva ronda"} onClose={()=>setModal(false)} wide>
+      {/* Alumno y fecha */}
+      <div style={{background:G.mist,borderRadius:10,padding:"10px 14px",marginBottom:14,
+        fontSize:14,fontWeight:600,color:G.fairway}}>
+        👤 {alumnoActual?.nombre||"Alumno"}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
+        <Field label="Fecha *">
+          <Input type="date" value={form.fecha||today()} onChange={v=>setForm(f=>({...f,fecha:v}))}/>
+        </Field>
+        <Field label="Hoyos jugados">
+          <select value={form.hoyos||"18"} onChange={e=>setForm(f=>({...f,hoyos:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="9">9 hoyos</option>
+            <option value="18">18 hoyos</option>
+          </select>
+        </Field>
+      </div>
+
+      {/* Stats principales */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:4}}>
+        {[
+          ["golpes",              "Golpes totales",   "number"],
+          ["fairwaysPorcentaje",  "Fairways %",       "number"],
+          ["greensRegulacion",    "GIR %",            "number"],
+          ["putts",               "Putts",            "number"],
+          ["bunkers",             "Bunkers",          "number"],
+          ["handicap",            "Hándicap",         "number"],
+        ].map(([key,label,type])=>(
+          <Field key={key} label={label}>
+            <Input type={type} value={form[key]||""}
+              onChange={v=>setForm(f=>({...f,[key]:v}))}
+              placeholder="—"/>
+          </Field>
+        ))}
+      </div>
+
+      {/* Palo referencia y distancia */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
+        
+        <Field label="Distancia media (m)">
+          <Input type="number" value={form.distancia||""} onChange={v=>setForm(f=>({...f,distancia:v}))} placeholder="—"/>
+        </Field>
+      </div>
+
+      <Field label="Notas de la ronda">
+        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))}
+          rows={2} placeholder="Observaciones, condiciones del campo, sensaciones..."/>
+      </Field>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
+        <Btn color="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+        <Btn onClick={guardar} disabled={!form.fecha}>💾 Guardar ronda</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN: VÍDEO ANÁLISIS
+// ═══════════════════════════════════════════════════════════════════
+function ModAnalisis({data,setData}){
+  const [modal,setModal]=useState(null);
+  const [verModal,setVerModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [alumnoSel,setAlumnoSel]=useState("todos");
+  const [aiLoading,setAiLoading]=useState(false);
+  const alumnos=data.alumnos||[];
+  const analisis=data.analisis||[];
+
+  function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
+  function alumnoTutores(id){return alumnos.find(a=>a.id===id)?.tutores||[];}
+
+  function blank(){return {alumnoId:alumnos[0]?.id||"",fecha:today(),tipo:"Swing completo",palo:"7-hierro",videoUrl:"",aspectosBuenos:[],aspectosMejorar:[],comentarioTecnico:"",comentarioTutor:"",enviado:false,valoracion:"3"};}
+
+  function save(){
+    if(!form.alumnoId||!form.fecha) return;
+    const updated=modal==="new"?[...analisis,{...form,id:uid()}]:analisis.map(a=>a.id===modal?{...form}:a);
+    setData({...data,analisis:updated});setModal(null);
+  }
+
+  function toggleAsp(list,asp){const cur=form[list]||[];setForm({...form,[list]:cur.includes(asp)?cur.filter(x=>x!==asp):[...cur,asp]});}
+
+  async function generar(paraTutor){
+    if(!form.alumnoId) return;
+    setAiLoading(true);
+    const a=alumnos.find(x=>x.id===form.alumnoId);
+    const prompt=paraTutor
+      ?`Eres el profesor de golf José Caballero de la José Caballero Golf Academy (Golf Ciudad Real C.D.). Escribe un comentario amable y motivador en español para los padres/tutores del alumno "${a?.nombre}" (${a?.nivel||""}, ${a?.edad||"—"} años). Tipo de golpe: ${form.tipo||"Swing"} con ${form.palo}. Positivos: ${(form.aspectosBuenos||[]).join(", ")||"varios"}. A mejorar: ${(form.aspectosMejorar||[]).join(", ")||"algunos aspectos"}. Breve, cálido, 3 párrafos, nota motivadora final.`
+      :`Eres el profesor de golf José Caballero de la José Caballero Golf Academy. Redacta un informe técnico profesional en español para el alumno "${a?.nombre}" (${a?.nivel||""}). Tipo: ${form.tipo} con ${form.palo}. Positivos: ${(form.aspectosBuenos||[]).join(", ")||"ninguno"}. A mejorar: ${(form.aspectosMejorar||[]).join(", ")||"ninguno"}. 3-4 párrafos, con drills recomendados.`;
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})});
+      const json=await res.json();
+      const texto=json.content?.find(b=>b.type==="text")?.text||"";
+      if(paraTutor)setForm(f=>({...f,comentarioTutor:texto}));
+      else setForm(f=>({...f,comentarioTecnico:texto}));
+    }catch(e){}
+    setAiLoading(false);
+  }
+
+  const filtrados=(alumnoSel==="todos"?analisis:analisis.filter(a=>a.alumnoId===alumnoSel)).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const stars=n=>"★".repeat(Number(n||0))+"☆".repeat(5-Number(n||0));
+  const verItem=analisis.find(a=>a.id===verModal);
+
+  return <div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,marginBottom:20}}>
+      {[[analisis.length,"Análisis",G.purple],[analisis.filter(a=>a.enviado).length,"Enviados",G.grass],[analisis.filter(a=>!a.enviado).length,"Pendientes",G.flag]].map(([v,l,c])=>(
+        <Card key={l} style={{textAlign:"center"}}><div style={{fontSize:26,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:12,color:G.soft,marginTop:2}}>{l}</div></Card>
+      ))}
+    </div>
+    <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+      <Sel value={alumnoSel} onChange={setAlumnoSel} options={[{value:"todos",label:"Todos"},...alumnos.map(a=>({value:a.id,label:a.nombre}))]}/>
+      <Btn color="purple" onClick={()=>{setForm(blank());setModal("new");}}>+ Nuevo análisis</Btn>
+    </div>
+    <div style={{display:"grid",gap:10}}>
+      {filtrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30}}>Sin análisis.</div>}
+      {filtrados.map(a=>(
+        <Card key={a.id}>
+          <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{width:56,height:42,borderRadius:10,background:a.videoUrl?"#1a1a2e":G.mist,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
+              {a.videoUrl?<a href={a.videoUrl} target="_blank" rel="noreferrer" style={{color:G.white,textDecoration:"none"}}>▶</a>:"🎬"}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontWeight:700,color:G.ink}}>{alumnoNombre(a.alumnoId)}</span>
+                <Badge color="purple">{a.tipo}</Badge>
+                {a.enviado&&<Badge color="green">✓ Enviado</Badge>}
+              </div>
+              <div style={{fontSize:12,color:G.soft,marginTop:2}}>📅 {a.fecha} · <span style={{color:G.flag}}>{stars(a.valoracion)}</span></div>
+              {(a.aspectosBuenos||[]).length>0&&<div style={{fontSize:12,marginTop:3}}><span style={{color:G.grass}}>✔ </span>{(a.aspectosBuenos||[]).join(" · ")}</div>}
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",flexShrink:0}}>
+              <Btn small color="purple" onClick={()=>setVerModal(a.id)}>Ver</Btn>
+              <Btn small color="secondary" onClick={()=>{setForm({...a});setModal(a.id);}}>✎</Btn>
+              <Btn small color={a.enviado?"secondary":"sky"} onClick={()=>setData({...data,analisis:analisis.map(x=>x.id===a.id?{...x,enviado:!x.enviado}:x)})}>{a.enviado?"↩":"✉"}</Btn>
+              <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,analisis:analisis.filter(x=>x.id!==a.id)});}}>✕</Btn>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Ver informe */}
+    {verModal&&verItem&&<Modal title={`Informe — ${alumnoNombre(verItem.alumnoId)}`} onClose={()=>setVerModal(null)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:16}}>
+        {[["Fecha",verItem.fecha],["Tipo",verItem.tipo],["Palo",verItem.palo]].map(([k,v])=>(
+          <div key={k}><span style={{fontSize:11,color:G.soft}}>{k}</span><div style={{fontWeight:700}}>{v}</div></div>
+        ))}
+      </div>
+      {verItem.videoUrl&&<div style={{marginBottom:14}}><a href={verItem.videoUrl} target="_blank" rel="noreferrer" style={{background:G.purple,color:G.white,borderRadius:8,padding:"8px 16px",textDecoration:"none",fontSize:14,fontWeight:600,display:"inline-block"}}>▶ Abrir vídeo</a></div>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+        <div style={{background:G.mist,borderRadius:10,padding:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:G.grass,marginBottom:6}}>✔ Positivos</div>
+          {(verItem.aspectosBuenos||[]).map(a=><div key={a} style={{fontSize:13,marginBottom:2}}>· {a}</div>)}
+        </div>
+        <div style={{background:"#fffbf0",borderRadius:10,padding:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:G.flag,marginBottom:6}}>▲ A mejorar</div>
+          {(verItem.aspectosMejorar||[]).map(a=><div key={a} style={{fontSize:13,marginBottom:2}}>· {a}</div>)}
+        </div>
+      </div>
+      {verItem.comentarioTecnico&&<div style={{marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:G.fairway,marginBottom:6}}>📋 INFORME TÉCNICO</div>
+        <div style={{background:"#f5f9f5",borderRadius:10,padding:14,fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{verItem.comentarioTecnico}</div>
+      </div>}
+      {verItem.comentarioTutor&&<div style={{marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:G.purple,marginBottom:6}}>👨‍👩‍👧 COMENTARIO PARA PADRES/TUTORES</div>
+        <div style={{background:G.lavender,borderRadius:10,padding:14,fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{verItem.comentarioTutor}</div>
+        {alumnoTutores(verItem.alumnoId).length>0&&<div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:6}}>
+          {alumnoTutores(verItem.alumnoId).map(t=><div key={t.id} style={{background:G.white,border:"1px solid #ddd",borderRadius:8,padding:"5px 10px",fontSize:12}}><b>{t.nombre}</b> · {t.email||t.telefono||t.relacion}</div>)}
+        </div>}
+      </div>}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:16,color:G.flag}}>{stars(verItem.valoracion)}</div>
+        <Btn color="secondary" onClick={()=>setVerModal(null)}>Cerrar</Btn>
+      </div>
+    </Modal>}
+
+    {/* Editar / Nuevo */}
+    {modal&&<Modal title={modal==="new"?"Nuevo análisis":"Editar análisis"} onClose={()=>setModal(null)} wide>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Alumno *"><Sel value={form.alumnoId||""} onChange={v=>setForm({...form,alumnoId:v})} options={alumnos.map(a=>({value:a.id,label:a.nombre}))}/></Field>
+        <Field label="Fecha *"><Input type="date" value={form.fecha||""} onChange={v=>setForm({...form,fecha:v})}/></Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Tipo"><Sel value={form.tipo||"Swing completo"} onChange={v=>setForm({...form,tipo:v})} options={["Swing completo","Drive","Approach","Chip","Pitch","Bunker","Putt","Salida"].map(v=>({value:v,label:v}))}/></Field>
+        <Field label="Palo"><Sel value={form.palo||"7-hierro"} onChange={v=>setForm({...form,palo:v})} options={PALO_OPTIONS.map(p=>({value:p,label:p}))}/></Field>
+        <Field label="Valoración"><Sel value={form.valoracion||"3"} onChange={v=>setForm({...form,valoracion:v})} options={["1","2","3","4","5"].map(v=>({value:v,label:"★".repeat(Number(v))+" ("+v+")"}))}/></Field>
+      </div>
+      <Field label="URL vídeo"><Input value={form.videoUrl||""} onChange={v=>setForm({...form,videoUrl:v})} placeholder="https://…"/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+        <div><div style={{fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>✔ POSITIVOS</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosBuenos||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosBuenos",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.grass:"#e8e8e8",color:s?G.white:G.soft}}>{a}</button>;})}</div>
+        </div>
+        <div><div style={{fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>▲ A MEJORAR</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosMejorar||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosMejorar",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.flag:"#e8e8e8",color:s?G.white:G.soft}}>{a}</button>;})}</div>
+        </div>
+      </div>
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+          <label style={{fontSize:12,fontWeight:600,color:G.soft}}>📋 INFORME TÉCNICO</label>
+          <Btn small onClick={()=>generar(false)} disabled={aiLoading}>{aiLoading?"…":"✨ IA"}</Btn>
+        </div>
+        <Textarea value={form.comentarioTecnico||""} onChange={v=>setForm({...form,comentarioTecnico:v})} rows={4} placeholder="Descripción técnica, drills…"/>
+      </div>
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+          <label style={{fontSize:12,fontWeight:600,color:G.purple}}>👨‍👩‍👧 COMENTARIO PADRES/TUTORES</label>
+          <Btn small color="purple" onClick={()=>generar(true)} disabled={aiLoading}>{aiLoading?"…":"✨ IA"}</Btn>
+        </div>
+        {alumnoTutores(form.alumnoId||"").length>0&&<div style={{fontSize:11,color:G.purple,marginBottom:5}}>Para: {alumnoTutores(form.alumnoId||"").map(t=>t.nombre).join(", ")}</div>}
+        <Textarea value={form.comentarioTutor||""} onChange={v=>setForm({...form,comentarioTutor:v})} rows={4} placeholder="Texto amable para padres/tutores…"/>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn color="purple" onClick={save}>Guardar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN: PAGOS
+// ═══════════════════════════════════════════════════════════════════
+function ModPagos({data,setData}){
+  // ── Estados ──────────────────────────────────────────────────────
+  const [tab,setTab]         = useState("resumen");
+  const [modalI,setModalI]   = useState(null);   // ingreso
+  const [modalG,setModalG]   = useState(null);   // gasto
+  const [modalCat,setModalCat] = useState(null); // categorías
+  const [fI,setFI]           = useState({});
+  const [fG,setFG]           = useState({});
+  const [filtroDesde,setFiltroDesde] = useState("");
+  const [filtroHasta,setFiltroHasta] = useState("");
+  const [filtroCat,setFiltroCat]     = useState("todas");
+  const [nuevaCat,setNuevaCat]       = useState("");
+  const [tipoCat,setTipoCat]         = useState("ingreso");
+
+  const alumnos = data.alumnos||[];
+  const ingresos = data.ingresos||[];
+  const gastos   = data.gastos||[];
+  const catI     = data.categoriasIngreso||[];
+  const catG     = data.categoriasGasto||[];
+
+  // IVA y retención por defecto (autónomo actividad deportiva)
+  const IVA_DEFAULT = 21;
+  const RET_DEFAULT = 15;
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  function filtrarPorFecha(arr){
+    return arr.filter(r=>{
+      if(filtroDesde && r.fecha < filtroDesde) return false;
+      if(filtroHasta && r.fecha > filtroHasta) return false;
+      return true;
+    });
+  }
+  function fmt(n){ return Number(n||0).toFixed(2)+"€"; }
+  function fmtN(n){ return Number(n||0).toFixed(2); }
+
+  const ingFiltrados = filtrarPorFecha(ingresos).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const gasFiltrados = filtrarPorFecha(gastos).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+
+  // Totales
+  const totalIngBruto = ingFiltrados.reduce((s,r)=>s+Number(r.importeBase||0),0);
+  const totalIVAing   = ingFiltrados.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+  const totalRet      = ingFiltrados.reduce((s,r)=>s+Number(r.retencionImporte||0),0);
+  const totalIngNeto  = totalIngBruto + totalIVAing - totalRet;
+  const totalGas      = gasFiltrados.reduce((s,r)=>s+Number(r.importeTotal||0),0);
+  const totalIVAgas   = gasFiltrados.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+  const beneficio     = totalIngBruto - gasFiltrados.reduce((s,r)=>s+Number(r.importeBase||0),0);
+  const ivaLiquidar   = totalIVAing - totalIVAgas;
+
+  // Agrupar por mes para gráfico
+  function porMes(arr, campo){
+    const map={};
+    arr.forEach(r=>{
+      const mes=r.fecha?.slice(0,7)||"";
+      if(!map[mes]) map[mes]=0;
+      map[mes]+=Number(r[campo]||0);
+    });
+    return map;
+  }
+
+  // ── Guardar ingreso ───────────────────────────────────────────────
+  function saveIngreso(){
+    if(!fI.fecha||!fI.importeBase) return;
+    const ivaP  = Number(fI.ivaPct||IVA_DEFAULT);
+    const retP  = Number(fI.retencionPct||0);
+    const base  = Number(fI.importeBase||0);
+    const ivaImp= +(base * ivaP/100).toFixed(2);
+    const retImp= +(base * retP/100).toFixed(2);
+    const total = +(base + ivaImp - retImp).toFixed(2);
+    const reg = {...fI, ivaPct:ivaP, retencionPct:retP,
+      ivaImporte:ivaImp, retencionImporte:retImp, importeTotal:total };
+    const u = modalI==="new"
+      ? [...ingresos,{...reg,id:uid()}]
+      : ingresos.map(r=>r.id===modalI?{...reg,id:modalI}:r);
+    setData({...data,ingresos:u}); setModalI(null);
+  }
+
+  // ── Guardar gasto ────────────────────────────────────────────────
+  function saveGasto(){
+    if(!fG.fecha||!fG.importeBase) return;
+    const ivaP  = Number(fG.ivaPct||0);
+    const base  = Number(fG.importeBase||0);
+    const ivaImp= +(base * ivaP/100).toFixed(2);
+    const total = +(base + ivaImp).toFixed(2);
+    const reg = {...fG, ivaPct:ivaP, ivaImporte:ivaImp, importeTotal:total };
+    const u = modalG==="new"
+      ? [...gastos,{...reg,id:uid()}]
+      : gastos.map(r=>r.id===modalG?{...reg,id:modalG}:r);
+    setData({...data,gastos:u}); setModalG(null);
+  }
+
+  // ── Añadir categoría ─────────────────────────────────────────────
+  function addCat(){
+    if(!nuevaCat.trim()) return;
+    if(tipoCat==="ingreso"){
+      if(catI.some(c=>(c.nombre||c)===nuevaCat.trim())) return;
+      setData({...data,categoriasIngreso:[...catI,{nombre:nuevaCat.trim(),precio:0}]});
+    } else {
+      if(catG.some(c=>(c.nombre||c)===nuevaCat.trim())) return;
+      setData({...data,categoriasGasto:[...catG,{nombre:nuevaCat.trim(),precio:0}]});
+    }
+    setNuevaCat("");
+  }
+  function delCat(tipo,cat){
+    const nombre=cat.nombre||cat;
+    if(!confirm("¿Eliminar categoría «"+nombre+"»?")) return;
+    if(tipo==="ingreso") setData({...data,categoriasIngreso:catI.filter(c=>(c.nombre||c)!==nombre)});
+    else setData({...data,categoriasGasto:catG.filter(c=>(c.nombre||c)!==nombre)});
+  }
+  function updCatPrecio(tipo,idx,precio){
+    if(tipo==="ingreso"){
+      const arr=catI.map((c,i)=>i===idx?{...(typeof c==="object"?c:{nombre:c}),precio:Number(precio)}:c);
+      setData({...data,categoriasIngreso:arr});
+    } else {
+      const arr=catG.map((c,i)=>i===idx?{...(typeof c==="object"?c:{nombre:c}),precio:Number(precio)}:c);
+      setData({...data,categoriasGasto:arr});
+    }
+  }
+
+  // ── Exportar CSV ─────────────────────────────────────────────────
+  function exportarCSV(){
+    const rows=[["Tipo","Fecha","Categoría","Concepto","Alumno","Base (€)","IVA%","IVA(€)","Ret%","Ret(€)","Total(€)","Método","Factura"]];
+    ingFiltrados.forEach(r=>{
+      const al=alumnos.find(a=>a.id===r.alumnoId)?.nombre||"—";
+      rows.push(["INGRESO",r.fecha,r.categoria||"",r.concepto||"",al,
+        fmtN(r.importeBase),r.ivaPct||"",fmtN(r.ivaImporte),
+        r.retencionPct||"",fmtN(r.retencionImporte),fmtN(r.importeTotal),
+        r.metodo||"",r.factura||""]);
+    });
+    gasFiltrados.forEach(r=>{
+      rows.push(["GASTO",r.fecha,r.categoria||"",r.concepto||"","—",
+        fmtN(r.importeBase),r.ivaPct||"",fmtN(r.ivaImporte),
+        "","",fmtN(r.importeTotal),r.metodo||"",r.factura||""]);
+    });
+    const sep=";";
+    const csv=rows.map(r=>r.map(v=>{const s=String(v).replace(/"/g,'""');return s.includes(sep)?`"${s}"`:s;}).join(sep)).join("\r\n");
+    const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="contabilidad-academia.csv";a.click();URL.revokeObjectURL(url);
+  }
+
+  // ── Colores tabs ─────────────────────────────────────────────────
+  const TABS=[
+    {id:"resumen",label:"📊 Resumen"},
+    {id:"ingresos",label:"💶 Ingresos"},
+    {id:"gastos",label:"🧾 Gastos"},
+    {id:"iva",label:"🏛️ IVA / Retención"},
+    {id:"categorias",label:"🏷️ Categorías"},
+  ];
+
+  const estiloTabBtn=(id)=>({
+    background:tab===id?G.fairway:"transparent",
+    color:tab===id?"#fff":G.fairway,
+    border:"1px solid "+G.fairway,
+    borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"
+  });
+
+  // ── Filtros comunes ───────────────────────────────────────────────
+  const FiltroBarra=()=><div style={{background:"#f5f5f5",borderRadius:10,padding:"10px 14px",
+    display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:16}}>
+    <div style={{fontSize:13,fontWeight:600,color:G.fairway}}>🔍 Filtrar:</div>
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <label style={{fontSize:12,color:G.soft}}>Desde</label>
+      <input type="date" value={filtroDesde} onChange={e=>setFiltroDesde(e.target.value)}
+        style={{border:"1px solid #ddd",borderRadius:6,padding:"4px 8px",fontSize:12}}/>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <label style={{fontSize:12,color:G.soft}}>Hasta</label>
+      <input type="date" value={filtroHasta} onChange={e=>setFiltroHasta(e.target.value)}
+        style={{border:"1px solid #ddd",borderRadius:6,padding:"4px 8px",fontSize:12}}/>
+    </div>
+    {(filtroDesde||filtroHasta)&&<button onClick={()=>{setFiltroDesde("");setFiltroHasta("");}}
+      style={{background:"#eee",border:"none",borderRadius:6,padding:"5px 10px",fontSize:12,cursor:"pointer"}}>✕ Limpiar</button>}
+    <button onClick={exportarCSV}
+      style={{background:"#217346",color:"#fff",border:"none",borderRadius:6,
+        padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>
+      📊 Exportar CSV
+    </button>
+  </div>;
+
+  // ── RENDER ───────────────────────────────────────────────────────
+  return <div>
+    {/* Tabs */}
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18,overflowX:"auto"}}>
+      {TABS.map(t=><button key={t.id} style={estiloTabBtn(t.id)} onClick={()=>setTab(t.id)}>{t.label}</button>)}
+    </div>
+
+    {/* ══ RESUMEN ════════════════════════════════════════════════════ */}
+    {tab==="resumen"&&<div>
+      <FiltroBarra/>
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}}>
+        {[
+          [fmt(totalIngBruto),"Base ingresos",G.fairway,"💶"],
+          [fmt(totalIVAing),"IVA cobrado",G.grass,"🏛️"],
+          [fmt(totalRet),"Retención IRPF",G.flag,"📉"],
+          [fmt(totalIngNeto),"Cobrado neto",G.sky,"✅"],
+          [fmt(totalGas),"Total gastos",G.danger,"🧾"],
+          [fmt(beneficio),"Beneficio bruto",beneficio>=0?G.grass:G.danger,"📈"],
+        ].map(([v,l,c,ico])=>(
+          <Card key={l} style={{textAlign:"center",borderTop:`3px solid ${c}`}}>
+            <div style={{fontSize:20,marginBottom:4}}>{ico}</div>
+            <div style={{fontSize:18,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:11,color:G.soft,marginTop:2}}>{l}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Desglose trimestral */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:700,color:G.fairway,marginBottom:12}}>📅 Resumen por trimestre</div>
+        {(()=>{
+          const trimestres={"T1 (Ene-Mar)":["01","02","03"],"T2 (Abr-Jun)":["04","05","06"],
+            "T3 (Jul-Sep)":["07","08","09"],"T4 (Oct-Dic)":["10","11","12"]};
+          const year=(filtroDesde||filtroHasta||today()).slice(0,4);
+          return Object.entries(trimestres).map(([t,meses])=>{
+            const tIng=ingresos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+            const tGas=gastos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+            const bIng=tIng.reduce((s,r)=>s+Number(r.importeBase||0),0);
+            const bGas=tGas.reduce((s,r)=>s+Number(r.importeBase||0),0);
+            const ivaIng=tIng.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+            const retT=tIng.reduce((s,r)=>s+Number(r.retencionImporte||0),0);
+            const ivaGas=tGas.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+            return <div key={t} style={{display:"grid",gridTemplateColumns:"120px 1fr 1fr 1fr 1fr 1fr",
+              gap:8,padding:"8px 0",borderBottom:"1px solid #f0f0f0",fontSize:13,alignItems:"center"}}>
+              <div style={{fontWeight:700,color:G.ink}}>{t}</div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>Base ing.</div><b style={{color:G.fairway}}>{fmt(bIng)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>IVA cobrado</div><b style={{color:G.grass}}>{fmt(ivaIng)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.flag}}>Ret. IRPF</div><b style={{color:G.flag}}>{fmt(retT)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>Gastos</div><b style={{color:G.danger}}>{fmt(bGas)}</b></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>IVA soportado</div><b style={{color:G.soft}}>{fmt(ivaGas)}</b></div>
+            </div>;
+          });
+        })()}
+      </Card>
+
+      {/* Desglose por categoría ingresos */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <Card>
+          <div style={{fontWeight:700,color:G.fairway,marginBottom:10}}>💶 Ingresos por categoría</div>
+          {catI.map(cat=>{
+            const nombre=cat.nombre||cat;
+            const tot=ingFiltrados.filter(r=>r.categoria===nombre).reduce((s,r)=>s+Number(r.importeBase||0),0);
+            if(tot===0) return null;
+            return <div key={nombre} style={{display:"flex",justifyContent:"space-between",
+              padding:"5px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{color:G.ink}}>{nombre}</span>
+              <b style={{color:G.fairway}}>{fmt(tot)}</b>
+            </div>;
+          })}
+        </Card>
+        <Card>
+          <div style={{fontWeight:700,color:G.danger,marginBottom:10}}>🧾 Gastos por categoría</div>
+          {catG.map(cat=>{
+            const nombre=cat.nombre||cat;
+            const tot=gasFiltrados.filter(r=>r.categoria===nombre).reduce((s,r)=>s+Number(r.importeBase||0),0);
+            if(tot===0) return null;
+            return <div key={nombre} style={{display:"flex",justifyContent:"space-between",
+              padding:"5px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{color:G.ink}}>{nombre}</span>
+              <b style={{color:G.danger}}>{fmt(tot)}</b>
+            </div>;
+          })}
+        </Card>
+      </div>
+    </div>}
+
+    {/* ══ INGRESOS ═══════════════════════════════════════════════════ */}
+    {tab==="ingresos"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <span style={{fontWeight:700,color:G.fairway,fontSize:15}}>💶 Registro de Ingresos</span>
+          <span style={{marginLeft:10,fontSize:13,color:G.soft}}>{ingFiltrados.length} registros · {fmt(totalIngBruto)} base</span>
+        </div>
+        <Btn onClick={()=>{const c0=catI[0]||{};const c0n=c0.nombre||c0||"";const c0p=c0.precio?String(c0.precio):"";setFI({fecha:today(),ivaPct:IVA_DEFAULT,retencionPct:RET_DEFAULT,metodo:"Transferencia",categoria:c0n,importeBase:c0p});setModalI("new");}}>
+          + Nuevo ingreso
+        </Btn>
+      </div>
+      <FiltroBarra/>
+      <div style={{display:"grid",gap:8}}>
+        {ingFiltrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>Sin ingresos en el período seleccionado.</div>}
+        {ingFiltrados.map(r=>{
+          const al=alumnos.find(a=>a.id===r.alumnoId)?.nombre||"—";
+          return <Card key={r.id} style={{borderLeft:`4px solid ${G.fairway}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:160}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{r.concepto||r.categoria}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+                  {r.fecha} · {r.categoria} · {al} · {r.metodo||"—"}
+                  {r.factura&&<span style={{marginLeft:6,background:"#e8f4e8",color:G.fairway,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,auto)",gap:12,textAlign:"right",fontSize:12}}>
+                <div><div style={{color:G.soft,fontSize:10}}>Base</div><b style={{color:G.ink}}>{fmt(r.importeBase)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>IVA {r.ivaPct}%</div><b style={{color:G.grass}}>{fmt(r.ivaImporte)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>Ret. {r.retencionPct}%</div><b style={{color:G.flag}}>-{fmt(r.retencionImporte)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>Total</div><b style={{color:G.fairway,fontSize:14}}>{fmt(r.importeTotal)}</b></div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn small color="secondary" onClick={()=>{setFI({...r});setModalI(r.id);}}>✎</Btn>
+                <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,ingresos:ingresos.filter(x=>x.id!==r.id)});}}>✕</Btn>
+              </div>
+            </div>
+          </Card>;
+        })}
+      </div>
+    </div>}
+
+    {/* ══ GASTOS ═════════════════════════════════════════════════════ */}
+    {tab==="gastos"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <span style={{fontWeight:700,color:G.danger,fontSize:15}}>🧾 Registro de Gastos</span>
+          <span style={{marginLeft:10,fontSize:13,color:G.soft}}>{gasFiltrados.length} registros · {fmt(totalGas)} total</span>
+        </div>
+        <Btn color="danger" onClick={()=>{const g0=catG[0]||{};setFG({fecha:today(),ivaPct:21,metodo:"Tarjeta",categoria:g0.nombre||g0||"",deducible:"si"});setModalG("new");}}>
+          + Nuevo gasto
+        </Btn>
+      </div>
+      <FiltroBarra/>
+      <div style={{display:"grid",gap:8}}>
+        {gasFiltrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>Sin gastos en el período seleccionado.</div>}
+        {gasFiltrados.map(r=>(
+          <Card key={r.id} style={{borderLeft:`4px solid ${G.danger}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{flex:1,minWidth:160}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{r.concepto||r.categoria}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+                  {r.fecha} · {r.categoria} · {r.metodo||"—"}
+                  {r.factura&&<span style={{marginLeft:6,background:"#fdecea",color:G.danger,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
+                  {r.deducible==="si"&&<span style={{marginLeft:6,background:"#e8f4e8",color:G.grass,borderRadius:4,padding:"1px 5px",fontSize:11}}>Deducible</span>}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,auto)",gap:12,textAlign:"right",fontSize:12}}>
+                <div><div style={{color:G.soft,fontSize:10}}>Base</div><b style={{color:G.ink}}>{fmt(r.importeBase)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>IVA {r.ivaPct}%</div><b style={{color:G.grass}}>{fmt(r.ivaImporte)}</b></div>
+                <div><div style={{color:G.soft,fontSize:10}}>Total</div><b style={{color:G.danger,fontSize:14}}>{fmt(r.importeTotal)}</b></div>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn small color="secondary" onClick={()=>{setFG({...r});setModalG(r.id);}}>✎</Btn>
+                <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,gastos:gastos.filter(x=>x.id!==r.id)});}}>✕</Btn>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>}
+
+    {/* ══ IVA / RETENCIÓN ════════════════════════════════════════════ */}
+    {tab==="iva"&&<div>
+      <FiltroBarra/>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:20}}>
+        {[
+          ["IVA repercutido (cobrado)","💶",fmt(totalIVAing),G.fairway,"IVA de tus ingresos. Lo cobras al cliente."],
+          ["IVA soportado (pagado)","🧾",fmt(totalIVAgas),G.danger,"IVA de tus gastos. Lo pagas a proveedores."],
+          ["IVA a liquidar (Mod. 303)","🏛️",fmt(ivaLiquidar),ivaLiquidar>=0?G.grass:G.flag,"Diferencia a ingresar a Hacienda cada trimestre."],
+          ["Retención IRPF (Mod. 111)","📉",fmt(totalRet),G.purple,"Ya retenido por quien te paga. Descuenta en tu declaración."],
+        ].map(([l,ico,v,c,desc])=>(
+          <Card key={l} style={{borderTop:`3px solid ${c}`}}>
+            <div style={{fontSize:22,marginBottom:6}}>{ico}</div>
+            <div style={{fontSize:11,color:G.soft,marginBottom:4}}>{l}</div>
+            <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+            <div style={{fontSize:11,color:G.soft,marginTop:6,lineHeight:1.4}}>{desc}</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Tabla trimestral IVA */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:700,color:G.fairway,marginBottom:12}}>📋 Liquidación trimestral estimada (Modelo 303)</div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead>
+              <tr style={{background:G.fairway,color:"#fff"}}>
+                {["Trimestre","Base ing.","IVA repercutido","Base gas.","IVA soportado","A liquidar"].map(h=>
+                  <th key={h} style={{padding:"8px 10px",textAlign:"right",fontWeight:600,":firstChild":{textAlign:"left"}}}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {[["T1",["01","02","03"]],["T2",["04","05","06"]],["T3",["07","08","09"]],["T4",["10","11","12"]]].map(([t,meses],i)=>{
+                const year=(filtroDesde||filtroHasta||today()).slice(0,4);
+                const tI=ingresos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+                const tG=gastos.filter(r=>r.fecha?.slice(0,4)===year&&meses.includes(r.fecha?.slice(5,7)));
+                const bI=tI.reduce((s,r)=>s+Number(r.importeBase||0),0);
+                const ivaR=tI.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+                const bG=tG.reduce((s,r)=>s+Number(r.importeBase||0),0);
+                const ivaS=tG.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
+                const liq=ivaR-ivaS;
+                return <tr key={t} style={{background:i%2===0?"#f9f9f9":"#fff"}}>
+                  <td style={{padding:"7px 10px",fontWeight:700,color:G.ink}}>{t} {year}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right"}}>{fmt(bI)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:G.fairway}}><b>{fmt(ivaR)}</b></td>
+                  <td style={{padding:"7px 10px",textAlign:"right"}}>{fmt(bG)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:G.danger}}><b>{fmt(ivaS)}</b></td>
+                  <td style={{padding:"7px 10px",textAlign:"right",color:liq>=0?G.grass:G.flag}}><b>{fmt(liq)}</b></td>
+                </tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* Retenciones por pagador */}
+      <Card>
+        <div style={{fontWeight:700,color:G.purple,marginBottom:12}}>📉 Retenciones IRPF por pagador (Mod. 111 / 190)</div>
+        {(()=>{
+          const porPagador={};
+          ingFiltrados.filter(r=>Number(r.retencionImporte||0)>0).forEach(r=>{
+            const k=r.pagador||r.concepto||"Sin especificar";
+            if(!porPagador[k]) porPagador[k]={base:0,ret:0};
+            porPagador[k].base+=Number(r.importeBase||0);
+            porPagador[k].ret+=Number(r.retencionImporte||0);
+          });
+          const ents=Object.entries(porPagador);
+          if(ents.length===0) return <div style={{color:G.soft,fontSize:13}}>No hay ingresos con retención en el período.</div>;
+          return ents.map(([k,v])=>(
+            <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",
+              borderBottom:"1px solid #f0f0f0",fontSize:13}}>
+              <span style={{color:G.ink}}>{k}</span>
+              <span>Base: <b>{fmt(v.base)}</b> · Retención: <b style={{color:G.purple}}>{fmt(v.ret)}</b></span>
+            </div>
+          ));
+        })()}
+      </Card>
+    </div>}
+
+    {/* ══ CATEGORÍAS ═════════════════════════════════════════════════ */}
+    {tab==="categorias"&&<div>
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:700,color:G.fairway,marginBottom:12}}>➕ Nueva categoría</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <Field label="Tipo" style={{margin:0}}>
+            <Sel value={tipoCat} onChange={setTipoCat} options={[{value:"ingreso",label:"Ingreso"},{value:"gasto",label:"Gasto"}]}/>
+          </Field>
+          <Field label="Nombre" style={{margin:0,flex:1,minWidth:180}}>
+            <Input value={nuevaCat} onChange={setNuevaCat} placeholder="Ej: Clínica empresa..."/>
+          </Field>
+          <Btn onClick={addCat} style={{marginBottom:0}}>Añadir</Btn>
+        </div>
+      </Card>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+        <Card>
+          <div style={{fontWeight:700,color:G.fairway,marginBottom:10}}>💶 Categorías de Ingreso</div>
+          {catI.map((cat,idx)=>{
+            const nombre=cat.nombre||cat; const precio=cat.precio||0;
+            return <div key={nombre} style={{display:"flex",alignItems:"center",gap:8,
+              padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{flex:1,color:G.ink}}>{nombre}</span>
+              <input type="number" value={precio} min="0" step="0.01"
+                onChange={e=>updCatPrecio("ingreso",idx,e.target.value)}
+                style={{width:80,border:"1.5px solid #d0e0d0",borderRadius:6,padding:"3px 6px",fontSize:12,textAlign:"right"}}/>
+              <span style={{fontSize:11,color:G.soft}}>€</span>
+              <Btn small color="danger" onClick={()=>delCat("ingreso",cat)}>✕</Btn>
+            </div>;
+          })}
+        </Card>
+        <Card>
+          <div style={{fontWeight:700,color:G.danger,marginBottom:10}}>🧾 Categorías de Gasto</div>
+          {catG.map((cat,idx)=>{
+            const nombre=cat.nombre||cat; const precio=cat.precio||0;
+            return <div key={nombre} style={{display:"flex",alignItems:"center",gap:8,
+              padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              <span style={{flex:1,color:G.ink}}>{nombre}</span>
+              <input type="number" value={precio} min="0" step="0.01"
+                onChange={e=>updCatPrecio("gasto",idx,e.target.value)}
+                style={{width:80,border:"1.5px solid #d0e0d0",borderRadius:6,padding:"3px 6px",fontSize:12,textAlign:"right"}}/>
+              <span style={{fontSize:11,color:G.soft}}>€</span>
+              <Btn small color="danger" onClick={()=>delCat("gasto",cat)}>✕</Btn>
+            </div>;
+          })}
+        </Card>
+      </div>
+    </div>}
+
+    {/* ══ MODAL INGRESO ══════════════════════════════════════════════ */}
+    {modalI&&<Modal title={modalI==="new"?"Nuevo ingreso":"Editar ingreso"} onClose={()=>setModalI(null)}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Fecha *"><Input type="date" value={fI.fecha||""} onChange={v=>setFI({...fI,fecha:v})}/></Field>
+        <Field label="Categoría *">
+          <Sel value={fI.categoria||""} 
+            onChange={v=>{
+              const cat=catI.find(c=>(c.nombre||c)===v);
+              setFI(prev=>({...prev,categoria:v,importeBase:cat&&cat.precio?String(cat.precio):prev.importeBase}));
+            }}
+            options={catI.map(c=>({value:c.nombre||c,label:(c.nombre||c)+(c.precio?" · "+c.precio+"€":"")}))}/>
+        </Field>
+      </div>
+      <Field label="Concepto / Descripción">
+        <Input value={fI.concepto||""} onChange={v=>setFI({...fI,concepto:v})} placeholder="Ej: Bono 10 clases enero..."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Alumno (opcional)">
+          <Sel value={fI.alumnoId||""} onChange={v=>setFI({...fI,alumnoId:v})}
+            options={[{value:"",label:"— Sin alumno —"},...alumnos.map(a=>({value:a.id,label:a.nombre}))]}/>
+        </Field>
+        <Field label="Pagador (empresa/club)">
+          <Input value={fI.pagador||""} onChange={v=>setFI({...fI,pagador:v})} placeholder="Ej: Golf Ciudad Real C.D."/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Base imponible (€) *">
+          <Input type="number" value={fI.importeBase||""} onChange={v=>setFI({...fI,importeBase:v})} placeholder="0.00"/>
+        </Field>
+        <Field label="IVA (%)">
+          <Sel value={String(fI.ivaPct??IVA_DEFAULT)} onChange={v=>setFI({...fI,ivaPct:Number(v)})}
+            options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
+        </Field>
+        <Field label="Retención IRPF (%)">
+          <Sel value={String(fI.retencionPct??0)} onChange={v=>setFI({...fI,retencionPct:Number(v)})}
+            options={["0","7","15","19"].map(v=>({value:v,label:v+"%"}))}/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Método de cobro">
+          <Sel value={fI.metodo||"Transferencia"} onChange={v=>setFI({...fI,metodo:v})}
+            options={["Efectivo","Tarjeta","Transferencia","Bizum","Domiciliación"].map(v=>({value:v,label:v}))}/>
+        </Field>
+        <Field label="Nº Factura (opcional)">
+          <Input value={fI.factura||""} onChange={v=>setFI({...fI,factura:v})} placeholder="Ej: 2025-001"/>
+        </Field>
+      </div>
+      {/* Preview cálculo */}
+      {fI.importeBase&&<div style={{background:"#f0f7f0",borderRadius:8,padding:"10px 14px",fontSize:13,marginTop:4}}>
+        <b>Vista previa:</b> Base {fmt(fI.importeBase)} + IVA {fmt(Number(fI.importeBase||0)*Number(fI.ivaPct??IVA_DEFAULT)/100)} − Ret. {fmt(Number(fI.importeBase||0)*Number(fI.retencionPct??0)/100)} = <b style={{color:G.fairway}}>{fmt(Number(fI.importeBase||0)+Number(fI.importeBase||0)*Number(fI.ivaPct??IVA_DEFAULT)/100-Number(fI.importeBase||0)*Number(fI.retencionPct??0)/100)}</b>
+      </div>}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
+        <Btn color="secondary" onClick={()=>setModalI(null)}>Cancelar</Btn>
+        <Btn onClick={saveIngreso}>Guardar</Btn>
+      </div>
+    </Modal>}
+
+    {/* ══ MODAL GASTO ════════════════════════════════════════════════ */}
+    {modalG&&<Modal title={modalG==="new"?"Nuevo gasto":"Editar gasto"} onClose={()=>setModalG(null)}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Fecha *"><Input type="date" value={fG.fecha||""} onChange={v=>setFG({...fG,fecha:v})}/></Field>
+        <Field label="Categoría *">
+          <Sel value={fG.categoria||""} onChange={v=>setFG({...fG,categoria:v})}
+            options={catG.map(c=>({value:c.nombre||c,label:(c.nombre||c)+(c.precio?" · "+c.precio+"€":"")}))}/>
+        </Field>
+      </div>
+      <Field label="Concepto / Descripción">
+        <Input value={fG.concepto||""} onChange={v=>setFG({...fG,concepto:v})} placeholder="Ej: Pelotas práctica enero..."/>
+      </Field>
+      <Field label="Proveedor">
+        <Input value={fG.proveedor||""} onChange={v=>setFG({...fG,proveedor:v})} placeholder="Ej: ProGolf S.L."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Base imponible (€) *">
+          <Input type="number" value={fG.importeBase||""} onChange={v=>setFG({...fG,importeBase:v})} placeholder="0.00"/>
+        </Field>
+        <Field label="IVA (%)">
+          <Sel value={String(fG.ivaPct??21)} onChange={v=>setFG({...fG,ivaPct:Number(v)})}
+            options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Método de pago">
+          <Sel value={fG.metodo||"Tarjeta"} onChange={v=>setFG({...fG,metodo:v})}
+            options={["Efectivo","Tarjeta","Transferencia","Domiciliación"].map(v=>({value:v,label:v}))}/>
+        </Field>
+        <Field label="¿Deducible?">
+          <Sel value={fG.deducible||"si"} onChange={v=>setFG({...fG,deducible:v})}
+            options={[{value:"si",label:"Sí, deducible"},{value:"no",label:"No deducible"}]}/>
+        </Field>
+      </div>
+      <Field label="Nº Factura / Ticket">
+        <Input value={fG.factura||""} onChange={v=>setFG({...fG,factura:v})} placeholder="Ej: FAC-2025-001"/>
+      </Field>
+      {fG.importeBase&&<div style={{background:"#fdf0f0",borderRadius:8,padding:"10px 14px",fontSize:13,marginTop:4}}>
+        <b>Total con IVA:</b> <b style={{color:G.danger}}>{fmt(Number(fG.importeBase||0)+Number(fG.importeBase||0)*Number(fG.ivaPct??21)/100)}</b>
+      </div>}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
+        <Btn color="secondary" onClick={()=>setModalG(null)}>Cancelar</Btn>
+        <Btn color="danger" onClick={saveGasto}>Guardar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+
+function PinAlumnoRow({alumno, data, setData}){
+  const [np,setNp]=useState(alumno.pin||"");
+  const [ok,setOk]=useState(false);
+  function guardar(){
+    if(np.length<6) return;
+    setData({...data,alumnos:(data.alumnos||[]).map(x=>x.id===alumno.id?{...x,pin:np}:x)});
+    setOk(true); setTimeout(()=>setOk(false),2000);
+  }
+  return <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+    <div style={{minWidth:150,fontWeight:600,color:G.ink,fontSize:14}}>{alumno.nombre}</div>
+    <div style={{flex:1,minWidth:120}}>
+      <Input type="password" value={np} onChange={v=>setNp(v.slice(0,20))} placeholder="Nueva clave" maxLength={20}/>
+    </div>
+    <Btn small onClick={guardar} disabled={np.length<6}>Guardar</Btn>
+    {ok&&<span style={{color:G.grass,fontSize:12}}>✔</span>}
+  </div>;
+}
+function ModAjustes({data,setData,onLogout}){
+  const [pin,setPin]=useState(data.adminPin||DEFAULT_ADMIN_PIN);
+  const [saved,setSaved]=useState(false);
+  const [importMsg,setImportMsg]=useState("");
+  const [tabAj,setTabAj]=useState("pin");
+  const [labelSearch,setLabelSearch]=useState("");
+  const [labelsSaved,setLabelsSaved]=useState(false);
+  const lbl=useLabels(data);
+
+  // Labels editor state — local edits before saving
+  const [labelsEdit,setLabelsEdit]=useState(data.labels||{});
+
+  const [pinAdmin,setPinAdmin]=useState(data.adminPin||DEFAULT_ADMIN_PIN);
+  const [pinSuper,setPinSuper]=useState(data.superAdminPin||"0000");
+  const [savedAdmin,setSavedAdmin]=useState(false);
+  const [savedSuper,setSavedSuper]=useState(false);
+  function savePin(){setData({...data,adminPin:pinAdmin});setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  function saveSuperPin(){setData({...data,superAdminPin:pinSuper});setSavedSuper(true);setTimeout(()=>setSavedSuper(false),2000);}
+
+  function exportarDatos(){
+    const json=JSON.stringify(data,null,2);
+    const blob=new Blob([json],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    const fecha=new Date().toISOString().slice(0,10);
+    a.href=url; a.download=`golf-academia-backup-${fecha}.json`;
+    a.click(); URL.revokeObjectURL(url);
+  }
+
+  function importarDatos(e){
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const parsed=JSON.parse(ev.target.result);
+        if(!parsed.alumnos) throw new Error("no válido");
+        setData(parsed); setLabelsEdit(parsed.labels||{});
+        setImportMsg("ok");
+      }catch(err){
+        setImportMsg("error");
+      }
+      setTimeout(()=>setImportMsg(""),4000);
+    };
+    reader.readAsText(file);
+    e.target.value="";
+  }
+
+  function saveLabels(){
+    setData({...data,labels:labelsEdit});
+    setLabelsSaved(true);
+    setTimeout(()=>setLabelsSaved(false),2500);
+  }
+
+  function resetLabels(){
+    if(!confirm("¿Restaurar todos los nombres a los valores originales?")) return;
+    setLabelsEdit({});
+    setData({...data,labels:{}});
+  }
+
+  function updateLabel(key,val){
+    setLabelsEdit(prev=>({...prev,[key]:val}));
+  }
+
+  // Group labels by category for display
+  const LABEL_GROUPS = [
+    { titulo:"🏠 App general", keys:["app_nombre","app_subtitulo","app_profesor","app_alumno"] },
+    { titulo:"🗓️ Navegación", keys:["nav_calendario","nav_alumnos","nav_clases","nav_estadisticas","nav_analisis","nav_ejercicios","nav_mensajes","nav_tareas","nav_pagos","nav_ajustes"] },
+    { titulo:"👤 Ficha de alumno", keys:["campo_nombre","campo_edad","campo_nivel","campo_telefono","campo_email","campo_fechaAlta","campo_notas","campo_pin","campo_tutores"] },
+    { titulo:"📊 Estadísticas de juego", keys:["campo_golpes","campo_fairways","campo_gir","campo_putts","campo_bunkers","campo_handicap","campo_hoyos","campo_palo_ref","campo_distancia"] },
+    { titulo:"📅 Clases", keys:["campo_tipo_clase","campo_zona","campo_duracion","campo_contenido","campo_asistio"] },
+    { titulo:"💶 Pagos y bonos", keys:["campo_importe","campo_concepto","campo_metodo","campo_bonos","campo_fechaCompra","campo_plazas"] },
+    { titulo:"🎬 Vídeo análisis", keys:["campo_tipo_golpe","campo_palo","campo_videourl","campo_positivos","campo_mejorar","campo_tecnico","campo_tutores_msg","campo_valoracion"] },
+    { titulo:"📋 Tareas", keys:["campo_tarea_titulo","campo_prioridad","campo_estado","campo_asignado","campo_zona_trabajo","campo_recurrente","campo_fechaFin"] },
+    { titulo:"🐣 Grupos de edad", keys:["grupo_pollitos","grupo_pares","grupo_birdies","grupo_eagles","grupo_albatros"] },
+    { titulo:"📱 Portal del alumno", keys:["portal_inicio","portal_clases","portal_analisis","portal_stats","portal_ejercicios","portal_mensajes","portal_pin"] },
+  ];
+
+  const filteredGroups = labelSearch
+    ? LABEL_GROUPS.map(g=>({...g, keys:g.keys.filter(k=>{
+        const def=DEFAULT_LABELS[k]||""; const cur=labelsEdit[k]||"";
+        return def.toLowerCase().includes(labelSearch.toLowerCase()) || cur.toLowerCase().includes(labelSearch.toLowerCase()) || k.includes(labelSearch.toLowerCase());
+      })})).filter(g=>g.keys.length>0)
+    : LABEL_GROUPS;
+
+  const stats=[[(data.alumnos||[]).length,"Alumnos","👤"],[(data.clases||[]).length,"Clases","📅"],[(data.analisis||[]).length,"Análisis","🎬"],[(data.pagos||[]).length,"Pagos","💶"]];
+  const totalModified=Object.keys(labelsEdit).filter(k=>labelsEdit[k]!==DEFAULT_LABELS[k]&&labelsEdit[k]!=="").length;
+
+  const AJ_TABS=[{id:"pin",label:"🔐 Acceso"},{id:"portal",label:"👁️ Portal alumno"},{id:"campos",label:"✏️ Nombres de campos"},{id:"datos",label:"🗑 Datos"},{id:"backup",label:"💾 Copia de seguridad"}];
+
+  return <div style={{maxWidth:680}}>
+    {/* Sub-tabs de ajustes */}
+    <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+      {AJ_TABS.map(t=><button key={t.id} onClick={()=>setTabAj(t.id)}
+        style={{background:tabAj===t.id?G.fairway:G.mist,color:tabAj===t.id?G.white:G.fairway,border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+        {t.label}
+      </button>)}
+    </div>
+
+    {/* ── ACCESO / PINs ── */}
+    {tabAj==="pin"&&<div>
+      <Card style={{marginBottom:16}}>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 Clave del Profesor</h3>
+        <Field label="Clave nueva (mínimo 6 caracteres, letras/números/símbolos)">
+          <Input type="password" value={pinAdmin} onChange={v=>setPinAdmin(v.slice(0,20))} placeholder="Ej: Golf2026!" maxLength={20}/>
+        </Field>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <Btn onClick={savePin} disabled={pinAdmin.length<6}>Guardar clave</Btn>
+          {saved&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
+        </div>
+      </Card>
+
+      <Card style={{marginBottom:16,borderLeft:"4px solid #2c3e50"}}>
+        <h3 style={{margin:"0 0 8px",color:"#2c3e50"}}>👑 PIN de Super-Administrador</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
+          El super-admin tiene acceso completo a toda la academia, incluyendo gestión de profesores y vista global de datos.
+        </p>
+        <Field label="PIN super-admin (4 dígitos)">
+          <Input value={pinSuper} onChange={v=>setPinSuper(v.replace(/\D/g,"").slice(0,4))} placeholder="0000"/>
+        </Field>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <Btn onClick={saveSuperPin} disabled={pinSuper.length<4} style={{background:"#2c3e50"}}>Guardar PIN</Btn>
+          {savedSuper&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:8,background:"#f5f5f5",borderRadius:6,padding:"6px 10px"}}>
+          💡 PIN por defecto: <b>0000</b>. Cámbialo por seguridad.
+        </div>
+      </Card>
+
+      <Card>
+        <h3 style={{margin:"0 0 12px",color:G.fairway}}>👤 PIN de Alumnos</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>Cambia el PIN de acceso de cualquier alumno.</p>
+        {(data.alumnos||[]).filter(a=>a.activo).map(a=>(
+          <PinAlumnoRow key={a.id} alumno={a} data={data} setData={setData}/>
+        ))}
+      </Card>
+    </div>}
+
+    {/* ── PERMISOS PORTAL ALUMNO ── */}
+    {tabAj==="portal"&&<div>
+      <Card style={{marginBottom:16}}>
+        <h3 style={{margin:"0 0 6px",color:G.fairway}}>👁️ Visibilidad del portal del alumno</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 16px",lineHeight:1.5}}>
+          Elige qué pestañas pueden ver tus alumnos cuando acceden a su portal.
+          Los cambios se aplican a <b>todos los alumnos</b> inmediatamente.
+        </p>
+        <div style={{display:"grid",gap:10}}>
+          {[
+            {id:"inicio",     label:"🏠 Inicio",           desc:"Pantalla de bienvenida con resumen de próximas clases"},
+            {id:"calendario", label:"🗓️ Calendario",        desc:"Calendario de la academia y descarga de PDF"},
+            {id:"reservas",   label:"📅 Clases",            desc:"Historial de clases y reservas del alumno"},
+            {id:"analisis",   label:"🎬 Vídeo Análisis",    desc:"Vídeos de análisis de swing compartidos por el profesor"},
+            {id:"stats",      label:"📊 Estadísticas",      desc:"Rondas, hándicap y evolución del juego"},
+            {id:"informes",   label:"📋 Informes",          desc:"Informes de seguimiento generados por el profesor"},
+            {id:"ejercicios", label:"🏋️ Ejercicios",        desc:"Ejercicios y tests asignados por el profesor"},
+            {id:"mensajes",   label:"✉️ Mensajes",          desc:"Sistema de mensajería con el profesor"},
+            {id:"miperfil",   label:"🔐 Mi PIN",            desc:"Cambio de PIN de acceso del alumno"},
+          ].map(tab=>{
+            const permisos = data.permisosPortal || {};
+            const visible = permisos[tab.id] !== false; // true por defecto
+            return <div key={tab.id} onClick={()=>{
+                const nuevos = {...(data.permisosPortal||{}), [tab.id]: !visible};
+                setData({...data, permisosPortal: nuevos});
+              }}
+              style={{display:"flex",alignItems:"center",gap:14,
+                background: visible ? "#f0f7f0" : "#f9f9f9",
+                border: `2px solid ${visible ? G.grass : "#ddd"}`,
+                borderRadius:12, padding:"12px 16px", cursor:"pointer",
+                transition:"all .15s"}}>
+              <div style={{width:24,height:24,borderRadius:6,flexShrink:0,
+                background: visible ? G.grass : "#ddd",
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <span style={{color:"#fff",fontSize:14,fontWeight:800}}>{visible ? "✓" : "✗"}</span>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,fontSize:14,color: visible ? G.ink : G.soft}}>{tab.label}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>{tab.desc}</div>
+              </div>
+              <div style={{fontSize:12,fontWeight:700,color: visible ? G.grass : G.soft}}>
+                {visible ? "VISIBLE" : "OCULTO"}
+              </div>
+            </div>;
+          })}
+        </div>
+        <div style={{marginTop:16,background:"#fff3cd",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#856404"}}>
+          ⚠️ <b>Inicio</b> y <b>Mi PIN</b> se recomiendan siempre visibles. El alumno necesita al menos una pestaña activa para navegar.
+        </div>
+      </Card>
+    </div>}
+
+    {/* ── EDITOR DE NOMBRES DE CAMPOS ── */}
+    {tabAj==="campos"&&<div>
+      <Card style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:12}}>
+          <div>
+            <h3 style={{margin:"0 0 4px",color:G.fairway}}>✏️ Nombres de campos</h3>
+            <div style={{fontSize:13,color:G.soft}}>
+              Personaliza cualquier etiqueta de la app. {totalModified>0&&<span style={{color:G.orange,fontWeight:600}}>{totalModified} campo{totalModified!==1?"s":""} modificado{totalModified!==1?"s":""}.</span>}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn small color="secondary" onClick={resetLabels}>↩ Restaurar todo</Btn>
+            <Btn small color="primary" onClick={saveLabels}>💾 Guardar cambios</Btn>
+          </div>
+        </div>
+        {labelsSaved&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>✅ Nombres guardados correctamente.</div>}
+        <input value={labelSearch} onChange={e=>setLabelSearch(e.target.value)}
+          placeholder="🔍 Buscar campo…"
+          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 12px",fontSize:14,fontFamily:"inherit",boxSizing:"border-box",marginBottom:8}}/>
+      </Card>
+
+      {filteredGroups.map(group=>(
+        <Card key={group.titulo} style={{marginBottom:12}}>
+          <h4 style={{margin:"0 0 12px",color:G.fairway,fontSize:14}}>{group.titulo}</h4>
+          <div style={{display:"grid",gap:8}}>
+            {group.keys.map(key=>{
+              const defVal=DEFAULT_LABELS[key]||key;
+              const curVal=labelsEdit[key]!==undefined?labelsEdit[key]:defVal;
+              const isModified=labelsEdit[key]!==undefined&&labelsEdit[key]!==defVal;
+              return <div key={key} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"center"}}>
+                <div style={{fontSize:12,color:G.soft,fontWeight:isModified?700:"normal"}}>{defVal}</div>
+                <input value={curVal} onChange={e=>updateLabel(key,e.target.value)}
+                  style={{border:`1.5px solid ${isModified?G.orange:"#d0e0d0"}`,borderRadius:8,padding:"6px 10px",fontSize:13,fontFamily:"inherit",
+                    background:isModified?"#fff8f0":"white",outline:"none"}}/>
+                {isModified
+                  ?<button onClick={()=>updateLabel(key,defVal)} title="Restaurar original"
+                    style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:G.orange}}>↩</button>
+                  :<div style={{width:24}}/>
+                }
+              </div>;
+            })}
+          </div>
+        </Card>
+      ))}
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:4}}>
+        <Btn color="secondary" onClick={resetLabels}>↩ Restaurar todo</Btn>
+        <Btn onClick={saveLabels}>💾 Guardar cambios</Btn>
+      </div>
+    </div>}
+
+    {/* ── GESTIÓN DE DATOS ── */}
+    {tabAj==="datos"&&<div>
+      <Card style={{marginBottom:14,borderLeft:"4px solid #c0392b"}}>
+        <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>🗑 Borrar datos por categoría</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>Borra todos los registros de una categoría. <b>Esta acción no se puede deshacer.</b> Los alumnos no se borran.</p>
+        <div style={{display:"grid",gap:10}}>
+          {[
+            ["📅 Clases","clases","Eliminar todas las clases programadas"],
+            ["📊 Estadísticas","estadisticas","Eliminar todos los registros de rondas"],
+            ["🎬 Vídeo Análisis","analisis","Eliminar todos los análisis de vídeo"],
+            ["🎫 Bonos","bonos","Eliminar todos los bonos de clases"],
+            ["💶 Pagos","pagos","Eliminar todos los registros de pagos"],
+            ["✉️ Mensajes","mensajes","Eliminar todos los mensajes"],
+            ["📋 Tareas","tareas","Eliminar todas las tareas programadas"],
+            ["📅 Reservas","reservas","Eliminar todas las reservas del calendario"],
+            ["📌 Asignaciones","asignaciones","Eliminar todos los ejercicios asignados"],
+            ["🧩 Test Results","resultadosTest","Eliminar todos los resultados de tests"],
+          ].map(([label,key,desc])=>(
+            <div key={key} style={{display:"flex",alignItems:"center",gap:12,background:"#fdecea",borderRadius:10,padding:"10px 14px"}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{label}</div>
+                <div style={{fontSize:12,color:G.soft}}>{desc} · {(data[key]||[]).length} registros</div>
+              </div>
+              <Btn small color="danger" onClick={()=>{if(golfConfirm("¿Borrar todos los registros de "+label+"?\n\nNo se puede deshacer."))setData({...data,[key]:[]});}}>Borrar todo</Btn>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card style={{borderLeft:"4px solid #c0392b"}}>
+        <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>⚠️ Borrar TODOS los datos</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>Borra absolutamente todo: alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas. La app vuelve al estado inicial.</p>
+        <Btn color="danger" onClick={()=>{if(golfConfirm("¿BORRAR TODOS LOS DATOS DE LA APLICACIÓN?\n\nEsta acción eliminará alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas.\n\nEsta acción NO se puede deshacer.\n\nEscribe OK para confirmar:"))if(window.prompt("Escribe OK para confirmar el borrado total:")?.trim().toUpperCase()==="OK"){setData({...data,alumnos:[],clases:[],estadisticas:[],analisis:[],bonos:[],pagos:[],mensajes:[],tareas:[],reservas:[],asignaciones:[],resultadosTest:[],slots:[]});alert("✅ Todos los datos han sido eliminados.");}}}>🗑 BORRAR TODOS LOS DATOS</Btn>
+      </Card>
+    </div>}
+
+    {/* ── COPIA DE SEGURIDAD ── */}
+    {tabAj==="backup"&&<div>
+      <Card style={{marginBottom:16}}>
+        <h3 style={{margin:"0 0 12px",color:G.fairway}}>📊 Resumen de datos</h3>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {stats.map(([v,l,i])=>(
+            <div key={l} style={{background:G.mist,borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:20}}>{i}</span>
+              <div><div style={{fontWeight:800,color:G.fairway,fontSize:18}}>{v}</div><div style={{fontSize:12,color:G.soft}}>{l}</div></div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card style={{marginBottom:16}}>
+        <h3 style={{margin:"0 0 6px",color:G.fairway}}>💾 Copia de seguridad</h3>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
+          Los datos se guardan en este navegador. Exporta regularmente para no perder nada si cambias de dispositivo o limpias el caché.
+        </p>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>
+          <Btn color="sky" onClick={exportarDatos}>⬇ Exportar datos (JSON)</Btn>
+          <Btn color="primary" onClick={()=>exportarExcel(data)}>📊 Exportar a Excel</Btn>
+          <label style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"9px 18px",fontSize:14,fontWeight:600,cursor:"pointer",display:"inline-block"}}>
+            ⬆ Importar datos
+            <input type="file" accept=".json" onChange={importarDatos} style={{display:"none"}}/>
+          </label>
+        </div>
+        {importMsg==="ok"&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13}}>✅ Datos importados correctamente.</div>}
+        {importMsg==="error"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13}}>❌ Error: el archivo no es válido.</div>}
+        <div style={{fontSize:12,color:G.soft,marginTop:8}}>💡 Guarda el JSON en Google Drive o en tu móvil. Para restaurar, usa "Importar datos".</div>
+      </Card>
+
+      <Btn color="danger" onClick={onLogout}>Salir de la app</Btn>
+    </div>}
+  </div>;
+}
+
+function CambiarPinAlumno({data,setData,alumnoId}){
+  const [pinActual,setPinActual]=useState("");
+  const [pinNuevo,setPinNuevo]=useState("");
+  const [pinConfirm,setPinConfirm]=useState("");
+  const [msg,setMsg]=useState("");
+  const alumno=(data.alumnos||[]).find(a=>a.id===alumnoId);
+
+  function guardar(){
+    if(!alumno) return;
+    if(pinActual!==alumno.pin){setMsg("error_actual");return;}
+    if(pinNuevo.length<4){setMsg("error_corto");return;}
+    if(pinNuevo!==pinConfirm){setMsg("error_confirm");return;}
+    setData({...data,alumnos:(data.alumnos||[]).map(a=>a.id===alumnoId?{...a,pin:pinNuevo}:a)});
+    setMsg("ok");
+    setPinActual(""); setPinNuevo(""); setPinConfirm("");
+    setTimeout(()=>setMsg(""),3000);
+  }
+
+  const PinDots=({val})=><div style={{display:"flex",gap:8,margin:"6px 0"}}>
+    {[0,1,2,3,4,5].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<val.length?G.fairway:"#d0e0d0"}}/>)}
+  </div>;
+
+  return <div>
+    <Field label="PIN actual">
+      <Input type="password" value={pinActual} onChange={v=>setPinActual(v.replace(/\D/g,"").slice(0,6))} placeholder="Tu PIN actual"/>
+    </Field>
+    <Field label="PIN nuevo (mínimo 4 dígitos)">
+      <Input type="password" value={pinNuevo} onChange={v=>setPinNuevo(v.replace(/\D/g,"").slice(0,6))} placeholder="Nuevo PIN"/>
+      <PinDots val={pinNuevo}/>
+    </Field>
+    <Field label="Confirmar PIN nuevo">
+      <Input type="password" value={pinConfirm} onChange={v=>setPinConfirm(v.replace(/\D/g,"").slice(0,6))} placeholder="Repite el nuevo PIN"/>
+    </Field>
+    {msg==="error_actual"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN actual no es correcto.</div>}
+    {msg==="error_corto"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN nuevo debe tener al menos 4 dígitos.</div>}
+    {msg==="error_confirm"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Los PINs nuevos no coinciden.</div>}
+    {msg==="ok"&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>✅ PIN cambiado correctamente.</div>}
+    <Btn onClick={guardar} disabled={pinActual.length<4||pinNuevo.length<4||pinConfirm.length<4}>Cambiar PIN</Btn>
+  </div>;
+}
+
+// ── Vista simplificada del informe para el alumno ────────────────
+function InformePreviewAlumno({rpt, data}){
+  const [abierto, setAbierto] = useState(false);
+
+  function descargarPDF(){
+    const alumno = (data.alumnos||[]).find(a=>a.id===rpt.alumnoId);
+    generarPDFInforme(rpt, alumno?.nombre||"alumno");
+  }
+
+  return <div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <Btn small color="sky" onClick={()=>setAbierto(!abierto)}>{abierto?"▲ Cerrar":"👁 Ver informe"}</Btn>
+      <Btn small color="secondary" onClick={descargarPDF}>⬇️ Descargar PDF</Btn>
+    </div>
+    {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12,padding:16,background:G.mist,borderRadius:10,fontSize:13}}>
+      <div style={{fontWeight:800,fontSize:16,color:G.fairway,marginBottom:8}}>{rpt.titulo}</div>
+      {rpt.resumenTexto&&<div style={{marginBottom:10}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📝 Resumen</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.resumenTexto}</p>
+      </div>}
+      {rpt.objetivosLogrados&&<div style={{marginBottom:8}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>✅ Objetivos logrados</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
+      </div>}
+      {rpt.objetivosProximos&&<div style={{marginBottom:8}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>🎯 Próximos objetivos</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
+      </div>}
+      {rpt.planTrabajo&&<div style={{marginBottom:8}}>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📋 Plan de trabajo</div>
+        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
+      </div>}
+      <div style={{marginTop:12,borderTop:"1px solid #ccc",paddingTop:8,fontSize:12,color:G.soft}}>
+        {rpt.firmaTexto?.split("\n").map((l,i)=><div key={i}>{l}</div>)}
+      </div>
+    </div>}
+  </div>;
+}
+
+function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
+  const [tab,setTab]=useState("inicio");
+  const [modalSolicitud,setModalSolicitud]=useState(false);
+  const [formSolicitud,setFormSolicitud]=useState({fecha:"",hora:"10:00",tipo:"Individual",zona:"Campo de prácticas",notas:""});
+  const [solicitudEnviada,setSolicitudEnviada]=useState(false);
+  const alumno=data.alumnos.find(a=>a.id===alumnoId);
+  const analisis=(data.analisis||[]).filter(a=>a.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const estadisticas=(data.estadisticas||[]).filter(s=>s.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const bonos=(data.bonos||[]).filter(b=>b.alumnoId===alumnoId);
+  const slots=data.slots||[];
+  const reservas=data.reservas||[];
+
+  const misReservas=reservas.filter(r=>r.alumnoId===alumnoId&&r.estado!=="cancelada");
+  const slotsDisponibles=slots.filter(s=>{
+    if(s.fecha<today()) return false;
+    const res=reservas.filter(r=>r.slotId===s.id&&r.estado!=="cancelada");
+    const yaReservado=res.some(r=>r.alumnoId===alumnoId);
+    if(yaReservado) return false;
+    return res.length<Number(s.plazas||1);
+  }).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora));
+
+  function enviarSolicitudClase(){
+    if(!formSolicitud.fecha) return;
+    const solicitud = {
+      id: uid(),
+      alumnoId,
+      alumnoNombre: alumno?.nombre || "",
+      fecha: formSolicitud.fecha,
+      hora: formSolicitud.hora,
+      tipo: formSolicitud.tipo,
+      zona: formSolicitud.zona,
+      notas: formSolicitud.notas,
+      estado: "pendiente",
+      fechaSolicitud: today(),
+    };
+    const solicitudes = data.solicitudesClase || [];
+    setData({...data, solicitudesClase: [...solicitudes, solicitud]});
+    setSolicitudEnviada(true);
+    setModalSolicitud(false);
+    setTimeout(()=>setSolicitudEnviada(false), 4000);
+  }
+
+  function reservar(slotId){
+    const slot=slots.find(s=>s.id===slotId);
+    if(!slot) return;
+    if(!confirm(`¿Reservar clase el ${fmtDate(slot.fecha)} a las ${slot.hora}?`)) return;
+    const nueva={id:uid(),slotId,alumnoId,fechaReserva:today(),estado:"confirmada"};
+    setData({...data,reservas:[...reservas,nueva]});
+  }
+
+  function cancelarReserva(id){
+    if(!confirm("¿Cancelar esta reserva?")) return;
+    setData({...data,reservas:reservas.map(r=>r.id===id?{...r,estado:"cancelada"}:r)});
+  }
+
+  const bonoActivo=bonos.find(b=>b.usadas<Number(b.clases));
+  const stars=n=>"★".repeat(Number(n||0))+"☆".repeat(5-Number(n||0));
+
+  const misInformes = (data.informes||[]).filter(r=>r.alumnoId===alumnoId&&r.publicado).sort((a,b)=>(b.fechaCreacion||"").localeCompare(a.fechaCreacion||""));
+
+  const ATABS_ALL=[
+    {id:"inicio",label:"Inicio",icon:"🏠"},
+    {id:"calendario",label:"Calendario",icon:"🗓️"},
+    {id:"reservas",label:"Clases",icon:"📅"},
+    {id:"analisis",label:"Análisis",icon:"🎬"},
+    {id:"stats",label:"Estadísticas",icon:"📊"},
+    {id:"informes",label:"Informes",icon:"📋"},
+    {id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
+    {id:"mensajes",label:"Mensajes",icon:"✉️"},
+    {id:"miperfil",label:"Mi PIN",icon:"🔐"},
+  ];
+  const permisos = data.permisosPortal || {};
+  const ATABS = ATABS_ALL.filter(t => permisos[t.id] !== false);
+  // Si la pestaña activa queda oculta, ir a la primera visible
+  useEffect(()=>{
+    if(ATABS.length>0 && !ATABS.find(t=>t.id===tab)){
+      setTab(ATABS[0].id);
+    }
+  },[permisos]);
+  const ATABS_DUMMY=[{id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
+  ];
+
+  return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
+    {/* Header */}
+    <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,color:G.white,padding:"0 16px"}}>
+      <div style={{maxWidth:680,margin:"0 auto"}}>
+        <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:32,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:0.95}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:30,objectFit:"contain",marginLeft:4}}/>
+            <div style={{marginLeft:4}}>
+              <div style={{fontWeight:800,fontSize:15}}>{tutorNombre?"Portal Familiar":"Mi Portal de Golf"}</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.65)"}}>
+                {tutorNombre?<span>👨‍👩‍👦 {tutorNombre} · {alumno?.nombre}</span>:alumno?.nombre}
+              </div>
+            </div>
+          </div>
+          <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
+        </div>
+        <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
+          {ATABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {t.icon} {t.label}
+          </button>)}
+        </div>
+      </div>
+    </div>
+
+    <div style={{maxWidth:680,margin:"0 auto",padding:"20px 14px 60px"}}>
+
+      {/* INICIO */}
+      {tab==="inicio"&&<div>
+        <div style={{marginBottom:16}}>
+          <h2 style={{margin:"0 0 4px",color:G.fairway}}>Hola, {tutorNombre||alumno?.nombre?.split(" ")[0]} 👋</h2>
+          <div style={{color:G.soft,fontSize:14}}>Nivel: {alumno?.nivel}</div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:20}}>
+          {[
+            [misReservas.length,"Clases reservadas",G.sky,"📅"],
+            [analisis.length,"Análisis de vídeo",G.purple,"🎬"],
+            [estadisticas.length,"Rondas registradas",G.fairway,"📊"],
+          ].map(([v,l,c,i])=>(
+            <Card key={l} style={{textAlign:"center"}}>
+              <div style={{fontSize:24,marginBottom:4}}>{i}</div>
+              <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+              <div style={{fontSize:11,color:G.soft,marginTop:1}}>{l}</div>
+            </Card>
+          ))}
+        </div>
+
+        {/* Bono activo */}
+        {bonoActivo&&<Card style={{marginBottom:14,borderLeft:`4px solid ${G.flag}`}}>
+          <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>🎫 Tu bono activo</div>
+          <div style={{fontSize:13,color:G.soft,marginBottom:8}}>Bono {bonoActivo.tipo} · {bonoActivo.clases} clases</div>
+          <div style={{background:"#e8e8e8",borderRadius:6,height:10,overflow:"hidden"}}>
+            <div style={{width:`${(bonoActivo.usadas/Number(bonoActivo.clases))*100}%`,height:"100%",background:G.grass}}/>
+          </div>
+          <div style={{fontSize:12,color:G.soft,marginTop:4}}>{Number(bonoActivo.clases)-bonoActivo.usadas} clases restantes de {bonoActivo.clases}</div>
+        </Card>}
+
+        {/* Banner huecos disponibles */}
+        {slotsDisponibles.length>0&&<div
+          onClick={()=>setTab("reservas")}
+          style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:14,display:"flex",gap:12,alignItems:"center",cursor:"pointer"}}>
+          <div style={{fontSize:26}}>🔔</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:14}}>¡{slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
+            <div style={{fontSize:12,opacity:.85,marginTop:2}}>Tu profesor ha abierto nuevos huecos. Pulsa para reservar.</div>
+          </div>
+          <div style={{fontSize:20}}>→</div>
+        </div>}
+
+        {/* Próxima clase */}
+        {misReservas.length>0&&(()=>{
+          const r=misReservas.map(r=>({...r,slot:slots.find(s=>s.id===r.slotId)})).filter(r=>r.slot&&r.slot.fecha>=today()).sort((a,b)=>a.slot.fecha.localeCompare(b.slot.fecha))[0];
+          if(!r) return null;
+          return <Card style={{borderLeft:`4px solid ${G.grass}`}}>
+            <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📅 Tu próxima clase</div>
+            <div style={{fontSize:16,fontWeight:800,color:G.fairway}}>{fmtDate(r.slot.fecha)} — {r.slot.hora}</div>
+            <div style={{fontSize:13,color:G.soft,marginTop:4}}>{r.slot.tipo} · {r.slot.zona} · {r.slot.duracion}min</div>
+          </Card>;
+        })()}
+      </div>}
+
+      {/* RESERVAS */}
+      {/* CALENDARIO CON PDF */}
+      {tab==="calendario"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🗓️ Calendario de la Academia</h3>
+        <PanelPdfCalendario esProfesor={false}/>
+      </div>}
+
+      {/* MENSAJERÍA ALUMNO */}
+      {tab==="mensajes"&&<ModMensajeriaAlumno data={data} setData={setData} alumnoId={alumnoId}/>}
+
+      {/* INFORMES DEL ALUMNO */}
+      {tab==="informes"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>📋 Mis informes</h3>
+        {misInformes.length===0
+          ?<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:12}}>
+            <div style={{fontSize:28,marginBottom:8}}>📋</div>
+            <div>Todavía no tienes informes disponibles.</div>
+          </div>
+          :<div style={{display:"grid",gap:12}}>
+            {misInformes.map(r=>(
+              <Card key={r.id} style={{borderLeft:`4px solid ${G.purple}`}}>
+                <div style={{fontWeight:800,fontSize:15,color:G.ink,marginBottom:4}}>{r.titulo}</div>
+                <div style={{fontSize:13,color:G.soft,marginBottom:10}}>
+                  Generado: {r.fechaCreacion}
+                  {r.fechaDesde&&r.fechaHasta&&` · Período: ${r.fechaDesde} → ${r.fechaHasta}`}
+                </div>
+                <InformePreviewAlumno rpt={r} data={data}/>
+              </Card>
+            ))}
+          </div>
+        }
+      </div>}
+
+      {/* CAMBIAR PIN ALUMNO */}
+      {tab==="miperfil"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 Cambiar mi PIN</h3>
+        <Card style={{maxWidth:400}}>
+          <CambiarPinAlumno data={data} setData={setData} alumnoId={alumnoId}/>
+        </Card>
+      </div>}
+
+      {tab==="reservas"&&<div>
+        {slotsDisponibles.length>0&&<div style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
+          <div style={{fontSize:24}}>🔔</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,fontSize:14}}>¡Tienes {slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
+            <div style={{fontSize:12,opacity:.85,marginTop:2}}>Tu profesor ha abierto nuevos huecos. Reserva tu plaza.</div>
+          </div>
+          <div style={{background:"rgba(255,255,255,.2)",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700}}>↓ Ver abajo</div>
+        </div>}
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>📅 Mis clases reservadas</h3>
+        {misReservas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10,marginBottom:20}}>Sin clases reservadas.</div>}
+        {misReservas.map(r=>{
+          const slot=slots.find(s=>s.id===r.slotId);
+          if(!slot) return null;
+          const pasada=slot.fecha<today();
+          return <Card key={r.id} style={{marginBottom:10,opacity:pasada?.7:1}}>
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{background:pasada?"#f0f0f0":G.mist,borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
+                <div style={{fontSize:11,color:G.soft}}>{slot.fecha.slice(5)}</div>
+                <div style={{fontSize:15,fontWeight:800,color:pasada?G.soft:G.fairway}}>{slot.hora}</div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:G.ink}}>{slot.tipo}</div>
+                <div style={{fontSize:12,color:G.soft}}>{slot.zona} · {slot.duracion}min</div>
+                {slot.notas&&<div style={{fontSize:12,color:"#555",marginTop:3}}>{slot.notas}</div>}
+              </div>
+              {!pasada&&<Btn small color="danger" onClick={()=>cancelarReserva(r.id)}>Cancelar</Btn>}
+              {pasada&&<Badge color="gray">Pasada</Badge>}
+            </div>
+          </Card>;
+        })}
+
+        <Divider label="HUECOS DISPONIBLES"/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <h3 style={{margin:0,color:G.fairway}}>Reservar nueva clase</h3>
+          <Btn small color="primary" onClick={()=>setModalSolicitud(true)}>+ Solicitar clase</Btn>
+        </div>
+        {solicitudEnviada&&<div style={{background:"#e8f5eb",border:"1px solid "+G.grass,borderRadius:10,padding:"10px 14px",marginBottom:12,color:G.fairway,fontWeight:600,fontSize:13}}>
+          ✅ Solicitud enviada. Tu profesor la revisará pronto.
+        </div>}
+        {slotsDisponibles.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>No hay huecos disponibles ahora mismo.<br/><span style={{fontSize:12}}>Usa el botón "Solicitar clase" para pedir una cita.</span></div>}
+        {slotsDisponibles.slice(0,12).map(s=>{
+          const res=reservas.filter(r=>r.slotId===s.id&&r.estado!=="cancelada");
+          const libre=Number(s.plazas||1)-res.length;
+          return <Card key={s.id} style={{marginBottom:10,borderLeft:`3px solid ${G.grass}`}}>
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
+              <div style={{background:G.mist,borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
+                <div style={{fontSize:11,color:G.soft}}>{fmtDate(s.fecha)}</div>
+                <div style={{fontSize:15,fontWeight:800,color:G.fairway}}>{s.hora}</div>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:G.ink}}>{s.tipo} · {s.zona}</div>
+                <div style={{fontSize:12,color:G.soft}}>{s.duracion}min · {libre} plaza{libre!==1?"s":""} libre{libre!==1?"s":""}</div>
+                {s.notas&&<div style={{fontSize:12,color:G.fairway,marginTop:3}}>ℹ️ {s.notas}</div>}
+              </div>
+              <Btn small color="primary" onClick={()=>reservar(s.id)}>Reservar</Btn>
+            </div>
+          </Card>;
+        })}
+      </div>}
+
+      {/* MODAL SOLICITAR CLASE */}
+      {modalSolicitud&&<Modal title="Solicitar clase" onClose={()=>setModalSolicitud(false)}>
+        <div style={{fontSize:13,color:G.soft,marginBottom:12}}>Tu profesor recibirá tu solicitud y te confirmará la clase.</div>
+        <Field label="Fecha preferida *"><Input type="date" value={formSolicitud.fecha} onChange={v=>setFormSolicitud({...formSolicitud,fecha:v})}/></Field>
+        <Field label="Hora preferida"><Input type="time" value={formSolicitud.hora} onChange={v=>setFormSolicitud({...formSolicitud,hora:v})}/></Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Tipo"><Sel value={formSolicitud.tipo} onChange={v=>setFormSolicitud({...formSolicitud,tipo:v})} options={TIPOS_CLASE.map(t=>({value:t.id,label:t.label}))}/></Field>
+          <Field label="Zona"><Sel value={formSolicitud.zona} onChange={v=>setFormSolicitud({...formSolicitud,zona:v})} options={ZONAS.map(z=>({value:z,label:z}))}/></Field>
+        </div>
+        <Field label="Notas (opcional)"><Textarea value={formSolicitud.notas} onChange={v=>setFormSolicitud({...formSolicitud,notas:v})} placeholder="¿Qué quieres trabajar?"/></Field>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+          <Btn color="secondary" onClick={()=>setModalSolicitud(false)}>Cancelar</Btn>
+          <Btn onClick={enviarSolicitudClase} disabled={!formSolicitud.fecha}>Enviar solicitud</Btn>
+        </div>
+      </Modal>}
+
+      {/* ANÁLISIS */}
+      {tab==="analisis"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🎬 Mis análisis de vídeo</h3>
+        {analisis.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Tu profesor aún no ha subido análisis de vídeo.</div>}
+        {analisis.map(a=>(
+          <Card key={a.id} style={{marginBottom:12}}>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:10}}>
+              <div style={{width:52,height:40,borderRadius:8,background:a.videoUrl?"#1a1a2e":G.mist,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
+                {a.videoUrl?<a href={a.videoUrl} target="_blank" rel="noreferrer" style={{color:G.white,textDecoration:"none"}}>▶</a>:"🎬"}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                  <Badge color="purple">{a.tipo}</Badge>
+                  <Badge color="gray">{a.palo}</Badge>
+                </div>
+                <div style={{fontSize:12,color:G.soft,marginTop:3}}>📅 {a.fecha} · <span style={{color:G.flag}}>{stars(a.valoracion)}</span></div>
+              </div>
+            </div>
+            {(a.aspectosBuenos||[]).length>0&&<div style={{background:G.mist,borderRadius:8,padding:"8px 12px",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:G.grass,marginBottom:4}}>✔ Puntos positivos</div>
+              <div style={{fontSize:13}}>{(a.aspectosBuenos||[]).join(" · ")}</div>
+            </div>}
+            {(a.aspectosMejorar||[]).length>0&&<div style={{background:"#fffbf0",borderRadius:8,padding:"8px 12px",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:G.flag,marginBottom:4}}>▲ A trabajar</div>
+              <div style={{fontSize:13}}>{(a.aspectosMejorar||[]).join(" · ")}</div>
+            </div>}
+            {a.comentarioTecnico&&<div style={{marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:G.fairway,marginBottom:4}}>📋 Informe del profesor</div>
+              <div style={{fontSize:13,lineHeight:1.6,color:G.ink,whiteSpace:"pre-wrap",background:"#f5f9f5",borderRadius:8,padding:"10px 12px"}}>{a.comentarioTecnico}</div>
+            </div>}
+            {a.comentarioTutor&&<div>
+              <div style={{fontSize:11,fontWeight:700,color:G.purple,marginBottom:4}}>👨‍👩‍👧 Mensaje para padres/tutores</div>
+              <div style={{fontSize:13,lineHeight:1.6,color:G.ink,whiteSpace:"pre-wrap",background:G.lavender,borderRadius:8,padding:"10px 12px"}}>{a.comentarioTutor}</div>
+            </div>}
+            {a.videoUrl&&<div style={{marginTop:10}}>
+              <a href={a.videoUrl} target="_blank" rel="noreferrer" style={{background:G.purple,color:G.white,borderRadius:8,padding:"7px 14px",textDecoration:"none",fontSize:13,fontWeight:600,display:"inline-block"}}>▶ Ver vídeo</a>
+            </div>}
+          </Card>
+        ))}
+      </div>}
+
+      {/* EJERCICIOS ALUMNO */}
+      {tab==="ejercicios"&&<ModEjerciciosAlumno data={data} setData={setData} alumnoId={alumnoId}/>}
+
+      {/* STATS */}
+      {tab==="stats"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>📊 Mis estadísticas</h3>
+        {estadisticas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Sin rondas registradas todavía.</div>}
+        {estadisticas.map(s=>(
+          <Card key={s.id} style={{marginBottom:10}}>
+            <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {s.fecha} · {s.hoyos} hoyos</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
+              {[["Golpes",s.golpes,G.fairway],["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.sky],["Putts",s.putts,G.flag],["Hcp",s.handicap,G.danger]].map(([k,v,c])=>(
+                <div key={k} style={{textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div><div style={{fontSize:11,color:G.soft}}>{k}</div></div>
+              ))}
+            </div>
+            {s.palo&&s.distancia&&<div style={{fontSize:12,color:G.soft,marginTop:6}}>🏌️ {s.palo}: {s.distancia}m</div>}
+            {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:4}}>{s.notas}</div>}
+          </Card>
+        ))}
+      </div>}
+    </div>
+  </div>;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// BIBLIOTECA DE EJERCICIOS
+// ═══════════════════════════════════════════════════════════════════
+
+const EJERCICIOS_BIBLIOTECA = [
+  // ── PUTT ──────────────────────────────────────────────────────────
+  { id:"ej001", categoria:"Putt", nivel:"Iniciación", nombre:"El Cuadrado de 1 Metro",
+    objetivo:"Desarrollar confianza y repetición en putts cortos.", duracion:"15 min",
+    material:"Putter, bola, 4 tees",
+    descripcion:"Coloca 4 tees formando un cuadrado de 1 metro alrededor del hoyo. Practica putts desde cada tee hasta embocar 3 bolas consecutivas desde cada posición antes de avanzar.",
+    variantes:["Ampliar a 1,5 m una vez dominado el metro","Hacerlo con los ojos cerrados para trabajar el tacto","Con guía de alineación en el suelo"],
+    kpis:["Nº de emboques consecutivos","Tiempo en completar el circuito"],
+    erroresComunes:["Mirar el hoyo antes de impactar","Acelerar en el golpe","Agarrar con tensión"],
+    tags:["precisión","confianza","rutina"] },
+
+  { id:"ej002", categoria:"Putt", nivel:"Iniciación", nombre:"El Reloj",
+    objetivo:"Mejorar la dirección en putts desde distintos ángulos.",
+    duracion:"20 min", material:"Putter, 12 bolas, tees",
+    descripcion:"Coloca 12 bolas en círculo alrededor del hoyo a 1 metro de distancia, como las horas de un reloj. El objetivo es completar las 12 horas sin fallar. Si fallas, empiezas desde la 12 de nuevo.",
+    variantes:["Reloj de 1,5 m","Reloj de 2 m para niveles avanzados","Solo las 4 posiciones cardinales"],
+    kpis:["Horas completadas en cada intento","Récord personal"],
+    erroresComunes:["No leer la línea de cada putt","Ritmo irregular","Postura diferente en cada bola"],
+    tags:["dirección","concentración","presión"] },
+
+  { id:"ej003", categoria:"Putt", nivel:"Intermedio", nombre:"Putt de Velocidad — Tabla de Mareas",
+    objetivo:"Controlar la velocidad para dejar la bola a 30 cm del hoyo en putts largos.",
+    duracion:"20 min", material:"Putter, 6 bolas",
+    descripcion:"Marca una línea a 3 m, 6 m y 9 m del hoyo. Practica 10 putts desde cada distancia. El objetivo no es embocar, sino dejar la bola dentro de un círculo de 30 cm alrededor del hoyo (zona de gimme).",
+    variantes:["Añadir romper (rampas de hierba)","En verde en pendiente real","Medir la zona objetivo con un aro"],
+    kpis:["% bolas en zona objetivo","Distancia media de error"],
+    erroresComunes:["Acelerar la cabeza del putter","Muñecas activas en el golpe","No leer la pendiente"],
+    tags:["velocidad","distancia","control"] },
+
+  { id:"ej004", categoria:"Putt", nivel:"Avanzado", nombre:"El Tour — 18 Hoyos Imaginarios",
+    objetivo:"Simular presión de competición en el putting green.", duracion:"30 min", material:"Putter, 1 bola",
+    descripcion:"Diseña un recorrido de 18 putts con distintas distancias y pendientes en el putting green. Asigna un par a cada 'hoyo' (par 1 si <1m, par 2 hasta 5m, par 3 largas). Juega el recorrido completo y anota tu score.",
+    variantes:["Con compañero a modo competición","Simular los últimos 3 hoyos de un torneo con presión"],
+    kpis:["Score total vs par","Nº de birdie puts embocados","Nº de 3-putts"],
+    erroresComunes:["Falta de rutina previa a cada putt","No comprometerse con la línea elegida"],
+    tags:["competición","presión","simulación","estrategia"] },
+
+  // ── JUEGO CORTO ───────────────────────────────────────────────────
+  { id:"ej005", categoria:"Juego Corto", nivel:"Iniciación", nombre:"Chip de Referencia — La Moneda",
+    objetivo:"Establecer el punto de caída ideal en chips básicos.", duracion:"20 min", material:"Wedge/9-hierro, bolas, moneda",
+    descripcion:"Elige un objetivo a 10 m. Coloca una moneda como punto de caída a 1/3 de la distancia. Practica chips intentando que la bola bote justo sobre la moneda. Rodará el resto hasta el objetivo.",
+    variantes:["Cambiar la distancia (5m, 15m, 20m)","Usar distintos palos (PW, 9, 8) para ver cómo varía el rodar","Punto de caída más cerca del objetivo con SW"],
+    kpis:["% impactos dentro de 50 cm de la moneda","% bolas dentro de 1 m del objetivo"],
+    erroresComunes:["Intentar levantar la bola con las muñecas","Peso atrás en el golpe","Demasiado backswing"],
+    tags:["chip","punto de caída","fundamentos"] },
+
+  { id:"ej006", categoria:"Juego Corto", nivel:"Iniciación", nombre:"La Escalera de Chips",
+    objetivo:"Controlar la distancia en el chip variando el swing.", duracion:"25 min", material:"Wedge, 10 bolas, tees",
+    descripcion:"Coloca tees a 5m, 10m, 15m y 20m de ti. Practica chipear a cada distancia con el mismo palo y la misma posición de bola. Aprende a controlar la distancia solo con el tamaño del swing.",
+    variantes:["Con dos palos distintos y comparar","En terreno con algo de pendiente","Con el cajón de arena cerca para practicar las distintas salidas"],
+    kpis:["Bolas dentro de 1m de cada tee objetivo","Consistencia de contacto"],
+    erroresComunes:["Cambiar la velocidad en vez del tamaño del swing","Posición de manos variable"],
+    tags:["distancia","chip","control"] },
+
+  { id:"ej007", categoria:"Juego Corto", nivel:"Intermedio", nombre:"Bunker — Arena Fina",
+    objetivo:"Dominar la salida de bunker de greenside.", duracion:"25 min", material:"Sand wedge, bolas, bunker",
+    descripcion:"Dibuja una línea en la arena a 5 cm detrás de la bola. Practica el golpe intentando que el palo entre en la arena exactamente en la línea. La bola debe salir sin que el palo la toque directamente. Realiza 20 repeticiones.",
+    variantes:["Bola enterrada (huevo frito)","Pendiente cuesta abajo desde el bunker","Bunker a máxima distancia del hoyo"],
+    kpis:["% salidas fuera del bunker","Distancia de control en la salida","% dentro de 3m del hoyo"],
+    erroresComunes:["Cerrar la cara del palo","Intentar golpear la bola directamente","Desaceleración en el impacto"],
+    tags:["bunker","arena","golpe especial"] },
+
+  { id:"ej008", categoria:"Juego Corto", nivel:"Intermedio", nombre:"El Lob por encima del Obstáculo",
+    objetivo:"Practicar el golpe globo con cara abierta para salvar obstáculos.", duracion:"20 min", material:"SW/LW, bolas, palo horizontal como obstáculo",
+    descripcion:"Coloca un palo de golf horizontal a 1m de altura a 2m de ti. Practica lobs que pasen por encima del palo y aterricen suavemente en el green imaginario al otro lado. Cara bien abierta, swing en U.",
+    variantes:["Con bunker real debajo","Distancias variables al green","Objetivo pequeño al otro lado"],
+    kpis:["% bolas que superan el obstáculo","Distancia de rodado tras aterrizaje"],
+    erroresComunes:["Cerrar la cara en el impacto","Miedo que provoca deceleración","Peso atrás"],
+    tags:["lob","globo","cara abierta","obstáculo"] },
+
+  { id:"ej009", categoria:"Juego Corto", nivel:"Avanzado", nombre:"Up & Down Challenge",
+    objetivo:"Simular situaciones reales de up & down alrededor del green.", duracion:"30 min", material:"Wedges, putter, bolas",
+    descripcion:"Deja caer 9 bolas en posiciones aleatorias alrededor del green (rough, pendiente, bunker, posición limpia). Desde cada posición juegas chip/lob/bunker + putt. Objetivo: 5 up & downs de 9 intentos.",
+    variantes:["Con puntuación Stableford simplificada","Solo posiciones difíciles","Con compañero, alternando posiciones"],
+    kpis:["Up & downs conseguidos de 9","% de un solo putt tras el chip","Peor puesto al que llegas"],
+    erroresComunes:["Elegir el palo equivocado según la situación","No leer el green antes del chip"],
+    tags:["up&down","competición","versatilidad","presión"] },
+
+  // ── JUEGO LARGO ───────────────────────────────────────────────────
+  { id:"ej010", categoria:"Juego Largo", nivel:"Iniciación", nombre:"El Péndulo de Hierros",
+    objetivo:"Establecer contacto sólido y consistente con hierros medios.", duracion:"20 min", material:"7-hierro, bolas, campo de prácticas",
+    descripcion:"Con el 7-hierro, realiza series de 10 golpes con swing al 50% de velocidad. El objetivo es solo el contacto: que el palo baje el césped justo delante de la bola. Sin preocuparse de la distancia ni dirección.",
+    variantes:["Subir al 70% una vez conseguido el contacto","Con tee bajo para facilitar","Alternar con 8 y 6 hierro"],
+    kpis:["% de divots delante de la bola","Consistencia de sonido en el impacto","Dirección del divot"],
+    erroresComunes:["Intentar levantar la bola","Caída del peso hacia atrás","Cabeza que se levanta antes del impacto"],
+    tags:["contacto","hierros","fundamentos","swing"] },
+
+  { id:"ej011", categoria:"Juego Largo", nivel:"Iniciación", nombre:"Zona de Aterrizaje — Fairway",
+    objetivo:"Aprender a apuntar y aterrizar en zonas definidas.", duracion:"25 min", material:"Hierros medios, bolas, campo",
+    descripcion:"Elige una zona de fairway de 20x20 m como objetivo. Practica golpes con 7-hierro intentando aterrizar dentro de la zona. Lleva el recuento de aciertos. 30 golpes por sesión.",
+    variantes:["Reducir la zona a 10x10m","Cambiar el palo según la distancia","Mover la zona a la derecha e izquierda para simular situaciones reales"],
+    kpis:["% bolas en zona objetivo","Media de desviación lateral","Dispersión total"],
+    erroresComunes:["No alinear los pies correctamente","Intentar darle demasiado fuerte","Cambiar el objetivo entre golpes"],
+    tags:["dirección","precisión","hierros","alineación"] },
+
+  { id:"ej012", categoria:"Juego Largo", nivel:"Intermedio", nombre:"Driver — Control de Curva",
+    objetivo:"Dominar la curva intencional (draw y fade) con el driver.", duracion:"30 min", material:"Driver, bolas, campo",
+    descripcion:"Alterna golpes con curva intencional: 5 draws (la bola curva de derecha a izquierda para diestros) y 5 fades (izquierda a derecha). Ajusta la alineación del cuerpo y el camino del swing, no la cara. 30 golpes totales.",
+    variantes:["Con hierros antes de pasar al driver","Solo draw durante 15 golpes hasta asentarlo","Jugar con viento de cara para acentuar la curva"],
+    kpis:["Distancia de curva lograda","% golpes con curva en dirección deseada","Dirección de salida"],
+    erroresComunes:["Girar la cara en vez de cambiar el camino","Cambiar la postura de la bola","Sobrecorregir"],
+    tags:["driver","draw","fade","curva","control"] },
+
+  { id:"ej013", categoria:"Juego Largo", nivel:"Intermedio", nombre:"Palos Alternos — Control de Distancia",
+    objetivo:"Dominar las distancias de todos los palos de la bolsa.", duracion:"30 min", material:"Todos los hierros, bolas",
+    descripcion:"Practica 5 golpes con cada palo de la bolsa de forma secuencial (PW, 9, 8, 7, 6, 5, híbrido, 3-madera, driver). Anota la distancia media conseguida con cada palo. Construye tu tabla personal de distancias.",
+    variantes:["Golpes al 75% de velocidad para control","Solo los palos que más usas en tu campo","En distintas condiciones de viento"],
+    kpis:["Tabla de distancias por palo","Consistencia (diferencia entre máximo y mínimo)","% palos con target conseguido"],
+    erroresComunes:["Cambiar el swing al cambiar de palo","No anotar los datos","Intentar máxima distancia"],
+    tags:["distancia","todos los palos","tabla","consistencia"] },
+
+  { id:"ej014", categoria:"Juego Largo", nivel:"Avanzado", nombre:"Golpes con Intención Táctica",
+    objetivo:"Practicar golpes simulando situaciones reales de campo.", duracion:"30 min", material:"Palos varios, bolas, campo",
+    descripcion:"Simula 9 situaciones tácticas distintas: salida a fairway estrecho, approach a green con agua delante, segundo golpe con árbol en la línea, golpe bajo el viento, golpe de rough, etc. Decide el palo y la estrategia antes de cada golpe.",
+    variantes:["Con compañero que propone el escenario","Anotar el % de éxito en cada situación","Usar tees para simular rough o rough de verdad"],
+    kpis:["% situaciones resueltas correctamente","Calidad de decisión táctica","Distancia de error al objetivo"],
+    erroresComunes:["Elegir siempre el palo más largo","No considerar el margen de seguridad","Olvidar el viento y la pendiente"],
+    tags:["táctica","toma de decisiones","campo","avanzado"] },
+
+  // ── ESTRATEGIA DE JUEGO ───────────────────────────────────────────
+  { id:"ej015", categoria:"Estrategia", nivel:"Iniciación", nombre:"La Zona de Seguridad",
+    objetivo:"Aprender a gestionar el riesgo eligiendo objetivos seguros.", duracion:"Teórico + campo 45 min", material:"Tarjeta de score, bolígrafo",
+    descripcion:"En cada hoyo, antes de golpear, identifica: (A) la zona de mayor riesgo, (B) la zona segura aunque no ideal. Practica siempre apuntar a la zona segura. Anota cuántas veces eres capaz de evitar agua, OB y bunkers en 9 hoyos.",
+    variantes:["Jugar solo con un objetivo: nunca agua ni OB","Calcular el score si hubieras ido a la zona de riesgo vs la segura","Con compañero que valora cada decisión"],
+    kpis:["Nº de hoyos sin pérdida de bola","Score vs tu hándicap","Nº de decisiones seguras aplicadas"],
+    erroresComunes:["Ir siempre a la bandera aunque haya agua","No considerar el hándicap al decidir","Cambiar el plan al llegar a la bola"],
+    tags:["gestión","riesgo","decisión","campo"] },
+
+  { id:"ej016", categoria:"Estrategia", nivel:"Intermedio", nombre:"Construcción del Hoyo — Game Plan",
+    objetivo:"Diseñar el plan de juego de cada hoyo antes de salir al tee.", duracion:"30 min teórico", material:"Scorecard, bolígrafo, mapa del campo",
+    descripcion:"Para cada hoyo del campo que vas a jugar, diseña un plan en 3 pasos: (1) ¿Qué salida necesito? ¿Qué zona de fairway? (2) ¿Desde dónde quiero el approach? (3) ¿Cuál es el peor sitio del green y cómo lo evito? Escríbelo antes de salir.",
+    variantes:["Solo para los hoyos más difíciles","Revisar el plan tras la ronda y evaluar cuánto lo seguiste","Con el pro comentando cada decisión"],
+    kpis:["% del plan ejecutado","Score en hoyos con plan vs sin plan","Nº de bogeys dobles evitados"],
+    erroresComunes:["No actualizar el plan según el viento del día","Improvisar bajo presión"],
+    tags:["planificación","game plan","green","estrategia"] },
+
+  { id:"ej017", categoria:"Estrategia", nivel:"Avanzado", nombre:"Gestión del Score — El Par Propio",
+    objetivo:"Establecer objetivos realistas hoyo a hoyo según tu nivel.", duracion:"18 hoyos", material:"Scorecard personalizado",
+    descripcion:"Antes de la ronda, define tu 'par propio' para cada hoyo según tu hándicap (ej: si eres +20, tu par propio en un par 4 de dificultad 1 es un 7). Juega con el objetivo de hacer tu par propio en cada hoyo, no el par oficial. Calcula tu score vs tu par propio.",
+    variantes:["Solo 9 hoyos para empezar","Con seguimiento de fairways y greens en regulación propios"],
+    kpis:["Score vs par propio","Nº de hoyos bajo el par propio","Nº de bogeys dobles respecto al par propio"],
+    erroresComunes:["Ser demasiado optimista con el par propio","No ajustarlo según el día"],
+    tags:["par propio","gestión de score","realismo","avanzado"] },
+
+  // ── REGLAS DE GOLF ────────────────────────────────────────────────
+  { id:"ej018", categoria:"Reglas", nivel:"Iniciación", nombre:"Test Básico de Reglas — Obstáculos y OB",
+    objetivo:"Conocer las reglas más frecuentes en campo.", duracion:"20 min", material:"Reglamento RFEG, cuestionario",
+    descripcion:"Cuestionario de 10 situaciones frecuentes: bola en agua, fuera de límites, bola no localizable, obstáculo inmovible, alivio de obstáculo. El alumno responde cómo actuar en cada caso y el profesor corrige.",
+    preguntas:[
+      {p:"Tu bola cae en zona de penalización roja. ¿Cuáles son tus opciones?", r:"1. Jugar desde donde está si es posible. 2. Volver al punto anterior con 1 penalización. 3. Soltar dentro de 2 palos laterales donde cruzó la línea con 1 penalización."},
+      {p:"Tu bola no se puede localizar después de 3 minutos de búsqueda. ¿Qué haces?", r:"Bola perdida: debes volver al punto de golpe anterior y jugar con penalización de golpe y distancia (1 golpe de penalización)."},
+      {p:"Tu bola está junto a un aspersor (obstáculo inmovible). ¿Tienes derecho a alivio?", r:"Sí. Puedes tomar alivio sin penalización soltando dentro de 1 palo del punto de alivio más cercano que elimine la interferencia, no más cerca del hoyo."},
+      {p:"¿Cuántos golpes de penalización conlleva una bola OB?", r:"Golpe y distancia: 1 golpe de penalización y debes volver a golpear desde el punto anterior. Total: 2 golpes perdidos (el jugado + la penalización)."},
+      {p:"Tu bola queda en huellas de animal en un bunker. ¿Hay alivio sin penalización?", r:"No. En el bunker, las huellas de animal no dan derecho a alivio sin penalización. Puedes aliviar fuera del bunker con 1 golpe de penalización."},
+    ],
+    tags:["reglas","OB","agua","obstáculo","básico"] },
+
+  { id:"ej019", categoria:"Reglas", nivel:"Intermedio", nombre:"Test de Reglas en el Green",
+    objetivo:"Dominar las reglas específicas del putting green.", duracion:"20 min", material:"Cuestionario, reglamento",
+    descripcion:"Situaciones específicas del green: marcar la bola, limpiar la bola, reparar el green, bola que golpea el palo de la bandera, bola que pasa sobre la bola de otro jugador, casual water en el green.",
+    preguntas:[
+      {p:"Estás en el green. Tu putt golpea la bola de otro jugador que no fue marcada. ¿Qué pasa?", r:"En stroke play: 2 golpes de penalización para ti. La bola del compañero vuelve a su posición original. En match play: sin penalización."},
+      {p:"Hay agua casual (lluvia) en la línea de tu putt en el green. ¿Qué puedes hacer?", r:"Puedes tomar alivio sin penalización colocando la bola en el punto más cercano que evite la interferencia del agua casual, no más cerca del hoyo."},
+      {p:"Tu bola en el green roza el asta de la bandera que está dentro del hoyo. ¿Hay penalización?", r:"No. Desde 2019 no hay penalización si la bola golpea el asta dentro del hoyo. La bola es válida si cae y permanece en el hoyo."},
+      {p:"¿Puedes reparar un pitchmark en el green en tu línea de putt?", r:"Sí, siempre. En el green puedes reparar cualquier daño: pitchmarks, huellas de zapatos, daños de animales, etc."},
+      {p:"¿Puedes marcar y limpiar tu bola en el green en cualquier momento?", r:"Sí. En el putting green siempre puedes marcar, levantar y limpiar tu bola, incluso si no está en la línea de putt de nadie."},
+    ],
+    tags:["reglas","green","putt","bandera","intermedio"] },
+
+  { id:"ej020", categoria:"Reglas", nivel:"Avanzado", nombre:"Test de Reglas Avanzadas — Situaciones de Campo",
+    objetivo:"Resolver situaciones complejas de reglas en competición.", duracion:"30 min", material:"Reglamento RFEG 2023, cuestionario",
+    descripcion:"Casos avanzados: bola incrustada, regla de distancia local, mal score en la tarjeta, pie incorrecto del jugador, búsqueda provisional, regla del caddie.",
+    preguntas:[
+      {p:"Tu bola queda incrustada en su propio pitchmark en el rough. ¿Hay alivio?", r:"Sí. Desde 2019, la regla del terreno general permite alivio sin penalización en cualquier zona del terreno general (incluyendo el rough) si la bola está incrustada en su propio pitchmark."},
+      {p:"Firmas la tarjeta con un score menor al real en un hoyo. ¿Qué ocurre?", r:"Descalificación. Si firmas con un score menor al real en cualquier hoyo, el resultado es la descalificación del recorrido (en stroke play)."},
+      {p:"Juegas tu bola y luego descubres que era la bola de otro jugador. ¿Qué penalización?", r:"2 golpes de penalización por jugar una bola equivocada. Debes volver a jugar con tu bola original. Si no puedes encontrarla, es bola perdida con golpe y distancia."},
+      {p:"Tu caddie te aconseja la línea de putt después de que hayas empezado tu rutina previa. ¿Hay penalización?", r:"Sí desde 2023: 1 golpe de penalización si el caddie te asiste con la alineación situándose detrás de ti durante el golpe o cuando tomas la postura."},
+      {p:"Juegas una bola provisional y luego encuentras la original en zona de penalización. ¿Cuál juegas?", r:"Tienes opción: puedes jugar la original desde la zona de penalización con las opciones de alivio disponibles, o desistir de la original y continuar con la provisional (que se convierte en la bola en juego)."},
+    ],
+    tags:["reglas","avanzado","competición","penalización"] },
+
+  // ── MENTAL Y CONCENTRACIÓN ────────────────────────────────────────
+  { id:"ej021", categoria:"Mental", nivel:"Todos", nombre:"Rutina Pre-Golpe — Los 5 Pasos",
+    objetivo:"Establecer una rutina consistente antes de cada golpe.", duracion:"15 min teórico + práctica en campo",
+    material:"Ninguno específico",
+    descripcion:"Aprende y automatiza la rutina de 5 pasos: (1) Lectura de la situación desde atrás, (2) Elección de palo y objetivo, (3) Dos prácticas de swing, (4) Alineación de cara y pies, (5) Un 'gatillo' de inicio (waggle, presión de manos). Practica la rutina con el mismo tiempo en cada golpe.",
+    variantes:["Medir el tiempo de rutina con cronómetro (objetivo: 20-25 seg)","Rutina específica para putts","Rutina bajo presión (con espectador)"],
+    kpis:["Tiempo de rutina (consistencia entre golpes)","Nº de golpes en los que completa los 5 pasos","% mejora en dirección vs sin rutina"],
+    erroresComunes:["Saltarse pasos bajo presión","Rutina demasiado larga (más de 40 seg)","Cambiar el objetivo en el último momento"],
+    tags:["mental","rutina","concentración","presión"] },
+
+  { id:"ej022", categoria:"Mental", nivel:"Intermedio", nombre:"Reset Mental — El Semáforo",
+    objetivo:"Gestionar las emociones negativas tras un mal golpe.", duracion:"Teórico 20 min",
+    material:"Bolígrafo, diario de golf",
+    descripcion:"Sistema de 3 colores para gestionar emociones: ROJO (0-10 seg): permite la reacción emocional natural (sí, pero sin tirar palos). ÁMBAR (10-30 seg): respira, camina, suelta. VERDE (>30 seg): llega a la bola con la mente en el siguiente golpe, no en el anterior. Practica identificar en qué fase estás.",
+    variantes:["Con diario post-ronda anotando situaciones ROJO que ocurrieron","Role-playing de situaciones difíciles en el campo"],
+    kpis:["Nº de dobles bogeys tras un mal golpe (indicador de cascada mental)","Autoevaluación del control emocional del 1 al 10"],
+    erroresComunes:["Pasar directo a VERDE sin procesar la emoción","Quedarse en ROJO más de 30 seg"],
+    tags:["mental","emociones","resiliencia","concentración"] },
+
+  { id:"ej023", categoria:"Mental", nivel:"Avanzado", nombre:"Visualización de Golpes — El Cine Interior",
+    objetivo:"Usar la visualización para mejorar la ejecución técnica.", duracion:"10 min diarios",
+    material:"Lugar tranquilo, optional: grabación de tu propio swing",
+    descripcion:"Antes de dormir o antes de entrenar: (1) Cierra los ojos. (2) Visualiza el hoyo o golpe con el máximo detalle (hierba, viento, sonido). (3) Ejecuta el golpe perfecto mentalmente a velocidad real. (4) Siente la sensación de contacto ideal. (5) Visualiza la bola volando al objetivo. Repite 3-5 veces.",
+    variantes:["Visualizar el hoyo más difícil de tu campo","Visualizar una ronda completa abreviada","Solo el putting green"],
+    kpis:["Consistencia de práctica (días por semana)","Comparar score antes/después de 4 semanas de práctica"],
+    erroresComunes:["Visualizar golpes malos accidentalmente (reiniciar siempre)","Hacerlo con prisas"],
+    tags:["mental","visualización","rendimiento","avanzado"] },
+
+  // ── FITNESS GOLF ─────────────────────────────────────────────────
+  { id:"ej024", categoria:"Fitness Golf", nivel:"Todos", nombre:"Rotación de Cadera — 5 Ejercicios Clave",
+    objetivo:"Mejorar la movilidad de cadera para mayor velocidad de cabeza.", duracion:"15 min",
+    material:"Palo de golf, esterilla opcional",
+    descripcion:"Circuito de 5 ejercicios: (1) Hip 90/90 en suelo (2x30 seg cada lado). (2) Sentadilla goblet con pausa (3x10). (3) Rotación de cadera con palo en hombros (3x15). (4) Paso cruzado hacia atrás (2x10 cada lado). (5) Hip hinge con palo en espalda (3x12).",
+    variantes:["Solo los 3 más limitantes para ti","Con bandas elásticas para añadir resistencia","Como calentamiento antes de la ronda"],
+    kpis:["Ángulo de rotación antes vs después (fotograma de vídeo)","Velocidad de cabeza de palo (si disponible radar)"],
+    erroresComunes:["Compensar con la columna lumbar","No llegar al rango completo de movimiento","Hacerlo con rapidez excesiva"],
+    tags:["fitness","cadera","movilidad","velocidad","calentamiento"] },
+
+  { id:"ej025", categoria:"Fitness Golf", nivel:"Todos", nombre:"Core Estable — El Triángulo del Swing",
+    objetivo:"Fortalecer el core para mantener la postura durante el swing.", duracion:"15 min",
+    material:"Esterilla, palo de golf",
+    descripcion:"Circuito de core: (1) Plank frontal con toque de hombros (3x20 toques). (2) Pallof press con banda (3x12 cada lado). (3) Dead bug (3x10 repeticiones). (4) Plank lateral con elevación de brazo (2x30 seg). (5) Rotación con palo en posición de swing (3x15).",
+    variantes:["Versión básica sin banda","Con fitball para aumentar inestabilidad","Como rutina post-ronda"],
+    kpis:["Tiempo de plank (progresión semanal)","Mejora en consistencia de postura en vídeo del swing"],
+    erroresComunes:["Retener el aliento","Compensar con los hombros","Pelvis que sube en el plank"],
+    tags:["fitness","core","postura","fuerza","estabilidad"] },
+  // ── DRIVE / SALIDA ────────────────────────────────────────────────
+  { id:"ej026", categoria:"Drive", nivel:"Iniciación", nombre:"El Tee Alto",
+    objetivo:"Aprender el golpeo ascendente con el driver.", duracion:"20 min",
+    material:"Driver, tees largos, bolas",
+    descripcion:"Coloca la bola en un tee alto de forma que la mitad superior de la bola quede por encima de la cabeza del driver. Practica golpear la bola en el momento ascendente del swing.",
+    progresion:["10 bolas centradas","Buscar trayectoria alta","Añadir distancia progresiva"],
+    kpis:["% de bolas en calle","Distancia media"],
+    erroresComunes:["Golpear de arriba a abajo","Caída de hombro derecho excesiva"],
+    tags:["drive","salida","potencia"] },
+  { id:"ej027", categoria:"Drive", nivel:"Intermedio", nombre:"Calle Imaginaria",
+    objetivo:"Mejorar la precisión y dirección con el driver.", duracion:"25 min",
+    material:"Driver, conos o marcas",
+    descripcion:"Define una calle imaginaria de 30 metros de ancho con conos. Realiza 10 drives intentando que caigan dentro de la calle. Anota el porcentaje de acierto.",
+    progresion:["Calle de 30m","Reducir a 20m","Reducir a 15m"],
+    kpis:["% bolas en calle","Consistencia de dirección"],
+    erroresComunes:["Buscar máxima potencia","Alineación incorrecta"],
+    tags:["drive","precisión","dirección"] },
+  // ── HIERROS ───────────────────────────────────────────────────────
+  { id:"ej028", categoria:"Hierros", nivel:"Iniciación", nombre:"Contacto Limpio",
+    objetivo:"Conseguir un contacto sólido bola-césped con hierros.", duracion:"20 min",
+    material:"Hierro 7, bolas, spray o tiza",
+    descripcion:"Aplica spray en la cara del palo. Golpea 10 bolas buscando la marca en el centro de la cara. Revisa el divot: debe empezar justo después de la bola.",
+    progresion:["Contacto centrado","Divot tras la bola","Consistencia 8 de 10"],
+    kpis:["% golpes centrados","Posición del divot"],
+    erroresComunes:["Querer levantar la bola","Peso atrás en el impacto"],
+    tags:["hierros","contacto","divot"] },
+  { id:"ej029", categoria:"Hierros", nivel:"Intermedio", nombre:"Escalera de Distancias",
+    objetivo:"Controlar la distancia con diferentes hierros.", duracion:"30 min",
+    material:"Set de hierros, banderas o dianas",
+    descripcion:"Coloca dianas a 100, 120, 140 y 160 metros. Golpea 5 bolas a cada distancia eligiendo el hierro adecuado. Anota la dispersión de cada grupo.",
+    progresion:["4 distancias","Reducir dispersión","Añadir distancias intermedias"],
+    kpis:["Dispersión por distancia","Precisión de distancia"],
+    erroresComunes:["No ajustar el swing a la distancia","Forzar el palo"],
+    tags:["hierros","distancia","control"] },
+  // ── APPROACH ──────────────────────────────────────────────────────
+  { id:"ej030", categoria:"Approach", nivel:"Iniciación", nombre:"El Reloj",
+    objetivo:"Controlar la longitud del backswing para distancias cortas.", duracion:"25 min",
+    material:"Wedge, bolas, banderas a distintas distancias",
+    descripcion:"Imagina un reloj. Practica swings llevando las manos a las 7, 8 y 9 en punto. Aprende qué distancia logras con cada posición.",
+    progresion:["3 posiciones de reloj","Asociar distancia a cada una","Consistencia"],
+    kpis:["Distancia media por posición","Consistencia"],
+    erroresComunes:["Acelerar o desacelerar","Backswing inconsistente"],
+    tags:["approach","wedge","distancia"] },
+  { id:"ej031", categoria:"Approach", nivel:"Avanzado", nombre:"Up and Down",
+    objetivo:"Mejorar el juego corto bajo presión.", duracion:"30 min",
+    material:"Wedges, putter, bolas",
+    descripcion:"Desde 30-50 metros, intenta hacer el hoyo en 2 golpes (approach + putt). Lleva la cuenta de cuántos 'up and down' consigues de 10 intentos.",
+    progresion:["5 de 10","7 de 10","Desde distintas posiciones"],
+    kpis:["% up and down","Proximidad al hoyo"],
+    erroresComunes:["No leer el green antes","Approach demasiado largo o corto"],
+    tags:["approach","juego corto","presión"] },
+  // ── BUNKER ────────────────────────────────────────────────────────
+  { id:"ej032", categoria:"Bunker", nivel:"Iniciación", nombre:"La Línea en la Arena",
+    objetivo:"Aprender a golpear la arena antes que la bola.", duracion:"20 min",
+    material:"Sand wedge, bunker de prácticas",
+    descripcion:"Dibuja una línea en la arena sin bola. Practica golpear justo en la línea, sacando arena. Cuando lo domines, coloca la bola justo delante de la línea.",
+    progresion:["Sin bola, golpear la línea","Con bola sobre la línea","Salir consistentemente"],
+    kpis:["% bolas fuera del bunker","Cantidad de arena desplazada"],
+    erroresComunes:["Golpear la bola directamente","Miedo a entrar en la arena"],
+    tags:["bunker","arena","salida"] },
+  // ── CHIP ──────────────────────────────────────────────────────────
+  { id:"ej033", categoria:"Chip", nivel:"Iniciación", nombre:"Aterrizaje en la Toalla",
+    objetivo:"Controlar el punto de aterrizaje del chip.", duracion:"20 min",
+    material:"Wedge, toalla, bolas",
+    descripcion:"Coloca una toalla a 2 metros como zona de aterrizaje. Practica chips que aterricen sobre la toalla y dejen rodar la bola hacia el hoyo.",
+    progresion:["Aterrizar en la toalla","Calcular el rodado","Variar distancias"],
+    kpis:["% aterrizajes en zona","Proximidad final al hoyo"],
+    erroresComunes:["Golpe de muñecas","No calcular el rodado"],
+    tags:["chip","juego corto","control"] },
+  { id:"ej034", categoria:"Chip", nivel:"Intermedio", nombre:"Tres Palos, Un Chip",
+    objetivo:"Aprender a usar distintos palos para el chip según la situación.", duracion:"25 min",
+    material:"PW, 9 y 7 hierro, bolas",
+    descripcion:"Desde la misma posición, haz chips con pitching wedge, hierro 9 y hierro 7. Observa cómo cambia la proporción vuelo/rodado con cada palo.",
+    progresion:["Probar 3 palos","Elegir palo según situación","Aplicar en juego"],
+    kpis:["Proximidad al hoyo","Decisión de palo correcta"],
+    erroresComunes:["Usar siempre el mismo palo","No leer la situación"],
+    tags:["chip","palos","versatilidad"] },
+  // ── SWING / TÉCNICA ───────────────────────────────────────────────
+  { id:"ej035", categoria:"Swing", nivel:"Iniciación", nombre:"El Espejo del Grip",
+    objetivo:"Aprender el agarre correcto del palo.", duracion:"15 min",
+    material:"Cualquier palo, espejo",
+    descripcion:"Frente a un espejo, practica colocar las manos en el grip. La V que forman pulgar e índice debe apuntar al hombro derecho. Repite hasta automatizarlo.",
+    progresion:["Grip correcto estático","Sin mirar","Mantener en el swing"],
+    kpis:["Consistencia del grip","Posición de las manos"],
+    erroresComunes:["Agarre demasiado fuerte","Manos descoordinadas"],
+    tags:["swing","grip","fundamentos"] },
+  { id:"ej036", categoria:"Swing", nivel:"Intermedio", nombre:"Pies Juntos",
+    objetivo:"Mejorar el equilibrio y el contacto central.", duracion:"20 min",
+    material:"Hierro 7, bolas",
+    descripcion:"Golpea bolas con los pies juntos. Esto obliga a mantener el equilibrio y a no balancearse, mejorando el contacto central con la bola.",
+    progresion:["Medio swing pies juntos","Swing completo","Volver a stance normal"],
+    kpis:["Equilibrio mantenido","% contacto central"],
+    erroresComunes:["Balanceo lateral","Perder el equilibrio"],
+    tags:["swing","equilibrio","contacto"] },
+  // ── PUTT (más) ────────────────────────────────────────────────────
+  { id:"ej037", categoria:"Putt", nivel:"Intermedio", nombre:"Reloj de Putts",
+    objetivo:"Dominar putts cortos desde todos los ángulos.", duracion:"20 min", emoji:"🕐",
+    material:"Putter, bola, 12 tees",
+    descripcion:"Coloca 12 bolas en círculo alrededor del hoyo a 1 metro, como las horas de un reloj. Embócalas todas seguidas. Si fallas una, vuelves a empezar.",
+    progresion:["Completar el círculo a 1m","Ampliar a 1,5m","Ampliar a 2m"],
+    kpis:["Putts consecutivos embocados","% acierto por distancia"],
+    erroresComunes:["No leer la caída","Golpe inconsistente"],
+    tags:["putt","cortos","precisión"] },
+  { id:"ej038", categoria:"Putt", nivel:"Avanzado", nombre:"La Puerta",
+    objetivo:"Mejorar la línea de salida del putt.", duracion:"15 min", emoji:"🚪",
+    material:"Putter, bola, 2 tees",
+    descripcion:"Coloca dos tees ligeramente más anchos que la bola, a 30 cm del putter. La bola debe pasar entre ellos sin tocarlos. Asegura una salida recta.",
+    progresion:["Puerta ancha","Puerta estrecha","Aumentar distancia al hoyo"],
+    kpis:["% bolas que pasan limpias","Línea de salida"],
+    erroresComunes:["Cara abierta o cerrada","Trayectoria del putter"],
+    tags:["putt","línea","técnica"] },
+  { id:"ej039", categoria:"Putt", nivel:"Intermedio", nombre:"Lag Putting",
+    objetivo:"Controlar la distancia en putts largos.", duracion:"20 min", emoji:"🎯",
+    material:"Putter, bolas",
+    descripcion:"Desde 10-15 metros, intenta dejar la bola en un círculo de 1 metro alrededor del hoyo. El objetivo es no dejar nunca un segundo putt largo.",
+    progresion:["Círculo de 1m a 10m","A 15m","A 20m"],
+    kpis:["% bolas en zona","Distancia del segundo putt"],
+    erroresComunes:["Golpe corto por miedo","No calibrar la velocidad del green"],
+    tags:["putt","largos","distancia"] },
+  // ── DRIVE (más) ───────────────────────────────────────────────────
+  { id:"ej040", categoria:"Drive", nivel:"Avanzado", nombre:"Draw y Fade a Voluntad",
+    objetivo:"Aprender a curvar la bola de forma controlada.", duracion:"30 min", emoji:"🌀",
+    material:"Driver, bolas, conos",
+    descripcion:"Practica 5 drives buscando draw (curva a la izquierda) y 5 buscando fade (curva a la derecha). Aprende a ajustar el stance y la cara del palo.",
+    progresion:["Identificar la curva natural","Provocar draw","Provocar fade"],
+    kpis:["% curvas conseguidas","Control de la forma"],
+    erroresComunes:["Manipular demasiado las manos","Stance incorrecto"],
+    tags:["drive","draw","fade","control"] },
+  { id:"ej041", categoria:"Drive", nivel:"Iniciación", nombre:"Tempo 1-2-3",
+    objetivo:"Mejorar el ritmo del swing con el driver.", duracion:"20 min", emoji:"🎵",
+    material:"Driver, bolas",
+    descripcion:"Cuenta '1-2' en la subida y '3' en la bajada. Mantén un tempo suave y constante. Evita acelerar bruscamente en la bajada.",
+    progresion:["Swing lento","Añadir bola","Mantener tempo con potencia"],
+    kpis:["Consistencia de tempo","Contacto centrado"],
+    erroresComunes:["Bajada brusca","Pérdida de equilibrio"],
+    tags:["drive","tempo","ritmo"] },
+  // ── HIERROS (más) ─────────────────────────────────────────────────
+  { id:"ej042", categoria:"Hierros", nivel:"Avanzado", nombre:"Banderas a Distintas Alturas",
+    objetivo:"Controlar la trayectoria alta y baja con hierros.", duracion:"25 min", emoji:"📐",
+    material:"Hierros, bolas",
+    descripcion:"Practica golpear bolas altas (bola adelantada) y bajas (bola atrasada) con el mismo hierro. Útil para jugar con viento.",
+    progresion:["Trayectoria normal","Bola baja","Bola alta"],
+    kpis:["Control de altura","Distancia mantenida"],
+    erroresComunes:["No ajustar la posición de la bola","Cambiar el swing"],
+    tags:["hierros","trayectoria","viento"] },
+  { id:"ej043", categoria:"Hierros", nivel:"Intermedio", nombre:"El Punto Exacto",
+    objetivo:"Mejorar la precisión direccional con hierros medios.", duracion:"25 min", emoji:"🎯",
+    material:"Hierro 7, dianas o banderas",
+    descripcion:"Elige una diana pequeña a 130m. Golpea 10 bolas intentando acercarte lo máximo posible. Mide la distancia media al objetivo.",
+    progresion:["Diana grande","Diana mediana","Diana pequeña"],
+    kpis:["Distancia media a bandera","Dispersión"],
+    erroresComunes:["No comprometerse con el objetivo","Alineación pobre"],
+    tags:["hierros","precisión","dirección"] },
+  // ── APPROACH (más) ────────────────────────────────────────────────
+  { id:"ej044", categoria:"Approach", nivel:"Intermedio", nombre:"Los Tres Aros",
+    objetivo:"Controlar distancias de approach a tres profundidades.", duracion:"30 min", emoji:"⭕",
+    material:"Wedge, 3 aros o marcas, bolas",
+    descripcion:"Coloca 3 aros a 20, 30 y 40 metros. Lanza 5 bolas a cada uno. Aprende qué swing necesitas para cada distancia.",
+    progresion:["3 distancias","Reducir tamaño del aro","Distancias aleatorias"],
+    kpis:["% bolas en aro","Control de distancia"],
+    erroresComunes:["Mismo swing para todas","Desaceleración"],
+    tags:["approach","distancia","wedge"] },
+  // ── BUNKER (más) ──────────────────────────────────────────────────
+  { id:"ej045", categoria:"Bunker", nivel:"Intermedio", nombre:"Salida Larga de Bunker",
+    objetivo:"Aprender a sacar la bola lejos desde el bunker.", duracion:"25 min", emoji:"🏖️",
+    material:"Sand wedge, bunker, bolas",
+    descripcion:"Practica salidas de bunker de más de 20 metros. Abre menos la cara del palo y toma más arena. Busca que la bola vuele y ruede hacia el green.",
+    progresion:["Salida corta","Salida media","Salida larga +20m"],
+    kpis:["Distancia conseguida","% bolas en green"],
+    erroresComunes:["Demasiada arena","Cara muy abierta para distancia larga"],
+    tags:["bunker","distancia","arena"] },
+  { id:"ej046", categoria:"Bunker", nivel:"Avanzado", nombre:"Bunker con Bola Enterrada",
+    objetivo:"Resolver la difícil situación de bola semienterrada.", duracion:"20 min", emoji:"🥚",
+    material:"Sand wedge, bunker, bolas",
+    descripcion:"Entierra ligeramente la bola en la arena (huevo frito). Cierra la cara del palo y golpea con fuerza justo detrás de la bola para sacarla.",
+    progresion:["Bola apoyada","Bola semienterrada","Bola enterrada"],
+    kpis:["% bolas fuera","Control del resultado"],
+    erroresComunes:["Cara abierta (no sale)","Falta de fuerza"],
+    tags:["bunker","enterrada","avanzado"] },
+  // ── CHIP (más) ────────────────────────────────────────────────────
+  { id:"ej047", categoria:"Chip", nivel:"Avanzado", nombre:"Chip con Efecto",
+    objetivo:"Aprender a dar efecto de retroceso al chip.", duracion:"25 min", emoji:"🔄",
+    material:"Wedge de 56-60°, bolas nuevas",
+    descripcion:"Con un wedge de alto loft y golpe descendente y limpio, practica chips que boten y frenen rápido. Requiere contacto perfecto bola-cara.",
+    progresion:["Contacto limpio","Conseguir freno","Controlar el retroceso"],
+    kpis:["Cantidad de freno","Consistencia"],
+    erroresComunes:["Golpe gordo","Bola vieja sin spin"],
+    tags:["chip","efecto","spin","avanzado"] },
+  { id:"ej048", categoria:"Chip", nivel:"Iniciación", nombre:"El Putt-Chip",
+    objetivo:"Aprender el chip básico con posición de putt.", duracion:"15 min", emoji:"🏑",
+    material:"Hierro 8 o 9, bolas",
+    descripcion:"Adopta una posición similar a la del putt pero con un hierro. Haz un movimiento de péndulo para sacar la bola del borde del green y dejarla rodar.",
+    progresion:["Movimiento de péndulo","Controlar fuerza","Variar distancia"],
+    kpis:["Proximidad al hoyo","Consistencia de contacto"],
+    erroresComunes:["Usar muñecas","Intentar levantar la bola"],
+    tags:["chip","iniciación","básico"] },
+  // ── SWING / TÉCNICA (más) ─────────────────────────────────────────
+  { id:"ej049", categoria:"Swing", nivel:"Intermedio", nombre:"Pausa en el Top",
+    objetivo:"Mejorar la transición y secuencia del swing.", duracion:"20 min", emoji:"⏸️",
+    material:"Hierro 7, bolas",
+    descripcion:"Sube el palo y haz una pausa de 1 segundo en lo alto del backswing antes de bajar. Mejora la coordinación y evita la precipitación.",
+    progresion:["Pausa exagerada","Pausa breve","Transición fluida"],
+    kpis:["Secuencia correcta","Contacto mejorado"],
+    erroresComunes:["Bajar desde arriba con los brazos","Perder el ángulo"],
+    tags:["swing","transición","tempo"] },
+  { id:"ej050", categoria:"Swing", nivel:"Iniciación", nombre:"Swing de Medio Cuerpo",
+    objetivo:"Aprender el movimiento básico del swing.", duracion:"20 min", emoji:"🔆",
+    material:"Hierro 7, bolas",
+    descripcion:"Practica swings llevando el palo solo hasta la altura de la cintura, tanto en la subida como en la bajada. Construye el swing desde lo simple.",
+    progresion:["Medio swing","Tres cuartos","Swing completo"],
+    kpis:["Contacto centrado","Equilibrio"],
+    erroresComunes:["Querer pegar fuerte","Perder postura"],
+    tags:["swing","iniciación","fundamentos"] },
+  // ── ESTRATEGIA (más) ──────────────────────────────────────────────
+  { id:"ej051", categoria:"Estrategia", nivel:"Avanzado", nombre:"Juega el Campo en la Mente",
+    objetivo:"Aprender a planificar cada hoyo antes de jugarlo.", duracion:"30 min", emoji:"🧠",
+    material:"Tarjeta del campo, lápiz",
+    descripcion:"Antes de una vuelta, dibuja la estrategia de cada hoyo: dónde dejar el drive, qué zonas evitar, dónde fallar si fallas. Juega según el plan.",
+    progresion:["Planificar 9 hoyos","18 hoyos","Ajustar según resultados"],
+    kpis:["% hoyos jugados según plan","Reducción de errores graves"],
+    erroresComunes:["Jugar sin pensar","Atacar banderas peligrosas"],
+    tags:["estrategia","planificación","mental"] },
+  { id:"ej052", categoria:"Mental", nivel:"Intermedio", nombre:"Rutina Pre-Golpe",
+    objetivo:"Crear una rutina constante antes de cada golpe.", duracion:"20 min", emoji:"🧘",
+    material:"Palos, bolas",
+    descripcion:"Diseña una rutina fija: visualizar el golpe, un par de swings de práctica, alinearse, respirar y golpear. Repítela en cada bola para ganar consistencia.",
+    progresion:["Diseñar la rutina","Repetirla en prácticas","Aplicarla en el campo"],
+    kpis:["Consistencia de la rutina","Mejora bajo presión"],
+    erroresComunes:["Saltarse pasos","Rutina demasiado larga"],
+    tags:["mental","rutina","concentración"] },
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// BANCO DE PREGUNTAS PARA TESTS DINÁMICOS
+// ═══════════════════════════════════════════════════════════════════
+
+const TESTS_BANCO = {
+  "Putt": [
+    { id:"tp1", pregunta:"¿Cuál es la forma correcta de sostener el putter?", opciones:["Grip de béisbol","Grip de reverso","Grip de golpe con las palmas enfrentadas y pulgares en el eje del grip","Grip de dedo cruzado siempre"], correcta:2, explicacion:"El grip más utilizado es el de palmas enfrentadas con los pulgares sobre el eje del mango, lo que permite un movimiento pendular natural." },
+    { id:"tp2", pregunta:"¿Dónde debe estar el peso del cuerpo en el putt?", opciones:["50/50 ambos pies","60% en el pie delantero","70% en el pie trasero","Completamente en el pie delantero"], correcta:0, explicacion:"En el putting el peso debe distribuirse de manera equilibrada, 50/50, para mantener estabilidad durante el movimiento pendular." },
+    { id:"tp3", pregunta:"¿Qué parte del putter debe impactar la bola para un putt recto?", opciones:["El talón del putter","El punto dulce (sweet spot) del putter","La punta del putter","Cualquier parte es válida"], correcta:1, explicacion:"El impacto en el sweet spot garantiza la máxima transferencia de energía y un rodado más puro y predecible." },
+    { id:"tp4", pregunta:"¿Cuándo se debe leer la línea de un putt?", opciones:["Solo desde detrás de la bola","Solo desde el lado","Desde múltiples ángulos: detrás, lateral y desde el hoyo","No es necesario leer la línea"], correcta:2, explicacion:"La lectura completa incluye ver la pendiente desde detrás de la bola, el lateral y desde el hoyo hacia la bola para entender el romper final." },
+    { id:"tp5", pregunta:"¿Qué controla principalmente la distancia en el putt?", opciones:["La velocidad de la cabeza del putter","El tamaño del backswing y el through-swing","La fuerza de los brazos","El tipo de grip utilizado"], correcta:1, explicacion:"La distancia se controla fundamentalmente con el tamaño del swing (backswing y through-swing iguales), manteniendo la aceleración constante." },
+    { id:"tp6", pregunta:"¿Qué es el 'break' o romper en un putt?", opciones:["Cuando la bola se parte","La curva que hace la bola por la pendiente del green","El sonido del impacto","La distancia total del putt"], correcta:1, explicacion:"El break es la curvatura que toma la bola al rodar sobre la pendiente del green. Leerlo correctamente es clave para la precisión." },
+    { id:"tp7", pregunta:"¿Cuál es el error más común en putts cortos bajo presión?", opciones:["Demasiado backswing","Desaceleración en el impacto","Grip demasiado suave","Ojos abiertos"], correcta:1, explicacion:"La desaceleración (parar el putter en el impacto) es el error más frecuente bajo presión. La solución es un through-swing ligeramente mayor que el backswing." },
+    { id:"tp8", pregunta:"¿Cómo afecta el poa annua (tipo de hierba del green) al putt?", opciones:["Hace que la bola vaya más recto","Puede generar rebotes por la irregularidad de la hierba al final del día","No tiene ningún efecto","Solo afecta en clima húmedo"], correcta:1, explicacion:"El poa annua produce semillas que crean irregularidades en la superficie, especialmente en greens maduros, lo que afecta al rodado, especialmente por la tarde." },
+  ],
+  "Juego Corto": [
+    { id:"tc1", pregunta:"¿Qué palo produce menos rodado tras el aterrizaje en un chip?", opciones:["9-hierro","7-hierro","Sand wedge (SW)","5-hierro"], correcta:2, explicacion:"El sand wedge tiene mayor loft (54-58°) lo que da más altura y menos rodado tras el aterrizaje, ideal cuando necesitas parar la bola pronto." },
+    { id:"tc2", pregunta:"¿Dónde debe estar el peso en el chip básico?", opciones:["50/50","70-80% en el pie delantero","70% en el pie trasero","No importa el peso"], correcta:1, explicacion:"En el chip el peso debe estar cargado en el pie delantero (70-80%) para favorecer un golpe descendente y contacto sólido primero bola después césped." },
+    { id:"tc3", pregunta:"¿Qué significa 'contacto limpio' en el chip?", opciones:["Pegar la bola sin tocar el suelo","Que el palo golpee la bola antes que el suelo","Usar un guante limpio","Limpiar la cara del palo antes de golpear"], correcta:1, explicacion:"El contacto limpio implica que el palo impacte la bola ligeramente antes que el suelo, tomando un pequeño divot delante de la posición de la bola." },
+    { id:"tc4", pregunta:"¿Cuándo es preferible chipear sobre puttear desde fuera del green?", opciones:["Siempre que estés fuera del green","Cuando la hierba entre la bola y el green está corta y uniforme","Cuando hay hierba larga o irregular entre la bola y el green","Solo en competición"], correcta:2, explicacion:"Si hay hierba larga o irregular entre la bola y el green, el putt puede desviarse. El chip vuela esa zona y solo rueda en el green." },
+    { id:"tc5", pregunta:"¿Cómo se juega correctamente un bunker de greenside?", opciones:["Golpear directamente la bola","Entrar en la arena 5-7 cm detrás de la bola con cara abierta","Apuntar justo detrás de la bola y golpear suave","Cerrar la cara para aumentar el loft"], correcta:1, explicacion:"El bunker de greenside se juega con cara abierta entrando en la arena 5-7 cm detrás de la bola, usando el rebote del palo para expulsarla junto con la arena." },
+    { id:"tc6", pregunta:"¿Qué es el 'rebote' (bounce) de un wedge?", opciones:["Cuando la bola bota en el green","El ángulo de la suela que impide que el palo se entierre en la arena","El efecto de la bola al aterrizar","La curvatura de la cara del wedge"], correcta:1, explicacion:"El bounce es el ángulo de la suela respecto al suelo. Un bounce alto ayuda en bunkers y hierba blanda, evitando que la suela se entierre." },
+    { id:"tc7", pregunta:"¿Qué es el pitch y en qué se diferencia del chip?", opciones:["Son exactamente lo mismo","El pitch tiene más vuelo y menos rodado, el chip lo contrario","El chip tiene más vuelo","El pitch siempre usa el driver"], correcta:1, explicacion:"El pitch es un golpe con más elevación y menos rodado que el chip, ideal para distancias medias (20-80m) donde necesitas parar la bola rápidamente en el green." },
+    { id:"tc8", pregunta:"¿Qué es el 'up and down'?", opciones:["Un tipo de swing","Embocar en dos golpes desde fuera del green (chip/bunker + putt)","Cuando la bola sube y baja en el air","Un ejercicio de calentamiento"], correcta:1, explicacion:"El up and down es conseguir embocar en dos golpes desde alrededor del green: el primer golpe (chip, pitch o bunker) y luego el putt." },
+  ],
+  "Juego Largo": [
+    { id:"tl1", pregunta:"¿Dónde debe estar la bola en la postura para el driver?", opciones:["Centro del stance","A la altura del pie trasero","Alineada con el talón del pie delantero","A la altura del pie delantero pero un poco dentro"], correcta:2, explicacion:"Con el driver la bola se coloca alineada con el talón del pie delantero para golpear en el punto más alto del arco del swing (ascendente) y maximizar distancia." },
+    { id:"tl2", pregunta:"¿Qué es el 'lag' en el swing?", opciones:["El retraso del cuerpo respecto a los brazos","El ángulo de palanca formado entre los brazos y el palo en la bajada","El seguimiento del palo tras el impacto","La posición del cuerpo en el backswing"], correcta:1, explicacion:"El lag es el ángulo de palanca formado entre los antebrazos y el shaft del palo durante la bajada. Un buen lag acumula energía que se libera en el impacto para mayor velocidad." },
+    { id:"tl3", pregunta:"¿Qué produce un draw (curva de derecha a izquierda para diestros)?", opciones:["Cara abierta respecto al camino del swing","Cara cerrada respecto al camino del swing","Swing de fuera a dentro","Grip muy débil"], correcta:1, explicacion:"Un draw se produce cuando la cara está ligeramente cerrada respecto al camino del swing (de dentro a fuera). La bola sale con efecto de topspin lateral que la curva hacia la izquierda." },
+    { id:"tl4", pregunta:"¿Qué es el 'tempo' en el swing de golf?", opciones:["La velocidad máxima del swing","La proporción de tiempo entre backswing y downswing","El ritmo de los pasos al caminar","La velocidad de la cabeza del palo en el impacto"], correcta:1, explicacion:"El tempo es la proporción entre backswing y downswing. Los mejores jugadores tienen un ratio aproximado de 3:1 (el backswing dura 3 veces más que el downswing)." },
+    { id:"tl5", pregunta:"¿Qué es el 'angle of attack' o ángulo de ataque?", opciones:["El ángulo del grip","El ángulo con que la cabeza del palo golpea la bola (ascendente o descendente)","El ángulo de apertura de la cara","La dirección del swing"], correcta:1, explicacion:"El ángulo de ataque es si la cabeza del palo va descendiendo o ascendiendo al impactar la bola. Con hierros: descendente. Con driver: ascendente para maximizar distancia." },
+    { id:"tl6", pregunta:"¿Qué causa una bola que sale directa y recta hacia la izquierda para un diestro (pull)?", opciones:["Swing de dentro a fuera con cara cerrada","Swing de fuera a dentro con la cara cuadrada al camino del swing","Grip demasiado fuerte","Peso atrás en el impacto"], correcta:1, explicacion:"Un pull es resultado de un swing de fuera a dentro (over the top) con la cara perpendicular al camino del swing. La bola sale directamente hacia la izquierda sin curva." },
+    { id:"tl7", pregunta:"¿Por qué es importante la posición de la columna en la postura?", opciones:["Para parecer más profesional","Para permitir la rotación correcta del torso sin restricciones","Para tener más fuerza en los brazos","No tiene importancia"], correcta:1, explicacion:"La columna inclinada hacia delante (tilt) desde las caderas y ligeramente hacia atrás en la parte superior permite la rotación completa del torso y caderas sin bloqueos." },
+    { id:"tl8", pregunta:"¿Qué es el 'smash factor'?", opciones:["Cuando la bola impacta en el árbil","La relación entre la velocidad de la bola y la velocidad de la cabeza del palo","La fuerza del impacto medida en decibelios","El ángulo de la cara en el impacto"], correcta:1, explicacion:"El smash factor es la eficiencia del impacto: velocidad de la bola dividido por velocidad de cabeza de palo. El máximo con driver es ~1.5. Un smash factor alto significa impacto en el sweet spot." },
+  ],
+  "Estrategia": [
+    { id:"te1", pregunta:"En un par 3 con agua delante del green, ¿cuál es la estrategia más segura para un jugador de 20 de hándicap?", opciones:["Apuntar directamente a la bandera","Apuntar al centro del green aunque la bandera esté al fondo","Apuntar detrás del green (largo es mejor)","Usar el palo más largo posible"], correcta:1, explicacion:"El centro del green garantiza llegar al green evitando el agua. Para un 20 hcp, el centro siempre es mejor objetivo que la bandera que puede estar con agua justo delante." },
+    { id:"te2", pregunta:"¿Qué es el 'miss management'?", opciones:["Errores de caddie","Planificar deliberadamente dónde quieres que la bola vaya si fallas, eligiendo el lado seguro","Gestionar el tiempo entre golpes","Calcular el número de mis por ronda"], correcta:1, explicacion:"Miss management es decidir antes de golpear qué lado es el error 'aceptable'. Si hay agua a la izquierda, apuntas ligeramente a la derecha para que un error izquierdo sea aceptable." },
+    { id:"te3", pregunta:"Llevas -2 en los últimos 3 hoyos con par 4 difíciles. ¿Qué estrategia priorizas?", opciones:["Atacar banderas para intentar pares","Jugar seguro apuntando al centro del green","Usar solo hierros cortos para mayor precisión","Ir a por birdies en todos los hoyos"], correcta:1, explicacion:"Cuando vas bien en el score, la gestión conservadora (centro del green, bogeys aceptables) es más inteligente que arriesgar dobles bogeys intentando banderas difíciles." },
+    { id:"te4", pregunta:"¿Qué factor tiene mayor impacto en el score de un amateur?", opciones:["La distancia con el driver","El número de putts","El juego corto y evitar penalizaciones","La precisión con los hierros"], correcta:2, explicacion:"Para los amateurs, el mayor impacto en el score viene de evitar penalizaciones (OB, agua) y del juego corto (chips y putts). La distancia importa mucho menos." },
+    { id:"te5", pregunta:"¿Cuándo es correcto 'jugar seguro' y quedar corto intencionadamente?", opciones:["Nunca, siempre hay que ir al green","Cuando hay una trampa peligrosa justo detrás del green","Solo en los primeros hoyos","Cuando estás nervioso"], correcta:1, explicacion:"Si hay un peligro severo (barranco, OB, bunker profundo) detrás del green, quedarse corto intencionalmente es una decisión estratégica inteligente que evita scores desastrosos." },
+    { id:"te6", pregunta:"En viento en contra intenso, ¿cuál es el ajuste correcto?", opciones:["Pegar más fuerte con el mismo palo","Tomar más palo y swing más suave","Cerrar la cara del palo","Abrir la postura"], correcta:1, explicacion:"En viento en contra se toma más palo (1-3 palos dependiendo del viento) y se hace un swing más controlado (75-80%). Un swing fuerte genera más efecto y la bola sube más, empeorando el efecto del viento." },
+    { id:"te7", pregunta:"¿Qué es el 'course management'?", opciones:["El mantenimiento del campo de golf","La planificación inteligente de cada golpe basada en el propio nivel, el diseño del hoyo y las condiciones","Llevar el recuento de golpes del campo","La gestión del tiempo durante la ronda"], correcta:1, explicacion:"Course management es la disciplina de planificar cada hoyo estratégicamente: elegir el objetivo correcto, el palo adecuado y el tipo de golpe basado en el contexto completo." },
+    { id:"te8", pregunta:"En un hoyo par 5, un jugador de 18 hcp, ¿cuál es la estrategia óptima?", opciones:["Intentar alcanzar el green en 2 golpes siempre","3 golpes tranquilos para llegar al green y luego puttear","Driver máximo distancia + madera al green","Siempre hierro de salida para mayor seguridad"], correcta:1, explicacion:"Para un 18 hcp en un par 5, la estrategia óptima es dividir el hoyo en 3 golpes cómodos: salida controlada, segundo a zona de ataque, approach tranquilo al green. El par 6 es un resultado excelente." },
+  ],
+  "Reglas": [
+    { id:"tr1", pregunta:"¿Cuánto tiempo tienes para buscar una bola antes de declararla perdida?", opciones:["5 minutos","3 minutos","2 minutos","Sin límite de tiempo"], correcta:1, explicacion:"Desde 2019, el tiempo de búsqueda se redujo de 5 a 3 minutos. Pasados los 3 minutos, la bola se declara perdida y debes aplicar golpe y distancia." },
+    { id:"tr2", pregunta:"¿Puedes mover una piedra en un bunker que molesta a tu swing?", opciones:["No, nunca","Sí siempre, es un obstáculo suelto","Sí, si no está tocando tu bola","Solo si el árbitro lo permite"], correcta:1, explicacion:"Las piedras son obstáculos sueltos y pueden removerse en cualquier zona, incluido el bunker, siempre que no muevas la bola. Si la bola se mueve al retirar la piedra, hay 1 golpe de penalización." },
+    { id:"tr3", pregunta:"¿Qué es una bola provisional y cuándo se juega?", opciones:["Una bola de repuesto para training","Se juega cuando crees que tu bola puede estar perdida o OB, para ahorrar tiempo","Siempre que entras en rough","Cuando hay agua en el camino"], correcta:1, explicacion:"La bola provisional se juega cuando sospechas que tu bola puede estar perdida o OB (no en zona de penalización). Si encuentras la original en terreno en juego, debes jugar con la original." },
+    { id:"tr4", pregunta:"¿Puedes pedir consejo a un compañero durante el juego?", opciones:["Sí siempre","Solo entre socios en mejor bola","No, pedir consejo a alguien que no sea tu caddie es penalización de 2 golpes","Solo en los primeros 9 hoyos"], correcta:2, explicacion:"Pedir consejo (qué palo, cómo golpear) a otro jugador que no sea tu caddie es penalización de 2 golpes en stroke play o pérdida del hoyo en match play." },
+    { id:"tr5", pregunta:"¿Qué ocurre si mueves accidentalmente tu bola al retirar un obstáculo suelto?", opciones:["2 golpes de penalización","1 golpe de penalización y repones la bola","Sin penalización, repones la bola","Debes jugar desde donde quedó"], correcta:1, explicacion:"Si la bola se mueve accidentalmente al retirar un obstáculo suelto: 1 golpe de penalización y debes reponer la bola en su posición original." },
+    { id:"tr6", pregunta:"En el green, ¿puedes reparar picos de zapatos en tu línea de putt?", opciones:["No, nunca","Sí, desde 2019 puedes reparar cualquier daño en el green en tu línea","Solo pichmarks naturales","Solo si el árbitro lo autoriza"], correcta:1, explicacion:"Desde 2019, puedes reparar cualquier daño en el green, incluyendo marcas de picos, animales, reparaciones antiguas, etc., estén o no en tu línea de putt." },
+    { id:"tr7", pregunta:"¿Qué penalización tiene jugar desde fuera del área de tee?", opciones:["Descalificación","2 golpes de penalización y debes repetir el golpe desde dentro del tee","1 golpe de penalización","Sin penalización, solo aviso"], correcta:1, explicacion:"En stroke play, jugar desde fuera del área de tee (los dos tees + 2 palos hacia atrás) conlleva 2 golpes de penalización y debes repetir el golpe desde el área correcta." },
+    { id:"tr8", pregunta:"¿Puedes usar un rangefinder (medidor de distancias) en competición?", opciones:["Nunca en competición","Sí si la condición local de la competición lo permite","Solo para medir distancias, nunca pendiente","Solo en rondas de prácticas"], correcta:1, explicacion:"Desde 2019, el uso de medidores de distancia está permitido salvo que la organización lo prohíba expresamente. Si el aparato mide pendiente o viento, debe desactivarse esa función." },
+  ],
+  "Mental": [
+    { id:"tm1", pregunta:"¿Qué es el 'first tee nerves' y cómo se gestiona?", opciones:["Un tipo de hierba en el tee","Los nervios en el primer hoyo; se gestiona con respiración profunda, rutina habitual y reducir las expectativas","Un calentamiento obligatorio","La temperatura del campo por la mañana"], correcta:1, explicacion:"Los nervios en el primer tee son normales y útiles si se gestionan bien. La clave: rutina previa idéntica a siempre, respiración diafragmática, y bajar las expectativas del primer golpe." },
+    { id:"tm2", pregunta:"¿Qué es el 'yips' en el putt?", opciones:["Un tipo de grip","Un espasmo involuntario del brazo o muñeca durante el putt, frecuentemente asociado a ansiedad","Un error de lectura del green","Una técnica de putt alternativa"], correcta:1, explicacion:"Los yips son movimientos involuntarios (temblores, espasmos) durante el putt causados por ansiedad o bloqueo neuromotor. Se tratan con cambio de grip, rutina diferente o apoyo psicológico." },
+    { id:"tm3", pregunta:"¿Cuál es la diferencia entre 'proceso' y 'resultado' en el golf mental?", opciones:["No hay diferencia","El foco en el proceso significa concentrarse en la ejecución (alineación, ritmo); el resultado es el score final. El mental fuerte focaliza en el proceso","El proceso es el calentamiento","El resultado es siempre lo más importante"], correcta:1, explicacion:"El foco en el proceso (qué hago ahora mismo: alineación, ritmo, target) genera mejores resultados que obsesionarse con el score. Es un principio fundamental del golf de alto rendimiento." },
+    { id:"tm4", pregunta:"¿Qué es la 'zona' o 'flow' en el deporte?", opciones:["Una zona del campo","Estado de máximo rendimiento con concentración plena y ejecución automática sin pensamiento consciente","Una técnica de respiración","El área alrededor del green"], correcta:1, explicacion:"El 'flow' o zona es el estado óptimo de rendimiento donde el jugador ejecuta de forma automática sin pensamiento consciente excesivo. Se busca con rutinas, respiración y foco en el proceso." },
+    { id:"tm5", pregunta:"¿Cómo influye el diálogo interno negativo en el rendimiento?", opciones:["No influye, el golf es solo técnico","Aumenta la tensión muscular y reduce la velocidad del swing y la coordinación, empeorando el rendimiento","Solo afecta a principiantes","Mejora la concentración"], correcta:1, explicacion:"El diálogo interno negativo activa la respuesta de estrés: aumenta tensión muscular, reduce coordinación y velocidad de proceso. Sustituir con afirmaciones neutras o técnicas (ej: 'ritmo suave') mejora el rendimiento." },
+  ],
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: EJERCICIOS Y TESTS — PANEL INSTRUCTOR
+// ═══════════════════════════════════════════════════════════════════
+
+const CATS = ["Todos","Putt","Juego Corto","Juego Largo","Estrategia","Reglas","Mental","Fitness Golf"];
+const CAT_COLORS = {
+  "Putt":"green","Juego Corto":"gold","Juego Largo":"blue",
+  "Estrategia":"orange","Reglas":"red","Mental":"purple","Fitness Golf":"teal",
+  "Drive":"blue","Hierros":"gray","Approach":"gold","Bunker":"orange","Chip":"green","Swing":"purple"
+};
+const CAT_ICONS = {
+  "Putt":"🎯","Juego Corto":"⛳","Juego Largo":"🏌️",
+  "Estrategia":"🧠","Reglas":"📋","Mental":"💭","Fitness Golf":"💪",
+  "Drive":"🚀","Hierros":"⚙️","Approach":"🎪","Bunker":"🏖️","Chip":"🏑","Swing":"🔄"
+};
+
+
+// ═══════════════════════════════════════════════════════════════════
+// GRUPOS DE EDAD — Escuela de Golf Ciudad Real 2026/2027
+// ═══════════════════════════════════════════════════════════════════
+const GRUPOS_EDAD = [
+  // ── Categorías infantiles/juveniles (por edad) ──
+  { id:"prebenjamin", nombre:"Prebenjamín", rango:"5-7 años",   color:"#f5a623", emoji:"🐣", descripcion:"Iniciación lúdica. Juego libre, coordinación básica y amor por el deporte." },
+  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#7b5ea7", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
+  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#3a7abf", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
+  { id:"infantil",    nombre:"Infantil",    rango:"13-14 años", color:"#16a085", emoji:"🦅", descripcion:"Perfeccionamiento técnico y preparación para competición." },
+  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#2e7d3c", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
+  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#c0392b", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
+  { id:"sub21",       nombre:"Sub-21",      rango:"19-21 años", color:"#8e44ad", emoji:"🎓", descripcion:"Categoría juvenil superior. Competición avanzada y desarrollo de élite." },
+  // ── Grupos de adultos / modalidades ──
+  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#2e7d3c", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
+  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#1a5c2a", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
+  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#c8a84b", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
+  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#e67e22", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
+  { id:"bono_5",                 nombre:"Bono 5 Clases",        rango:"Adultos", color:"#3498db", emoji:"🎫", descripcion:"Paquete de 5 clases. Ahorro y continuidad en el aprendizaje." },
+  { id:"bono_10",                nombre:"Bono 10 Clases",       rango:"Adultos", color:"#2980b9", emoji:"🎟️", descripcion:"Paquete de 10 clases. Máximo ahorro y progresión sostenida." },
+  { id:"curso_hcp10",            nombre:"Curso Hándicap (10h)", rango:"Adultos", color:"#9b59b6", emoji:"📊", descripcion:"Curso intensivo de 10 horas para obtener la licencia y el hándicap." },
+];
+
+const EJERCICIOS_CURSO = [
+{id:"p001",grupo:"prebenjamin",trimestre:1,semana:1,categoria:"Coordinación",nombre:"El Globo de Golf",objetivo:"Coordinación ojo-mano y equilibrio.",descripcion:"Golpear globos inflados con palos esponja (pool noodle). Objetivo: mantener el globo en el aire el mayor tiempo posible.",duracion:"15 min",material:"Globos, palos esponja",variantes:["En parejas pasan el globo", "Con la mano izquierda", "Contar cada golpe"],tags:["coordinación", "lúdico"]},
+{id:"p002",grupo:"prebenjamin",trimestre:1,semana:2,categoria:"Putting",nombre:"El Puente de los Tesoros",objetivo:"Primera toma de contacto con el putting.",descripcion:"Bloques de foam forman 'puentes'. Los niños hacen pasar la bola por debajo rodando con el putter.",duracion:"15 min",material:"Putter junior, bolas foam, bloques",variantes:["Puentes más estrechos", "En curva", "Varios en serie"],tags:["putt", "lúdico", "primera vez"]},
+{id:"p003",grupo:"prebenjamin",trimestre:1,semana:3,categoria:"Coordinación",nombre:"La Caza del Balón",objetivo:"Carrera, equilibrio y contacto básico.",descripcion:"Pelotas de colores por el campo. Los niños las 'cazan' golpeándolas hacia una zona marcada. Cada color vale diferente puntuación.",duracion:"20 min",material:"Palos esponja, bolas de colores, conos",variantes:["Equipos compitiendo", "Solo bolas del propio color", "Carrera al golpear"],tags:["lúdico", "colores"]},
+{id:"p004",grupo:"prebenjamin",trimestre:1,semana:4,categoria:"Swing",nombre:"El Árbol que Baila",objetivo:"Aprender la rotación básica del cuerpo.",descripcion:"Imitar un árbol en el viento: brazos extendidos, girando el tronco a derecha e izquierda. Luego añadimos el palo.",duracion:"15 min",material:"Palos esponja",variantes:["Con música rítmica", "En parejas imitando", "Ojos cerrados"],tags:["rotación", "lúdico", "swing"]},
+{id:"p005",grupo:"prebenjamin",trimestre:1,semana:5,categoria:"Putting",nombre:"La Pista de Bolos",objetivo:"Control de dirección y fuerza en putt básico.",descripcion:"Conos como bolos a 2 metros. Los niños los derriban con la bola usando el putter. Gana quien más derriba en 5 intentos.",duracion:"15 min",material:"Putter junior, bolas foam, conos",variantes:["Bolos a 3m", "Formaciones distintas", "En parejas"],tags:["dirección", "bolos", "putt"]},
+{id:"p006",grupo:"prebenjamin",trimestre:1,semana:6,categoria:"Chip",nombre:"La Rana Saltarina",objetivo:"Primer contacto con el chip levantando la bola.",descripcion:"Con un hierro 9 junior, los niños intentan que la bola 'salte' sobre una cuerda tendida a 20cm del suelo.",duracion:"15 min",material:"Hierro 9 junior, bolas foam, cuerda",variantes:["Cuerda más alta (30cm)", "Aterrizar en zona marcada", "Varios saltos"],tags:["chip", "altura", "lúdico"]},
+{id:"p007",grupo:"prebenjamin",trimestre:1,semana:7,categoria:"Juego",nombre:"Golf de Colores",objetivo:"Aprender la idea de fairway-green-hoyo lúdicamente.",descripcion:"Minicircuito de 3 hoyos con conos de colores. Los niños recorren el circuito golpeando la bola hasta el cono de su color.",duracion:"25 min",material:"Palos junior, bolas, conos de 3 colores",variantes:["Añadir un cuarto hoyo", "En equipos", "Con puntuación"],tags:["circuito", "lúdico", "colores"]},
+{id:"p008",grupo:"prebenjamin",trimestre:1,semana:8,categoria:"Coordinación",nombre:"El Equilibrista",objetivo:"Mejorar el equilibrio estático y dinámico.",descripcion:"Los niños caminan sobre una línea con la bola equilibrada en la cabeza del putter. Sin dejarla caer llegan al hoyo.",duracion:"15 min",material:"Putter junior, bolas foam",variantes:["Con obstáculos", "En parejas", "Con música y pausas"],tags:["equilibrio", "lúdico"]},
+{id:"p009",grupo:"prebenjamin",trimestre:2,semana:9,categoria:"Putting",nombre:"El Túnel Mágico",objetivo:"Mejorar la precisión en putt en línea recta.",descripcion:"Dos palos paralelos a 30cm de ancho forman un túnel. Los niños practican el putt pasando la bola por el túnel.",duracion:"15 min",material:"Putter junior, bolas, 4 palos como guías",variantes:["Túnel más estrecho", "Más largo", "Con curva al final"],tags:["putt", "precisión", "guía"]},
+{id:"p010",grupo:"prebenjamin",trimestre:2,semana:10,categoria:"Juego",nombre:"Quién Llega Primero",objetivo:"Motivar la competición sana.",descripcion:"Dos niños salen a la vez. Gana quien llega primero al cono objetivo a 15m. Solo se puede avanzar golpeando.",duracion:"20 min",material:"Palos junior, bolas, conos",variantes:["En equipos de 2", "Con obstáculos", "Distancia progresiva"],tags:["competición", "lúdico", "carrera"]},
+{id:"p011",grupo:"prebenjamin",trimestre:2,semana:11,categoria:"Swing",nombre:"La Máquina de Nieve",objetivo:"Sentir el peso del palo y el movimiento pendular.",descripcion:"Una media con pelota de tenis dentro oscila como péndulo. Los niños transfieren ese ritmo al swing con el palo esponja.",duracion:"15 min",material:"Media con pelota de tenis, palo esponja",variantes:["Con palo real", "Contar el ritmo en voz alta", "En espejo con el profesor"],tags:["ritmo", "péndulo", "swing"]},
+{id:"p012",grupo:"prebenjamin",trimestre:2,semana:12,categoria:"Chip",nombre:"El Cesto de Frutas",objetivo:"Apuntar y aterrizar la bola en zona objetivo.",descripcion:"Cestos de diferentes tamaños a 5, 8 y 10 metros. Los niños intentan que la bola aterrice dentro del cesto con chip corto.",duracion:"15 min",material:"Hierro 9 junior, bolas foam, cestos",variantes:["Solo el más lejano", "Puntos según cesto", "Por equipos"],tags:["chip", "puntería", "cestos"]},
+{id:"p013",grupo:"prebenjamin",trimestre:2,semana:13,categoria:"Putting",nombre:"El Río Serpenteante",objetivo:"Practicar el putt siguiendo una línea.",descripcion:"Camino serpenteante con cinta de colores. Los niños hacen rodar la bola siguiendo el camino hasta el hoyo al final.",duracion:"15 min",material:"Putter junior, bolas, cinta adhesiva",variantes:["Más curvas", "A más velocidad", "Sin salirse del camino"],tags:["putt", "curva", "camino"]},
+{id:"p014",grupo:"prebenjamin",trimestre:2,semana:14,categoria:"Juego",nombre:"La Gran Exploración",objetivo:"Descubrir el campo de golf de forma lúdica.",descripcion:"Excursión por el campo real. El profesor explica cada zona (fairway, green, bunker, rough) con metáforas de animales y colores.",duracion:"40 min",material:"Palos junior",variantes:["Con mapa dibujado", "Fotos con tableta", "Preguntas con premio"],tags:["exploración", "campo real"]},
+{id:"p015",grupo:"prebenjamin",trimestre:2,semana:15,categoria:"Coordinación",nombre:"El Malabarista",objetivo:"Mejorar la coordinación bilateral y el ritmo.",descripcion:"Con dos palos esponja, los niños golpean alternativamente dos bolas foam situadas a ambos lados. Rítmico y alternado.",duracion:"15 min",material:"2 palos esponja, 2 bolas foam",variantes:["Una mano sola", "Con música", "Más rápido o más lento"],tags:["bilateral", "ritmo", "coordinación"]},
+{id:"p016",grupo:"prebenjamin",trimestre:3,semana:16,categoria:"Chip",nombre:"La Pesca Milagrosa",objetivo:"Afianzar el chip corto con control.",descripcion:"Se pinta un lago azul en el suelo. Hay que chipear desde fuera y hacer que la bola vuele el lago y aterrice al otro lado.",duracion:"15 min",material:"Hierro 9 junior, bolas foam, cinta azul",variantes:["Lago más grande", "Objetivo al otro lado", "En equipo"],tags:["chip", "altura", "agua"]},
+{id:"p017",grupo:"prebenjamin",trimestre:3,semana:17,categoria:"Putting",nombre:"El Carrusel de Hoyos",objetivo:"Practicar putt en circuito de 6 miniatureholes.",descripcion:"6 mini-hoyos con nombre de animal. Los niños rotan en parejas.",duracion:"30 min",material:"Putter junior, bolas, 6 hoyos con banderines",variantes:["Con tiempo límite", "Puntuación acumulada", "En solitario"],tags:["circuito", "putt", "rotación"]},
+{id:"p018",grupo:"prebenjamin",trimestre:3,semana:18,categoria:"Swing",nombre:"El Espejo Mágico",objetivo:"Aprender imitación postural.",descripcion:"En parejas frente a frente, uno hace de espejo e imita el swing del otro a velocidad muy lenta.",duracion:"15 min",material:"Palos esponja o junior",variantes:["Con profesor como modelo", "En fila india", "Con música lenta"],tags:["imitación", "espejo", "postura"]},
+{id:"p019",grupo:"prebenjamin",trimestre:3,semana:19,categoria:"Juego",nombre:"El Tesoro Pirata",objetivo:"Desarrollar orientación espacial jugando al golf.",descripcion:"El profesor esconde tesoros (conos de colores). Los niños reciben un mapa dibujado y deben llegar a cada tesoro golpeando la bola.",duracion:"35 min",material:"Palos junior, bolas, mapa dibujado, conos",variantes:["Mapa más complejo", "Pistas con adivinanzas", "En equipos"],tags:["orientación", "mapa", "lúdico"]},
+{id:"p020",grupo:"prebenjamin",trimestre:3,semana:20,categoria:"Coordinación",nombre:"La Danza del Golf",objetivo:"Integrar el movimiento del swing en la memoria corporal.",descripcion:"Al ritmo de música infantil: backswing (brazos arriba), impacto (palmada), follow-through (giro). Sin palo ni bola primero.",duracion:"15 min",material:"Música, altavoz",variantes:["Con palo esponja", "Con bola al final", "Coreografía inventada por los niños"],tags:["música", "ritmo", "danza"]},
+{id:"p021",grupo:"prebenjamin",trimestre:3,semana:21,categoria:"Putting",nombre:"La Pared de Queso",objetivo:"Practicar el putt recto hacia un objetivo fijo.",descripcion:"Tabla de madera como pared a 2 metros. Los niños dan en la pared con el putt. Retroceden 50 cm cada vez que aciertan.",duracion:"15 min",material:"Putter junior, bolas foam, tabla/cartón",variantes:["Pared más pequeña", "Desde distintos ángulos", "Con puntuación"],tags:["putt", "precisión", "progresivo"]},
+{id:"p022",grupo:"prebenjamin",trimestre:3,semana:22,categoria:"Chip",nombre:"El Helicóptero",objetivo:"Sentir la elevación de la bola en el chip.",descripcion:"El niño hace un movimiento suave hacia arriba intentando elevar la bola. El profesor refuerza el momento exacto del contacto.",duracion:"15 min",material:"Hierro 9 junior, bolas foam en tee bajo",variantes:["Sobre tee alto primero", "Luego tee bajo", "Finalmente en el suelo"],tags:["chip", "elevación", "tee"]},
+{id:"p023",grupo:"prebenjamin",trimestre:4,semana:23,categoria:"Juego",nombre:"El Gran Premio",objetivo:"Primer torneo informal y vivencia de la competición positiva.",descripcion:"Torneo de 3 hoyos adaptados. Par 3 de 20m cada uno. Todos reciben medalla de participación.",duracion:"45 min",material:"Palos junior, bolas, banderines, medallas",variantes:["Jugar en parejas", "Con padres como caddies", "Foto de equipo"],tags:["torneo", "primer torneo", "medalla"]},
+{id:"p024",grupo:"prebenjamin",trimestre:4,semana:24,categoria:"Putting",nombre:"El Laberinto",objetivo:"Control de dirección y fuerza en espacios limitados.",descripcion:"Laberinto en el putting green con palos tumbados como paredes. Los niños navegan la bola por el laberinto hasta el hoyo.",duracion:"20 min",material:"Putter junior, bolas, 8-10 palos como paredes",variantes:["Laberinto más complejo", "Contrarreloj", "Por relevos"],tags:["laberinto", "putt", "dirección"]},
+{id:"p025",grupo:"prebenjamin",trimestre:4,semana:25,categoria:"Swing",nombre:"El Samurái del Golf",objetivo:"Afianzar la postura y el agarre correctos.",descripcion:"Con música épica: postura del samurái. Foto final de todos como samuráis.",duracion:"15 min",material:"Palos junior, música",variantes:["Foto de equipo", "Con espejo", "Profesor modelando"],tags:["postura", "agarre", "motivación"]},
+{id:"p026",grupo:"prebenjamin",trimestre:4,semana:26,categoria:"Coordinación",nombre:"El Circuito Olímpico",objetivo:"Desarrollar agilidad, equilibrio y contacto con la bola.",descripcion:"5 estaciones: saltar conos, rodar bola con el palo, chip a cesto, putt al hoyo, slalom. Puntuación por tiempo y aciertos.",duracion:"30 min",material:"Conos, palos junior, bolas, cestos",variantes:["Contrarreloj", "Por equipos", "Dificultad creciente"],tags:["circuito", "agilidad", "polideportivo"]},
+{id:"p027",grupo:"prebenjamin",trimestre:4,semana:27,categoria:"Chip",nombre:"El Aeropuerto",objetivo:"Afianzar la idea de vuelo y aterrizaje de la bola.",descripcion:"El green es el aeropuerto. Los niños hacen aterrizar la bola en distintas pistas (zonas marcadas con cintas).",duracion:"15 min",material:"Hierro 9 junior, bolas foam, cintas de colores",variantes:["Pistas más pequeñas", "Puntos por pista", "En equipos"],tags:["chip", "aterrizaje", "puntería"]},
+{id:"p028",grupo:"prebenjamin",trimestre:4,semana:28,categoria:"Juego",nombre:"Safari de Golf",objetivo:"Consolidar todo lo aprendido de forma lúdica.",descripcion:"6 hoyos temáticos con nombre de animales africanos. Cada hoyo tiene un desafío diferente. Los niños llevan su tarjeta de safari.",duracion:"50 min",material:"Palos junior, bolas, 6 hoyos temáticos, tarjetas",variantes:["Con padres", "Fotografiando cada hoyo", "Puntuación colectiva"],tags:["safari", "circuito", "consolidación"]},
+{id:"p029",grupo:"prebenjamin",trimestre:1,semana:3,categoria:"Coordinación",nombre:"La Pelota Rodante",objetivo:"Control del palo para rodar la bola en línea recta.",descripcion:"Los niños empujan la bola con el palo manteniéndola rodando. Deben llevarla de un cono a otro sin levantarla del suelo.",duracion:"10 min",material:"Palo junior, bola foam",variantes:["Slalom entre conos", "Con ojos cerrados", "En parejas"],tags:["control", "rodar", "primer contacto"]},
+{id:"p030",grupo:"prebenjamin",trimestre:2,semana:11,categoria:"Putting",nombre:"El Camino de Baldosas",objetivo:"Memorizar una línea de putt y ejecutarla.",descripcion:"5 alfombrillas de colores en línea recta hasta el hoyo. El niño hace pasar la bola por encima de cada alfombrilla en orden.",duracion:"15 min",material:"Putter junior, bolas, 5 alfombrillas de colores",variantes:["Alfombrillas no alineadas", "Más alfombrillas", "Cronometrado"],tags:["putt", "secuencia", "alfombrillas"]},
+{id:"p031",grupo:"prebenjamin",trimestre:3,semana:17,categoria:"Chip",nombre:"El Zoo de Pelotas",objetivo:"Clasificar y golpear bolas de colores a cestos.",descripcion:"Bolas de 4 colores mezcladas. Cada cesto tiene un color. Los niños golpean solo las bolas de su cesto. Gana quien primero llena el suyo.",duracion:"20 min",material:"Hierro 9 junior, bolas de 4 colores, 4 cestos",variantes:["Con señal de cambio de color", "Sin separar colores", "Carreras"],tags:["clasificar", "chip", "colores"]},
+{id:"p032",grupo:"prebenjamin",trimestre:4,semana:23,categoria:"Swing",nombre:"El Robot de Golf",objetivo:"Identificar las partes del swing de forma divertida.",descripcion:"El profesor hace de robot programador. Los niños son robots a los que hay que programar: agarre, postura, backswing, etc.",duracion:"20 min",material:"Palos junior",variantes:["Niños programan al profesor", "Tarjetas de partes del swing", "Música de robot"],tags:["swing", "partes", "robot"]},
+{id:"p033",grupo:"prebenjamin",trimestre:1,semana:5,categoria:"Coordinación",nombre:"El Juego de los Globos",objetivo:"Reacción rápida y coordinación ojo-mano.",descripcion:"El profesor lanza globos al aire. Los niños deben golpearlos con palos esponja antes de que toquen el suelo.",duracion:"15 min",material:"Globos, palos esponja",variantes:["2 globos a la vez", "Globos de un solo color", "Con música rápida"],tags:["globos", "reacción", "coordinación"]},
+{id:"p034",grupo:"prebenjamin",trimestre:2,semana:13,categoria:"Juego",nombre:"El Golf de la Selva",objetivo:"Jugar un recorrido temático imaginativo.",descripcion:"El campo se convierte en selva: conos son árboles, telas azules son ríos. El profesor narra la historia mientras los niños juegan.",duracion:"30 min",material:"Conos, telas azules, palos junior, bolas",variantes:["Con disfraces de explorador", "Historia narrada por los niños", "Fotos del recorrido"],tags:["selva", "imaginación", "narración"]},
+{id:"p035",grupo:"prebenjamin",trimestre:3,semana:19,categoria:"Putting",nombre:"El Putt Cooperativo",objetivo:"Fomentar el trabajo en equipo en el golf.",descripcion:"En grupos de 3, deben llegar al hoyo en exactamente 3 putts: cada niño da un putt. Si los 3 llegan al hoyo, ganan un punto.",duracion:"20 min",material:"Putters junior, bolas",variantes:["En 4 putts para 4 niños", "Con conversación de equipo antes", "Puntuación colectiva"],tags:["cooperación", "equipo", "putt"]},
+{id:"p036",grupo:"prebenjamin",trimestre:1,semana:6,categoria:"Coordinación",nombre:"Pies de Golf",objetivo:"Aprender la posición de los pies correcta.",descripcion:"Siluetas de pies dibujadas en el suelo. Los niños colocan sus pies en las siluetas correctas (ancho de hombros) y practican la postura.",duracion:"10 min",material:"Siluetas de pies en cartulina o en el suelo",variantes:["Con y sin palo", "Buscar la postura cómoda", "Foto de la postura correcta"],tags:["postura", "pies", "fundamentos"]},
+{id:"p037",grupo:"prebenjamin",trimestre:1,semana:7,categoria:"Swing",nombre:"La Palmera",objetivo:"Sentir el follow-through completo.",descripcion:"Terminar el swing con los brazos bien arriba como una palmera. El profesor pega una palmera de papel en la pared.",duracion:"10 min",material:"Palo esponja, palmera de papel en pared",variantes:["Palmera más alta", "Con palo real", "En espejo"],tags:["follow-through", "acabado", "palmera"]},
+{id:"p038",grupo:"prebenjamin",trimestre:2,semana:9,categoria:"Chip",nombre:"El Saltamontes",objetivo:"Dar saltos cortos con la bola como un saltamontes.",descripcion:"La bola debe saltar 3 veces antes de llegar al objetivo a 6 metros. Los niños cuentan los botes en voz alta.",duracion:"15 min",material:"Hierro 9 junior, bolas",variantes:["Contar en inglés", "Zonas marcadas para cada bote", "Variar la distancia"],tags:["chip", "botes", "contar"]},
+{id:"p039",grupo:"prebenjamin",trimestre:2,semana:10,categoria:"Juego",nombre:"La Vuelta al Mundo",objetivo:"Repasar todas las habilidades del trimestre.",descripcion:"6 estaciones representando 6 países. En cada país hay un reto diferente. Los niños llevan su pasaporte de papel sellándolo.",duracion:"40 min",material:"Palos junior, bolas, 6 estaciones, pasaportes de papel",variantes:["Con música de cada país", "Sellos personalizados", "Trajes típicos"],tags:["repaso", "circuito", "países", "pasaporte"]},
+{id:"p040",grupo:"prebenjamin",trimestre:2,semana:12,categoria:"Putting",nombre:"El Hoyo Hablador",objetivo:"Desarrollar concentración antes del putt.",descripcion:"Muñeco de juguete en el hoyo. El niño debe hablarle diciéndole a dónde va a rodar la bola. Introduce la visualización infantil.",duracion:"10 min",material:"Putter junior, bola, muñeco de juguete",variantes:["El niño inventa el nombre del muñeco", "Con historia del muñeco", "Sin muñeco al final"],tags:["concentración", "visualización", "lúdico"]},
+{id:"p041",grupo:"prebenjamin",trimestre:3,semana:15,categoria:"Swing",nombre:"El Cohete",objetivo:"Sentir la velocidad progresiva del swing.",descripcion:"Cuenta atrás 5-4-3-2-1 y al llegar a 0 el swing explota a máxima velocidad.",duracion:"10 min",material:"Palo esponja o junior",variantes:["Con bola y sin bola", "Cuenta atrás en inglés", "Solo el downswing rápido"],tags:["velocidad", "aceleración", "ritmo"]},
+{id:"p042",grupo:"prebenjamin",trimestre:3,semana:16,categoria:"Chip",nombre:"La Sopa de Letras",objetivo:"Aprender vocabulario de golf chipeando.",descripcion:"Tarjetas con palabras de golf dispersas en el campo. Los niños golpean hacia la tarjeta que el profesor nombra.",duracion:"15 min",material:"Hierro junior, bolas, tarjetas con palabras",variantes:["Con dibujos en vez de palabras", "Vocabulario en inglés", "El que llega lee la palabra"],tags:["vocabulario", "chip", "palabras"]},
+{id:"p043",grupo:"prebenjamin",trimestre:3,semana:18,categoria:"Coordinación",nombre:"El Lazarillo de Golf",objetivo:"Confianza, comunicación y orientación espacial.",descripcion:"En parejas: uno con los ojos tapados guiado por el otro con palabras (izquierda, derecha, fuerte, suave).",duracion:"20 min",material:"Palo junior, bola, venda para los ojos",variantes:["Sin venda pero mirando arriba", "El guía solo toca el hombro", "Cambiar roles"],tags:["confianza", "comunicación", "ciego"]},
+{id:"p044",grupo:"prebenjamin",trimestre:4,semana:21,categoria:"Putting",nombre:"La Pecera",objetivo:"Control de velocidad y distancia en putt.",descripcion:"Círculo grande en el green. Los niños practican putts intentando que la bola pare dentro sin salir.",duracion:"15 min",material:"Putter junior, bola, cinta para marcar el círculo",variantes:["Pecera más pequeña", "Desde más lejos", "El que falla nada por el green"],tags:["velocidad", "control", "pecera"]},
+{id:"p045",grupo:"prebenjamin",trimestre:4,semana:22,categoria:"Juego",nombre:"El Festival de Golf",objetivo:"Celebración de fin de temporada.",descripcion:"Festival en 8 estaciones con padres invitados. Cada niño muestra lo aprendido. Diploma de Pollito Golfista al final.",duracion:"60 min",material:"Toda la equipación, diplomas, música",variantes:["Con fotos para álbum del grupo", "Discurso del profesor", "Merienda de cierre"],tags:["festival", "cierre", "padres", "diploma"]},
+{id:"p046",grupo:"prebenjamin",trimestre:4,semana:24,categoria:"Swing",nombre:"El Ninja del Golf",objetivo:"Reforzar la postura y el swing con un juego de roles.",descripcion:"Los niños son ninjas del golf. Cada swing perfecto es una técnica ninja que se añade a su libro secreto. El profesor evalúa con pegatinas.",duracion:"15 min",material:"Palos junior, pegatinas, libretita ninja",variantes:["Con disfraz", "El grupo vota el mejor ninja", "Técnicas con nombres inventados"],tags:["swing", "motivación", "ninja"]},
+{id:"p047",grupo:"prebenjamin",trimestre:1,semana:8,categoria:"Putting",nombre:"El Pato Donald",objetivo:"Practicar el putt en una sola dirección repetida.",descripcion:"10 bolas en fila atrás del hoyo. Los niños intentan embocar de una en una sin moverse del sitio.",duracion:"10 min",material:"Putter junior, 10 bolas, hoyo",variantes:["15 bolas", "Con tiempo límite", "Celebrando cada emboque"],tags:["putt", "repetición", "paciencia"]},
+{id:"p048",grupo:"prebenjamin",trimestre:2,semana:14,categoria:"Chip",nombre:"La Catapulta",objetivo:"Sentir la potencia controlada en el chip.",descripcion:"Como una catapulta medieval, el niño carga el backswing lento y luego libera rápido en el impacto.",duracion:"10 min",material:"Hierro 9 junior, bolas foam",variantes:["Bolas de distintos pesos", "En parejas", "Con objetivo"],tags:["aceleración", "chip", "catapulta"]},
+{id:"p049",grupo:"prebenjamin",trimestre:3,semana:20,categoria:"Juego",nombre:"El Golf Gigante",objetivo:"Experiencia diferente y memorable del golf.",descripcion:"Se juega con palos de PVC de 2 metros y bolas gigantes. El campo se monta con cubos como hoyos. Todo a escala gigante.",duracion:"30 min",material:"Palos PVC grandes, bolas gigantes, cubos como hoyos",variantes:["En equipos", "Con cronómetro", "Video para los padres"],tags:["gigante", "lúdico", "especial", "memorable"]},
+{id:"p050",grupo:"prebenjamin",trimestre:4,semana:26,categoria:"Coordinación",nombre:"El Gran Circo del Golf",objetivo:"Mostrar todo lo aprendido de forma espectacular.",descripcion:"Los niños montan un número de circo de golf: cada uno tiene un truco practicado durante el año. Función final para los padres.",duracion:"40 min",material:"Toda la equipación, música de circo",variantes:["Con disfraces de artistas", "Narrador el profesor", "Grabación en video"],tags:["circo", "espectáculo", "padres", "trucos"]},
+{id:"e001",grupo:"cadete",trimestre:1,semana:1,categoria:"Postura",nombre:"Los 4 Puntos de Contacto",objetivo:"Establecer la postura correcta.",descripcion:"4 puntos: pies al ancho de hombros, rodillas flexionadas, cadera hacia atrás, espalda recta. El profesor revisa cada punto.",duracion:"15 min",material:"Palo de golf, espejo o pared",variantes:["Foto comparativa antes/después", "Con un palo en la espalda", "Check con compañero"],tags:["postura", "fundamentos"]},
+{id:"e002",grupo:"cadete",trimestre:1,semana:2,categoria:"Agarre",nombre:"Los 3 Grips del Golf",objetivo:"Conocer los tres tipos de agarre.",descripcion:"Los 3 grips: entrelazado (Vardon), baseball y superpuesto. Cada alumno prueba los tres y elige el más cómodo.",duracion:"20 min",material:"Palos de golf",variantes:["Con grip trainer", "Foto de los 3 tipos", "Con ojos cerrados"],tags:["agarre", "grip", "fundamentos"]},
+{id:"e003",grupo:"cadete",trimestre:1,semana:3,categoria:"Putting",nombre:"El Péndulo Perfecto",objetivo:"Aprender el movimiento pendular en putting.",descripcion:"Brazos y putter como péndulo de reloj. Backswing y follow-through iguales. Sin bola primero, luego con bola a 1 metro.",duracion:"20 min",material:"Putter, bola, hoyo",variantes:["Ojos cerrados", "Con guía de palos paralelos", "Con metrónomo app"],tags:["putt", "péndulo", "ritmo"]},
+{id:"e004",grupo:"cadete",trimestre:1,semana:4,categoria:"Chip",nombre:"Posición de la Bola en el Chip",objetivo:"Aprender dónde colocar la bola en distintos chips.",descripcion:"3 posiciones de bola: adelantada, central y atrasada. Cada posición produce un resultado diferente.",duracion:"20 min",material:"Hierro 9, wedge, bolas, marcadores",variantes:["Con 3 palos distintos", "Foto de cada posición", "Anotar distancia conseguida"],tags:["chip", "posición de bola", "experimentar"]},
+{id:"e005",grupo:"cadete",trimestre:1,semana:5,categoria:"Swing",nombre:"Las 9 Posiciones del Swing",objetivo:"Aprender las posiciones clave del swing completo.",descripcion:"El swing tiene 9 posiciones (P1 a P9). Se trabajan de dos en dos pausando en cada una.",duracion:"25 min",material:"Hierro 7, tablet/móvil para fotos",variantes:["En espejo", "Video a cámara lenta", "Ficha de checklist"],tags:["swing", "posiciones", "técnica"]},
+{id:"e006",grupo:"cadete",trimestre:1,semana:6,categoria:"Putting",nombre:"La Regla de los Putts",objetivo:"Aprender a leer la velocidad del green.",descripcion:"5 bolas desde 3m, objetivo: dejar todas dentro de un aro de 50cm alrededor del hoyo. Se registran resultados.",duracion:"20 min",material:"Putter, 5 bolas, aro marcador",variantes:["Desde 5m", "En pendiente", "Con distintas velocidades de green"],tags:["velocidad", "putt", "aro", "registro"]},
+{id:"e007",grupo:"cadete",trimestre:1,semana:7,categoria:"Chip",nombre:"El Chip y Corre",objetivo:"Dominar el chip de rodado con palo de baja trayectoria.",descripcion:"Usando un 8 o 7-hierro desde fuera del green, los alumnos practican el chip-and-run. La bola vuela poco y rueda mucho.",duracion:"20 min",material:"7 o 8 hierro, bolas, marcador de objetivo",variantes:["Comparar con SW", "Pendiente abajo", "Objetivo a 15, 20 y 25m"],tags:["chip", "rodado", "chip-and-run"]},
+{id:"e008",grupo:"cadete",trimestre:1,semana:8,categoria:"Reglas",nombre:"Las 5 Reglas Básicas",objetivo:"Conocer las reglas fundamentales del golf.",descripcion:"Cuestionario gamificado: ¿Qué haces si la bola cae en el agua? ¿Y si no encuentras la bola? Con tarjetas ilustradas.",duracion:"20 min",material:"Tarjetas de reglas ilustradas, pizarra",variantes:["Quiz competitivo", "Escenas dramatizadas", "Con el reglamento en papel"],tags:["reglas", "básicas", "quiz"]},
+{id:"e009",grupo:"cadete",trimestre:2,semana:9,categoria:"Swing",nombre:"El Peso en el Swing",objetivo:"Transferir el peso correctamente en el swing.",descripcion:"Con marcas en el suelo, los alumnos aprenden a cargar el peso atrás (backswing) y adelante (impacto).",duracion:"20 min",material:"Hierro 7, marcas de peso en suelo",variantes:["Swing con pie trasero levantado al final", "Vídeo de lado", "Con báscula digital"],tags:["peso", "transferencia", "balance"]},
+{id:"e010",grupo:"cadete",trimestre:2,semana:10,categoria:"Putting",nombre:"Lectura de Green 101",objetivo:"Aprender a leer pendientes básicas.",descripcion:"3 putts con romper: plano, pendiente a la derecha y a la izquierda. Los alumnos predicen la dirección antes de ver rodar la bola.",duracion:"20 min",material:"Putter, bolas, putting green con pendiente",variantes:["Grabar la bola rodando", "Apostar puntos en la predicción", "Crear el propio putt con romper"],tags:["lectura de green", "pendiente", "predicción"]},
+{id:"e011",grupo:"cadete",trimestre:2,semana:11,categoria:"Chip",nombre:"El Bunker por Primera Vez",objetivo:"Perder el miedo al bunker y aprender la salida básica.",descripcion:"Explicación del rebote (bounce) del SW. Cara abierta, línea de entrada en la arena, 20 repeticiones.",duracion:"25 min",material:"Sand wedge, bolas, bunker",variantes:["Sin bola (solo sentir la arena)", "Bola enterrada básica", "Objetivo: llegar al green"],tags:["bunker", "primera vez", "sand wedge"]},
+{id:"e012",grupo:"cadete",trimestre:2,semana:12,categoria:"Swing",nombre:"La Línea de Swing",objetivo:"Entender el plano de swing correcto.",descripcion:"Con un aro hula-hoop a la altura de los hombros, se visualiza el plano de swing. El alumno gira el palo siguiendo el aro.",duracion:"20 min",material:"Aro hula-hoop, hierro 7",variantes:["Con palo en el aro", "Video de frente", "Comparar planos"],tags:["plano de swing", "hula-hoop", "visual"]},
+{id:"e013",grupo:"cadete",trimestre:2,semana:13,categoria:"Juego",nombre:"Mi Primera Ronda de 3 Hoyos",objetivo:"Vivir la experiencia del campo real por primera vez.",descripcion:"3 hoyos del campo real (los más sencillos). Etiqueta y reglas en el campo. Tarjeta simplificada.",duracion:"60 min",material:"Set completo junior, tarjeta simplificada",variantes:["Con padres como caddies", "Solo alumnos con profesor", "Fotos de cada hoyo"],tags:["campo real", "primera ronda", "etiqueta"]},
+{id:"e014",grupo:"cadete",trimestre:2,semana:14,categoria:"Putting",nombre:"El Torneo de Putting Eagles",objetivo:"Primer torneo de putting con reglas reales.",descripcion:"Torneo de 9 hoyos en el putting green. Se usa la tarjeta real. El profesor explica la etiqueta antes de empezar.",duracion:"45 min",material:"Putters, bolas, tarjeta de putting",variantes:["Con handicap", "En parejas match play", "Con premios de pegatinas"],tags:["torneo", "putting", "etiqueta"]},
+{id:"e015",grupo:"cadete",trimestre:2,semana:15,categoria:"Swing",nombre:"El Control de la Cara",objetivo:"Entender la relación entre cara del palo y dirección.",descripcion:"Se golpean bolas con cara cerrada, cuadrada y abierta intencionalmente. Los alumnos observan y registran qué pasa.",duracion:"20 min",material:"Hierro 7, bolas, zona de práctica amplia",variantes:["Con tee bajo", "Video de la trayectoria", "Gráfico cara/trayectoria"],tags:["cara del palo", "dirección", "draw", "fade"]},
+{id:"e016",grupo:"cadete",trimestre:3,semana:16,categoria:"Chip",nombre:"El Chip Perfecto — Check de 5",objetivo:"Checklist de 5 puntos del chip correcto.",descripcion:"5 puntos del chip perfecto: peso adelante, manos adelantadas, ball back, movimiento de hombros, contacto descendente. Autoevaluación.",duracion:"20 min",material:"Wedge, hierro 9, bolas, ficha de checklist",variantes:["En parejas evaluándose", "Video para comparar", "Audio check del profesor"],tags:["chip", "checklist", "autoevaluación"]},
+{id:"e017",grupo:"cadete",trimestre:3,semana:17,categoria:"Swing",nombre:"El Finish Consistente",objetivo:"Finalizar siempre en la misma posición de follow-through.",descripcion:"El alumno hace el swing y mantiene el finish 3 segundos. El profesor fotografía y el alumno compara 10 fotos.",duracion:"20 min",material:"Hierro 7, bolas, móvil/tablet",variantes:["Con espejo", "Mantener 5 segundos", "Dibujar la posición ideal"],tags:["follow-through", "finish", "consistencia"]},
+{id:"e018",grupo:"cadete",trimestre:3,semana:18,categoria:"Putting",nombre:"Las 100 Repeticiones",objetivo:"Automatizar el movimiento de putting mediante repetición masiva.",descripcion:"100 putts desde 1 metro en sesiones de 20. El alumno cuenta los emboques en un registro diario.",duracion:"25 min",material:"Putter, bolas, hoyo, registro en papel",variantes:["50 putts desde 1,5m", "Mezclar 1m y 2m", "Registro semanal visible"],tags:["repetición", "putt", "registro", "progresión"]},
+{id:"e019",grupo:"cadete",trimestre:3,semana:19,categoria:"Reglas",nombre:"El Detective de Reglas",objetivo:"Identificar infracciones en situaciones reales.",descripcion:"El profesor presenta 6 situaciones en el campo. Los alumnos son detectives que identifican si hay infracción y cuál.",duracion:"25 min",material:"Tarjetas de situaciones, reglamento de bolsillo",variantes:["En equipos", "Con árbitro-alumno", "Situaciones filmadas"],tags:["reglas", "detective", "situaciones"]},
+{id:"e020",grupo:"cadete",trimestre:3,semana:20,categoria:"Swing",nombre:"El Driver por Primera Vez",objetivo:"Primer contacto con el driver de forma segura.",descripcion:"Introducción al driver: posición de la bola, tee alto, swing ascendente. 20 golpes progresivos desde medio swing.",duracion:"25 min",material:"Driver junior, tees, bolas",variantes:["Empezar con 3-madera", "Con tee muy alto", "Video de frente y lado"],tags:["driver", "primera vez", "tee"]},
+{id:"e021",grupo:"cadete",trimestre:3,semana:21,categoria:"Chip",nombre:"El Chip de Rough",objetivo:"Aprender a gestionar la bola desde el rough.",descripcion:"La bola en rough cambia el comportamiento del chip. Se practican chips desde rough corto y largo.",duracion:"20 min",material:"Wedge, hierro 9, bolas, zona de rough",variantes:["Rough muy largo", "Rough mojado", "Con viento cruzado"],tags:["rough", "chip", "adaptación"]},
+{id:"e022",grupo:"cadete",trimestre:3,semana:22,categoria:"Juego",nombre:"La Competición de Eagles",objetivo:"Primera competición interna con tarjeta real.",descripcion:"Torneo interno de 6 hoyos entre los Eagles. Tarjeta real, reglas básicas, etiqueta.",duracion:"90 min",material:"Set completo, tarjetas de score",variantes:["Match play por parejas", "Con handicap sencillo", "Premio al más divertido"],tags:["torneo", "competición", "6 hoyos"]},
+{id:"e023",grupo:"cadete",trimestre:4,semana:23,categoria:"Mental",nombre:"Respiración Antes del Golpe",objetivo:"Introducir la rutina de respiración pre-shot.",descripcion:"Antes de cada golpe: inspirar 4 seg, retener 2 seg, exhalar 4 seg. 10 veces sin palo y luego integrándolo en la rutina.",duracion:"15 min",material:"Ninguno",variantes:["Con música suave", "Medir frecuencia cardíaca antes/después", "En parejas sincronizados"],tags:["mental", "respiración", "rutina"]},
+{id:"e024",grupo:"cadete",trimestre:4,semana:24,categoria:"Putting",nombre:"Putting Bajo Presión",objetivo:"Practicar putts con consecuencia emocional.",descripcion:"El alumno debe embocar 3 putts seguidos desde 1 metro. Si falla vuelve a empezar. Se añade un observador para generar presión.",duracion:"20 min",material:"Putter, bolas, cronómetro",variantes:["Con público", "Con música de tensión", "Embocar 5 seguidos"],tags:["presión", "putt", "consecuencia"]},
+{id:"e025",grupo:"cadete",trimestre:4,semana:25,categoria:"Swing",nombre:"La Tabla de Distancias Eagles",objetivo:"Conocer las distancias propias con cada palo.",descripcion:"5 golpes con cada hierro (9, 8, 7, 6, PW). Se anota la distancia media con cada uno. Tabla personal del alumno.",duracion:"30 min",material:"Hierros 6-9 y PW, bolas, medidor",variantes:["Con app de medición", "Comparar entre alumnos", "Registrar en ficha individual"],tags:["distancias", "tabla", "hierros"]},
+{id:"e026",grupo:"cadete",trimestre:4,semana:26,categoria:"Chip",nombre:"El Up & Down Eagles",objetivo:"Primer intento de up & down real.",descripcion:"Desde 5 posiciones alrededor del green: chip + putt en 2. Se registran los resultados. Objetivo: 2/5 up&downs.",duracion:"25 min",material:"Wedge, putter, bolas, 5 posiciones marcadas",variantes:["Solo chip", "Solo posiciones fáciles", "Comparar sesión a sesión"],tags:["up&down", "chip", "putt", "registro"]},
+{id:"e027",grupo:"cadete",trimestre:4,semana:27,categoria:"Reglas",nombre:"La Etiqueta en el Campo",objetivo:"Aprender y practicar la etiqueta de golf.",descripcion:"10 normas de etiqueta: silencio en el swing del otro, reparar pitchmarks, no pisar líneas de putt, paso rápido.",duracion:"60 min",material:"Set completo, tarjeta de etiqueta",variantes:["Con semáforo verde/rojo por conducta", "Autoevaluación", "Vídeo de conducta correcta vs incorrecta"],tags:["etiqueta", "campo", "conducta", "respeto"]},
+{id:"e028",grupo:"cadete",trimestre:4,semana:28,categoria:"Juego",nombre:"El Torneo de Fin de Curso Eagles",objetivo:"Cierre del curso con competición y celebración.",descripcion:"Torneo de 9 hoyos con tarjeta real. Ceremonia con trofeos. Diploma de Eagles Golfista.",duracion:"120 min",material:"Set completo, trofeos, diplomas",variantes:["Con padres", "Merienda posterior", "Video resumen del curso"],tags:["torneo", "cierre", "trofeos", "diploma"]},
+{id:"e029",grupo:"cadete",trimestre:1,semana:4,categoria:"Coordinación",nombre:"El Malabarista de Hierros",objetivo:"Desarrollar sensibilidad con el palo.",descripcion:"Equilibrar el palo en la palma abierta. El que lo mantiene más tiempo sin que caiga gana. Luego alternar manos.",duracion:"10 min",material:"Hierro 7 o 8",variantes:["En movimiento", "Mano no dominante", "Caminando"],tags:["equilibrio", "palo", "sensación"]},
+{id:"e030",grupo:"cadete",trimestre:2,semana:10,categoria:"Swing",nombre:"El Swing de Una Mano",objetivo:"Desarrollar la mano líder y la seguidora.",descripcion:"Swing completo solo con la mano izquierda (diestros). 20 repeticiones. Luego solo con la derecha. Finalmente con las dos.",duracion:"20 min",material:"Hierro 7, bolas foam",variantes:["Sin bola", "Con bola suave", "Identificar cuál es más difícil"],tags:["una mano", "swing", "dominancia"]},
+{id:"e031",grupo:"cadete",trimestre:1,semana:6,categoria:"Putting",nombre:"El Metrónomo del Putt",objetivo:"Establecer un ritmo constante en el putt.",descripcion:"Con metrónomo a 60 BPM, el alumno sincroniza su putt: backswing en un tic, downswing en el siguiente.",duracion:"15 min",material:"Putter, bolas, móvil con app metrónomo",variantes:["A 80 BPM", "Con ojos cerrados", "Grabando el putt"],tags:["putt", "metrónomo", "ritmo"]},
+{id:"e032",grupo:"cadete",trimestre:2,semana:12,categoria:"Chip",nombre:"El Chip sin Muñecas",objetivo:"Eliminar el uso de muñecas en el chip.",descripcion:"Goma elástica alrededor de los antebrazos. Si las muñecas se activan, la goma lo delata. 20 chips controlados.",duracion:"15 min",material:"Wedge, bolas, goma elástica",variantes:["Con guía de alineación", "Sin goma al final", "Video del movimiento de muñecas"],tags:["chip", "muñecas", "goma", "técnica"]},
+{id:"e033",grupo:"cadete",trimestre:3,semana:16,categoria:"Reglas",nombre:"Tarjeta de Score Real",objetivo:"Aprender a rellenar correctamente la tarjeta de score.",descripcion:"Todos los campos de la tarjeta: handicap, stroke index, neto, bruto, out, in, total. Rellenan una tarjeta inventada.",duracion:"20 min",material:"Tarjetas de score reales, bolígrafos",variantes:["Tarjeta de torneo oficial", "Calcular Stableford", "Comparar tarjetas entre alumnos"],tags:["tarjeta", "score", "Stableford"]},
+{id:"e034",grupo:"cadete",trimestre:3,semana:17,categoria:"Mental",nombre:"Mi Objetivo del Día",objetivo:"Aprender a fijar objetivos de proceso antes de entrenar.",descripcion:"Cada alumno escribe su objetivo del día en una pizarra. Al final evalúa si lo consiguió.",duracion:"10 min",material:"Pizarra, rotuladores",variantes:["Objetivo técnico vs actitud", "Compartirlo con el grupo", "Registro semanal"],tags:["objetivos", "proceso", "pizarra"]},
+{id:"e035",grupo:"cadete",trimestre:3,semana:19,categoria:"Swing",nombre:"El Swing en L",objetivo:"Dominar el medio swing (L-to-L) para mayor control.",descripcion:"Swing donde los brazos forman una L en el backswing y otra L en el follow-through. Control de distancia y dirección.",duracion:"20 min",material:"PW o 9-hierro, bolas",variantes:["Con bola a 50m", "Medir consistencia", "Video de lado para verificar la L"],tags:["medio swing", "L-to-L", "control"]},
+{id:"e036",grupo:"cadete",trimestre:4,semana:21,categoria:"Chip",nombre:"La Zona de Chip Landing",objetivo:"Predecir y controlar el punto exacto de aterrizaje.",descripcion:"Cartulina de 30×30cm como zona de aterrizaje a 1/3 del objetivo. El alumno predice en voz alta dónde caerá la bola.",duracion:"20 min",material:"Wedge, bolas, cartulinas de colores",variantes:["Zona más pequeña", "Varios colores = varios objetivos", "Predicción y resultado anotados"],tags:["chip", "aterrizaje", "predicción", "zona"]},
+{id:"e037",grupo:"cadete",trimestre:4,semana:22,categoria:"Putting",nombre:"La Serie de Putts Cortos",objetivo:"Dominar los putts de 1 a 3 metros.",descripcion:"Serie escalonada: 5 putts de 1m (embocar 4), 5 de 1,5m (embocar 3), 5 de 2m (embocar 2), 5 de 3m (embocar 1).",duracion:"20 min",material:"Putter, bolas, hoyo",variantes:["Con pendiente", "Variando el ángulo", "Registrar cada sesión"],tags:["putt", "progresión", "cortos", "serie"]},
+{id:"e038",grupo:"cadete",trimestre:1,semana:7,categoria:"Juego",nombre:"El Campo de 6 Hoyos Mini",objetivo:"Jugar un recorrido sencillo aprendiendo la secuencia de juego.",descripcion:"Se monta un campo de 6 mini-hoyos en el campo de prácticas: 4 par 3 cortos y 2 par 4 muy cortos.",duracion:"50 min",material:"Set junior completo, 6 banderines, tarjeta simplificada",variantes:["Match play vs profesor", "Con padres", "Fotografiar cada hoyo"],tags:["6 hoyos", "recorrido", "par 3"]},
+{id:"e039",grupo:"cadete",trimestre:2,semana:14,categoria:"Coordinación",nombre:"La Escalera de Agilidad de Golf",objetivo:"Mejorar la agilidad y la preparación atlética.",descripcion:"Escalera de agilidad con ejercicios específicos de golf: pasos laterales, rotaciones de cadera, equilibrio en un pie.",duracion:"20 min",material:"Escalera de agilidad, hierro 7",variantes:["Solo los pasos", "Con el palo en las manos", "Cronometrado"],tags:["agilidad", "atletismo", "escalera", "preparación física"]},
+{id:"e040",grupo:"cadete",trimestre:2,semana:15,categoria:"Swing",nombre:"El Video Análisis Eagle",objetivo:"Primer vídeo análisis del swing de cada alumno.",descripcion:"Se graba el swing de frente y de lado. El profesor hace un análisis básico señalando un punto positivo y uno de mejora.",duracion:"30 min",material:"Móvil/tablet, hierro 7, bolas",variantes:["Con app de análisis", "Comparar con pro", "Seguimiento en el siguiente trimestre"],tags:["video", "análisis", "feedback", "swing"]},
+{id:"e041",grupo:"cadete",trimestre:3,semana:18,categoria:"Chip",nombre:"El Chip en Pendiente",objetivo:"Adaptar el chip a distintas pendientes.",descripcion:"Cuesta arriba: más loft natural. Cuesta abajo: menos loft, más rodado. Los alumnos practican desde 4 pendientes y anotan.",duracion:"20 min",material:"Wedge, 9-hierro, bolas, pendientes del campo",variantes:["Cuesta abajo con árbol delante", "Pendiente lateral", "Sin ver el objetivo"],tags:["chip", "pendiente", "adaptación"]},
+{id:"e042",grupo:"cadete",trimestre:4,semana:23,categoria:"Mental",nombre:"El Diario del Golfista",objetivo:"Reflexionar sobre el aprendizaje semanalmente.",descripcion:"Cada alumno tiene un mini-diario donde anota: qué aprendió, qué salió bien, qué quiere mejorar. Se revisa al inicio de cada sesión.",duracion:"5 min",material:"Libreta pequeña, bolígrafo",variantes:["En formato digital", "Compartir una entrada con el grupo", "El profesor responde por escrito"],tags:["diario", "reflexión", "aprendizaje"]},
+{id:"e043",grupo:"cadete",trimestre:4,semana:25,categoria:"Juego",nombre:"El Match Play Eagles",objetivo:"Aprender el formato match play.",descripcion:"Torneo de match play hoyo a hoyo entre los alumnos. El profesor explica el formato y actúa de árbitro.",duracion:"90 min",material:"Set completo, tarjeta de match play",variantes:["Por parejas", "Better ball", "Con handicap de hoyos"],tags:["match play", "torneo", "hoyo a hoyo"]},
+{id:"e044",grupo:"cadete",trimestre:1,semana:5,categoria:"Putting",nombre:"Putting con Ambas Manos",objetivo:"Desarrollar sensibilidad en ambas manos para el putt.",descripcion:"15 putts con la mano derecha sola, 15 con la izquierda, 20 con las dos. Mejora la sensibilidad individual de cada mano.",duracion:"20 min",material:"Putter, bolas, hoyo",variantes:["Ojos cerrados", "Desde distintas distancias", "Registrar aciertos por mano"],tags:["putt", "manos", "sensibilidad", "bilateral"]},
+{id:"e045",grupo:"cadete",trimestre:2,semana:11,categoria:"Reglas",nombre:"¿Qué Palo Eliges?",objetivo:"Aprender a elegir el palo correcto según la situación.",descripcion:"El profesor presenta 6 situaciones: distancia al green, posición de la bola, pendiente, viento. Los alumnos votan qué palo elegirían.",duracion:"20 min",material:"Set completo, tarjetas de situaciones",variantes:["Sin ver el palo del profesor", "Situaciones de campo real", "Con debate posterior"],tags:["elección de palo", "situación", "decisión", "estrategia"]},
+{id:"e046",grupo:"cadete",trimestre:3,semana:20,categoria:"Chip",nombre:"El Pitch vs el Chip",objetivo:"Diferenciar y ejecutar correctamente pitch y chip.",descripcion:"Comparación práctica: chip (bola baja, más rodado) vs pitch (bola alta, parada rápida). El alumno elige cuál usar.",duracion:"20 min",material:"Wedge, 9-hierro, bolas, flag como obstáculo",variantes:["Sin obstáculo", "Con obstáculo grande", "El alumno propone la situación"],tags:["pitch", "chip", "diferencia", "elección"]},
+{id:"e047",grupo:"cadete",trimestre:3,semana:21,categoria:"Swing",nombre:"El Tempo 3:1",objetivo:"Interiorizar el ratio correcto de tempo en el swing.",descripcion:"El backswing dura 3 veces más que el downswing. Con metrónomo a 80 BPM: 3 tics hacia atrás, 1 tic hacia la bola.",duracion:"15 min",material:"Hierro 7, bolas, metrónomo app",variantes:["Con bola", "Grabando el tempo", "Comparar con PGA pro en YouTube"],tags:["tempo", "3:1", "ritmo", "metrónomo"]},
+{id:"e048",grupo:"cadete",trimestre:4,semana:26,categoria:"Juego",nombre:"9 Hoyos por Primera Vez",objetivo:"Completar los 9 hoyos del campo real.",descripcion:"Primera vuelta de 9 hoyos en el campo real. Tarjeta, reglas básicas y etiqueta. El profesor acompaña como caddie-maestro.",duracion:"120 min",material:"Set junior completo, tarjeta, zapatos de golf",variantes:["Con caddie adulto", "Fotos de cada hoyo", "Comentarios al final"],tags:["9 hoyos", "campo real", "primera vez", "experiencia"]},
+{id:"e049",grupo:"cadete",trimestre:1,semana:8,categoria:"Chip",nombre:"El Chip con Tee",objetivo:"Establecer un contacto limpio y consistente en el chip.",descripcion:"La bola sobre un tee muy bajo facilita el contacto limpio y permite sentir el golpe descendente sin miedo a topar.",duracion:"15 min",material:"Wedge, 9-hierro, bolas, tees bajos",variantes:["Tee medio", "Tee normal para comparar", "Sin tee al final"],tags:["chip", "tee", "contacto", "confianza"]},
+{id:"e050",grupo:"cadete",trimestre:4,semana:28,categoria:"Mental",nombre:"El Balance del Año Eagle",objetivo:"Reflexión final sobre el progreso del curso.",descripcion:"El profesor revisa con cada alumno los vídeos del inicio y del final del curso. Se comparan las mejoras y se establecen objetivos.",duracion:"30 min",material:"Videos del inicio y fin del curso, ficha de objetivos",variantes:["Con padres presentes", "Carta al yo del año siguiente", "Diploma personalizado"],tags:["balance", "reflexión", "progreso", "cierre"]},
+{id:"b001",grupo:"alevin",trimestre:1,semana:1,categoria:"Swing",nombre:"Análisis de Swing con Vídeo",objetivo:"Identificar los 3 errores principales del propio swing.",descripcion:"Grabación del swing de frente, lateral y desde atrás. El alumno analiza con el profesor los 3 aspectos a mejorar. Plan de corrección personalizado.",duracion:"30 min",material:"Hierro 7, móvil/tablet, app de análisis",variantes:["Comparar con referencias de tour", "Análisis en pareja", "Repetir al final del curso"],tags:["video", "análisis", "swing", "corrección"]},
+{id:"b002",grupo:"alevin",trimestre:1,semana:2,categoria:"Putting",nombre:"La Zona de 3 metros",objetivo:"Dominar los putts de media distancia con consistencia.",descripcion:"10 putts desde 3 metros desde 6 posiciones distintas alrededor del hoyo. Objetivo: embocar mínimo 4/10 desde cada posición.",duracion:"25 min",material:"Putter, bolas, hoyo, registro",variantes:["Solo posiciones difíciles", "Con pendiente", "Competición entre alumnos"],tags:["putt", "3 metros", "progresión", "registro"]},
+{id:"b003",grupo:"alevin",trimestre:1,semana:3,categoria:"Chip",nombre:"El Chip de Competición",objetivo:"Presión en el chip simulando situaciones de torneo.",descripcion:"Circuito de 9 chips desde distintas posiciones alrededor del green. Puntuación: bola a menos de 1m=3pts, 2m=2pts, en green=1pt.",duracion:"25 min",material:"Wedges, bolas, 9 posiciones marcadas",variantes:["Con tiempo límite", "En parejas compitiendo", "Handicap entre alumnos"],tags:["chip", "competición", "puntuación", "presión"]},
+{id:"b004",grupo:"alevin",trimestre:1,semana:4,categoria:"Juego Largo",nombre:"La Distancia de Control",objetivo:"Dominar golpes al 50%, 75% y 100% de fuerza.",descripcion:"Con el 7-hierro, practica golpes a 3 velocidades: swing corto (50%), normal (75%) y máximo (100%). Anota las distancias de cada uno.",duracion:"20 min",material:"Hierro 7, bolas, medidor de distancias",variantes:["Con PW para finesse", "Con driver", "Comparar entre alumnos"],tags:["distancia", "control", "velocidad"]},
+{id:"b005",grupo:"alevin",trimestre:1,semana:5,categoria:"Mental",nombre:"La Rutina Pre-Shot Birdie",objetivo:"Establecer y automatizar una rutina pre-shot completa.",descripcion:"5 pasos con tiempo de 25 segundos total. Se cronometra cada golpe durante la sesión. La rutina se personaliza para cada alumno.",duracion:"20 min",material:"Palos, bolas, cronómetro",variantes:["Con público", "En situación de competición simulada", "Vídeo de la rutina"],tags:["rutina", "pre-shot", "concentración", "25 segundos"]},
+{id:"b006",grupo:"alevin",trimestre:1,semana:6,categoria:"Juego Largo",nombre:"El Control del Driver",objetivo:"Mejorar la precisión y consistencia con el driver.",descripcion:"Fairway imaginario de 30 metros de ancho marcado. 20 drives: se cuenta el % de fairways. Objetivo: 60% de fairways.",duracion:"25 min",material:"Driver, tees, bolas, conos marcando el fairway",variantes:["Fairway de 20m", "Fairway estrecho de 15m", "Con viento cruzado"],tags:["driver", "fairway", "precisión", "porcentaje"]},
+{id:"b007",grupo:"alevin",trimestre:1,semana:7,categoria:"Putting",nombre:"Los Putts de 5 Metros",objetivo:"Mejorar la distancia y dirección en putts largos.",descripcion:"Series de 5 putts desde 5 metros. Objetivo: dejar todas dentro de un círculo de 60cm. Se trabaja la velocidad y la pendiente.",duracion:"20 min",material:"Putter, bolas, círculo marcado",variantes:["Desde 7m", "Con doble pendiente", "Registrar % en zona objetivo"],tags:["putt", "5 metros", "velocidad", "distancia larga"]},
+{id:"b008",grupo:"alevin",trimestre:1,semana:8,categoria:"Reglas",nombre:"Test Reglas Nivel Birdie",objetivo:"Conocer las reglas de competición básicas.",descripcion:"Test de 15 preguntas: zonas de penalización, drop, embedded ball, casual water en green, etc. Corrección en grupo.",duracion:"25 min",material:"Test impreso, reglamento RFEG",variantes:["Test oral", "Situaciones en el campo", "Quiz app competitivo"],tags:["reglas", "test", "competición"]},
+{id:"b009",grupo:"alevin",trimestre:2,semana:9,categoria:"Juego Largo",nombre:"El Approach a Green",objetivo:"Dominar el golpe de approach a distintas distancias.",descripcion:"Approach shots desde 100m, 80m, 60m y 40m al green. Selección de palo y objetivo en el green. Registro de greens en regulación.",duracion:"25 min",material:"PW, 9-hierro, 8-hierro, bolas, green real",variantes:["Con agua delante", "Con bunker frontal", "Bandera en posición difícil"],tags:["approach", "GIR", "distancias", "selección de palo"]},
+{id:"b010",grupo:"alevin",trimestre:2,semana:10,categoria:"Chip",nombre:"El Bunker de Competición",objetivo:"Salida de bunker consistente en situación de presión.",descripcion:"10 salidas de bunker desde posiciones estándar. Puntuación: fuera del bunker=1pt, en green=2pts, dentro de 3m=3pts.",duracion:"25 min",material:"SW, bolas, bunker, hoja de registro",variantes:["Bola enterrada", "Bunker a 30m del hoyo", "Pendiente de salida difícil"],tags:["bunker", "competición", "puntuación", "presión"]},
+{id:"b011",grupo:"alevin",trimestre:2,semana:11,categoria:"Mental",nombre:"El Proceso vs el Resultado",objetivo:"Aprender a separar el proceso del resultado en competición.",descripcion:"Sesión teórica (15 min) + práctica (15 min). Se juegan 5 hoyos evaluando solo el proceso, sin mirar el score.",duracion:"30 min",material:"Set completo, hoja de evaluación de proceso",variantes:["Solo un hoyo", "Con un compañero evaluando el proceso", "Score vs proceso al final"],tags:["proceso", "resultado", "mental", "evaluación"]},
+{id:"b012",grupo:"alevin",trimestre:2,semana:12,categoria:"Swing",nombre:"El Draw Intencional",objetivo:"Producir un draw controlado de forma repetible.",descripcion:"Alineación cerrada del cuerpo, cara apuntando al objetivo. Camino del swing de dentro a fuera. 20 repeticiones.",duracion:"25 min",material:"Hierro 7, driver, bolas, marcadores de alineación",variantes:["Solo con hierros", "Con driver", "Midiendo la curvatura conseguida"],tags:["draw", "intencional", "alineación", "curva"]},
+{id:"b013",grupo:"alevin",trimestre:2,semana:13,categoria:"Juego Largo",nombre:"El Golpe desde el Rough",objetivo:"Gestionar diferentes situaciones de rough.",descripcion:"Rough largo: hierro más corto, swing más vertical. Rough húmedo: añadir club. Rough en pendiente: ajustar postura.",duracion:"25 min",material:"Hierros 5-8, bolas, zona de rough variada",variantes:["Rough entre 2-3cm", "Rough muy largo 6cm+", "Sin ver el objetivo"],tags:["rough", "gestión", "vertical", "adaptación"]},
+{id:"b014",grupo:"alevin",trimestre:2,semana:14,categoria:"Putting",nombre:"El Putt de Zurdo",objetivo:"Desarrollar la mano no dominante para mayor sensibilidad.",descripcion:"Con el putter al revés (mano izquierda arriba para diestros), se practican 30 putts desde 1-3 metros.",duracion:"15 min",material:"Putter, bolas, hoyos",variantes:["Con putter de zurdo si disponible", "Solo mano no dominante", "Comparar accuracy con normal"],tags:["putt", "zurdo", "mano no dominante", "sensibilidad"]},
+{id:"b015",grupo:"alevin",trimestre:2,semana:15,categoria:"Juego",nombre:"El Torneo Stableford Birdie",objetivo:"Competir en formato Stableford por primera vez.",descripcion:"9 hoyos en formato Stableford. Explicación del sistema de puntos: doble bogey=0, bogey=1, par=2, birdie=3, eagle=4.",duracion:"120 min",material:"Set completo, tarjeta Stableford",variantes:["Solo 6 hoyos", "Con handicap completo", "Equipos de 2"],tags:["Stableford", "torneo", "puntos", "formato"]},
+{id:"b016",grupo:"alevin",trimestre:3,semana:16,categoria:"Swing",nombre:"El Fade Intencional",objetivo:"Producir un fade controlado de forma repetible.",descripcion:"Alineación abierta del cuerpo, cara apuntando al objetivo. Swing de fuera a dentro ligeramente. 20 repeticiones.",duracion:"25 min",material:"Hierro 7, bolas, marcadores de alineación",variantes:["Solo con hierros", "Con driver", "Situaciones de campo que requieren fade"],tags:["fade", "intencional", "alineación", "curvatura"]},
+{id:"b017",grupo:"alevin",trimestre:3,semana:17,categoria:"Chip",nombre:"El Pitch de Alta Trayectoria",objetivo:"Dominar el pitch con máxima altura y parada rápida.",descripcion:"Con SW cara muy abierta, pitch a 20-30m que suba alto y pare rápido. 15 repeticiones desde rough y fairway.",duracion:"25 min",material:"SW o LW, bolas, zona de práctica",variantes:["Sobre un obstáculo", "Sobre bunker", "Con viento en contra"],tags:["pitch", "altura", "parada", "cara abierta"]},
+{id:"b018",grupo:"alevin",trimestre:3,semana:18,categoria:"Juego Largo",nombre:"El Golpe Bajo el Viento",objetivo:"Ejecutar punch shot bajo el viento y bajo obstáculos.",descripcion:"Punch shot: pelota atrasada, manos adelantadas, swing 3/4, acabado bajo. Bola baja que penetra el viento. 20 repeticiones.",duracion:"20 min",material:"Hierros 6-8, bolas, campo de prácticas",variantes:["Con obstáculo bajo delante", "Con viento real", "Distancias variables"],tags:["punch shot", "viento", "bola baja", "3/4"]},
+{id:"b019",grupo:"alevin",trimestre:3,semana:19,categoria:"Putting",nombre:"La Lectura de 3 Puntos",objetivo:"Sistema de lectura de green en 3 puntos de vista.",descripcion:"Leer el putt desde: (1) detrás de la bola, (2) lateral, (3) desde el hoyo. Aplicar en 10 putts de 3-5m con romper.",duracion:"25 min",material:"Putter, bolas, green con pendiente",variantes:["Solo la lectura sin golpear", "Con compañero leyendo distinto", "Anotar predicción vs resultado"],tags:["lectura", "3 puntos", "green", "pendiente"]},
+{id:"b020",grupo:"alevin",trimestre:3,semana:20,categoria:"Mental",nombre:"El Semáforo Emocional",objetivo:"Aplicar el sistema de gestión emocional en el campo.",descripcion:"Durante un recorrido de 6 hoyos, el alumno identifica en qué fase del semáforo está tras cada golpe malo.",duracion:"90 min",material:"Set completo, ficha del semáforo",variantes:["Ficha de autoevaluación", "Con compañero que también evalúa", "Análisis post-ronda"],tags:["semáforo", "emocional", "gestión", "campo"]},
+{id:"b021",grupo:"alevin",trimestre:3,semana:21,categoria:"Juego Largo",nombre:"El Juego de Approach 50/50",objetivo:"Mejorar el porcentaje de GIR.",descripcion:"Desde 12 posiciones a distintas distancias del green, el alumno lanza approach shots. Objetivo: llegar al green en al menos 6 de 12.",duracion:"25 min",material:"Hierros 7-PW, bolas, green real",variantes:["Solo distancias largas", "Con obstáculo frontal", "Medir distancia al hoyo"],tags:["approach", "GIR", "50%", "registro"]},
+{id:"b022",grupo:"alevin",trimestre:3,semana:22,categoria:"Reglas",nombre:"Situaciones Avanzadas de Campo",objetivo:"Resolver situaciones complejas sin árbitro.",descripcion:"El profesor plantea 8 situaciones en el campo real. Los alumnos resuelven aplicando el reglamento.",duracion:"30 min",material:"Reglamento RFEG, campo real",variantes:["En parejas", "Con árbitro rotativo", "Situaciones de torneo real"],tags:["reglas", "situaciones", "campo real", "avanzado"]},
+{id:"b023",grupo:"alevin",trimestre:4,semana:23,categoria:"Swing",nombre:"El Análisis Trimestral de Swing",objetivo:"Comparar la evolución del swing con el inicio de curso.",descripcion:"Se graba el swing y se compara con el vídeo del inicio. El alumno identifica las mejoras y los puntos pendientes.",duracion:"30 min",material:"Vídeo inicio de curso, hierro 7, móvil",variantes:["Con padres viendo", "Análisis conjunto", "Nuevo plan escrito"],tags:["análisis", "comparativa", "evolución", "vídeo"]},
+{id:"b024",grupo:"alevin",trimestre:4,semana:24,categoria:"Juego",nombre:"El Recorrido Completo Birdie",objetivo:"Completar 18 hoyos por primera vez.",descripcion:"Primera ronda de 18 hoyos. Tarjeta real, etiqueta, reglas. El profesor acompaña los primeros 9 hoyos.",duracion:"240 min",material:"Set completo, tarjeta real",variantes:["Con caddie adulto", "Fotos y video de momentos clave", "9+9 en dos días"],tags:["18 hoyos", "primera vez", "ronda completa"]},
+{id:"b025",grupo:"alevin",trimestre:4,semana:25,categoria:"Putting",nombre:"El Torneo de Putting Birdie",objetivo:"Competición de putting con presión real.",descripcion:"Torneo de 18 hoyos de putting. Formato stroke play real. Se publica clasificación. Premio al ganador y al más mejorado.",duracion:"60 min",material:"Putters, bolas, tarjeta de putting, trofeo",variantes:["Con handicap", "Match play knock-out", "Por parejas scramble"],tags:["torneo", "putting", "clasificación", "presión"]},
+{id:"b026",grupo:"alevin",trimestre:4,semana:26,categoria:"Chip",nombre:"El Up & Down de Campeonato",objetivo:"Up & down desde 9 posiciones difíciles.",descripcion:"9 posiciones muy difíciles: rough largo, bunker a 30m, pendiente cuesta abajo, etc. Objetivo: 3 de 9 up&downs.",duracion:"30 min",material:"Wedges, putter, bolas, 9 posiciones marcadas",variantes:["Solo posiciones de bunker", "Solo rough", "Competición entre dos alumnos"],tags:["up&down", "difícil", "posiciones", "superación"]},
+{id:"b027",grupo:"alevin",trimestre:4,semana:27,categoria:"Mental",nombre:"El Plan de Ronda",objetivo:"Preparar mentalmente una ronda antes de jugarla.",descripcion:"El día antes de un torneo: el alumno hace un plan escrito hoyo a hoyo. Incluye zona de seguridad y zona de riesgo de cada hoyo.",duracion:"30 min",material:"Mapa del campo, bolígrafo, plantilla de plan de ronda",variantes:["Solo los 3 hoyos más difíciles", "Visualización de cada hoyo", "Compartir con el profesor"],tags:["plan de ronda", "preparación", "mental", "estrategia"]},
+{id:"b028",grupo:"alevin",trimestre:4,semana:28,categoria:"Juego",nombre:"El Torneo de Fin de Curso Birdie",objetivo:"Torneo de cierre de temporada con reglas federadas.",descripcion:"Torneo de 18 hoyos con reglas federadas, árbitro externo, horario de torneo real. Ceremonia de entrega con trofeos y diplomas.",duracion:"240 min",material:"Set completo, trofeos, diplomas",variantes:["Solo 9 hoyos si no da tiempo", "Con padres en el hoyo 18", "Cena de equipo posterior"],tags:["torneo", "cierre", "federadas", "diploma"]},
+{id:"b029",grupo:"alevin",trimestre:1,semana:3,categoria:"Juego Largo",nombre:"El Hierro de Partida",objetivo:"Dominar el uso de hierros largos en el tee.",descripcion:"En hoyos difíciles, el driver no siempre es la mejor opción. Se practica la salida con 4-hierro, 5-hierro y híbrido buscando el fairway.",duracion:"20 min",material:"Hierros 4-5, híbrido, conos, bolas",variantes:["Con pasillo de 20m", "Con obstáculo a 200m", "Comparar distancia vs fairway ganado"],tags:["hierro de salida", "fairway", "seguridad", "táctica"]},
+{id:"b030",grupo:"alevin",trimestre:2,semana:9,categoria:"Coordinación",nombre:"Preparación Física del Golfista",objetivo:"Desarrollar movilidad y fuerza específica para el golf.",descripcion:"Rutina de 20 min: hip hinge 3×15, rotación torácica 3×10, plank lateral 2×30seg, band pull-apart 3×15.",duracion:"20 min",material:"Bandas elásticas, esterilla, palo de golf",variantes:["Con pelotas de pilates", "Solo la parte de movilidad", "Pre-ronda de 10 min"],tags:["físico", "movilidad", "fuerza", "core"]},
+{id:"b031",grupo:"alevin",trimestre:2,semana:13,categoria:"Putting",nombre:"El Putting de Presión Birdie",objetivo:"Mantener el ritmo de putt bajo presión.",descripcion:"El alumno debe embocar 5 putts seguidos desde 1,5 metros. Si falla uno, vuelve a empezar.",duracion:"20 min",material:"Putter, bolas, hoyo, registro",variantes:["Desde 2m", "Con observador", "En parejas compitiendo"],tags:["presión", "putt", "5 seguidos", "resistencia"]},
+{id:"b032",grupo:"alevin",trimestre:3,semana:15,categoria:"Swing",nombre:"El Driver Controlado",objetivo:"Priorizar la dirección sobre la distancia con el driver.",descripcion:"Driver al 80%: swing controlado, finish equilibrado. Se compara la dispersión con el driver al 100%.",duracion:"20 min",material:"Driver, bolas, conos en fairway imaginario",variantes:["Con cronómetro de vuelo", "App de dispersión", "Al 70% también"],tags:["driver", "control", "80%", "dispersión"]},
+{id:"b033",grupo:"alevin",trimestre:1,semana:5,categoria:"Chip",nombre:"El Pitch de 40 Metros",objetivo:"Dominar el pitch como golpe de aproximación real.",descripcion:"Pitch de 40m al green. Swing de ¾, cara cuadrada, punto de caída 2/3 del objetivo. 20 repeticiones desde hierba corta y rough.",duracion:"20 min",material:"PW o 9-hierro, bolas, green a 40m",variantes:["Desde 30m", "Desde 50m", "Con bandera en borde frontal"],tags:["pitch", "40 metros", "approach", "¾ swing"]},
+{id:"b034",grupo:"alevin",trimestre:2,semana:10,categoria:"Juego",nombre:"Matchplay Birdie Interno",objetivo:"Competición de match play entre compañeros.",descripcion:"Todos contra todos en match play hoyo a hoyo con handicap. El profesor actúa de árbitro. Cuadro de eliminatorias.",duracion:"120 min",material:"Set completo, cuadro de eliminatorias",variantes:["Solo 9 hoyos", "Mejor bola por parejas", "Ronda robin"],tags:["matchplay", "eliminatorias", "handicap", "competición"]},
+{id:"b035",grupo:"alevin",trimestre:3,semana:17,categoria:"Reglas",nombre:"El Árbitro por un Día",objetivo:"Aplicar las reglas desde el rol de árbitro.",descripcion:"Los alumnos se turnan como árbitros durante una ronda de 6 hoyos. El árbitro debe resolver 3 situaciones reales.",duracion:"90 min",material:"Reglamento RFEG, campo real",variantes:["Con libro de reglas siempre", "Sin libro de memoria", "Árbitro en parejas"],tags:["árbitro", "reglas", "rol", "situaciones reales"]},
+{id:"b036",grupo:"alevin",trimestre:4,semana:21,categoria:"Juego Largo",nombre:"El Juego de Hierros Largos",objetivo:"Dominar los hierros 4 y 5 para situaciones específicas.",descripcion:"Hierro 4 y 5 desde el suelo (sin tee): 20 golpes con cada uno anotando dirección y distancia.",duracion:"25 min",material:"Hierros 4 y 5, bolas, zona de práctica",variantes:["Con tee bajo primero", "Comparar con híbrido", "Situaciones de campo específicas"],tags:["hierros largos", "4-hierro", "5-hierro", "dificultad"]},
+{id:"b037",grupo:"alevin",trimestre:4,semana:22,categoria:"Mental",nombre:"El Diario de Competición",objetivo:"Analizar cada ronda para extraer aprendizajes.",descripcion:"Después de cada torneo: 3 cosas bien, 1 área de mejora, 1 decisión que cambiaría. El profesor añade comentarios.",duracion:"15 min",material:"Diario de competición, bolígrafo",variantes:["En formato digital", "Compartir con padres", "Revisión trimestral del diario"],tags:["diario", "análisis", "post-ronda", "reflexión"]},
+{id:"b038",grupo:"alevin",trimestre:2,semana:11,categoria:"Swing",nombre:"La Alineación Perfecta",objetivo:"Establecer una rutina de alineación precisa y repetible.",descripcion:"Varillas de alineación en el suelo: una para los pies, otra para la cara del palo. 20 golpes practicando la rutina desde atrás del objetivo.",duracion:"20 min",material:"Hierro 7, bolas, 2 varillas de alineación",variantes:["Sin varillas para ver si se alinea igual", "Video desde detrás", "Con objetivo a distancia variable"],tags:["alineación", "varillas", "rutina", "precisión"]},
+{id:"b039",grupo:"alevin",trimestre:3,semana:18,categoria:"Chip",nombre:"El Bunker de Pendiente",objetivo:"Salir de bunkers con pendientes cuesta abajo y arriba.",descripcion:"Cuesta arriba: abrir más la cara, stance más cerrada. Cuesta abajo: cerrar ligeramente la cara, peso adelante. 10 repeticiones de cada.",duracion:"25 min",material:"SW, bolas, bunker con pendientes",variantes:["Solo cuesta abajo", "Con hoyo muy cerca del bunker", "Con diferentes profundidades de arena"],tags:["bunker", "pendiente", "cuesta abajo", "cuesta arriba"]},
+{id:"b040",grupo:"alevin",trimestre:1,semana:7,categoria:"Putting",nombre:"El Putt de 10 Metros",objetivo:"Gestionar el putt largo para llegar cerca del hoyo.",descripcion:"Desde 10 metros, el objetivo no es embocar sino dejar la bola en zona gimme (60cm del hoyo). 15 putts registrados.",duracion:"20 min",material:"Putter, bolas, zona marcada de 60cm",variantes:["Desde 12m", "Con pendiente fuerte", "Registro de resultados semanales"],tags:["putt largo", "10 metros", "gimme", "3-putt"]},
+{id:"b041",grupo:"alevin",trimestre:2,semana:14,categoria:"Juego Largo",nombre:"El Golpe de Salida Controlada",objetivo:"Dominar la salida de tee con diferentes palos.",descripcion:"Análisis de 3 tipos de hoyo: estrecho, largo, dogleg. Para cada tipo: qué palo, a qué zona, con qué trayectoria. Práctica simulada.",duracion:"25 min",material:"Driver, 3-madera, 5-hierro, bolas, conos",variantes:["Solo dogleg", "Con obstáculos simulados", "Game plan escrito"],tags:["salida", "tee", "selección de palo", "dogleg"]},
+{id:"b042",grupo:"alevin",trimestre:4,semana:24,categoria:"Coordinación",nombre:"Entreno de Velocidad de Swing",objetivo:"Desarrollar velocidad de swing progresivamente.",descripcion:"Series: 5 muy rápidos, 5 normales, 5 al ritmo del rápido. Sensación de más velocidad.",duracion:"20 min",material:"Speed sticks o palo muy ligero, hierro 7, bolas",variantes:["Con medidor de velocidad radar", "Solo la fase de acabado rápido", "En series de 3"],tags:["velocidad", "speed sticks", "rápido", "potencia"]},
+{id:"b043",grupo:"alevin",trimestre:3,semana:21,categoria:"Chip",nombre:"El Phil Mickelson Flop",objetivo:"Aprender el golpe flop para parar la bola en muy poco espacio.",descripcion:"Cara muy abierta (60-70°), postura muy abierta, swing largo de fuera a dentro. La bola sube casi vertical y para en 2-3 metros.",duracion:"20 min",material:"SW o LW con mucho loft, bolas, obstáculo delante",variantes:["Con bunker delante", "Con agua delante", "Desde rough largo"],tags:["flop shot", "cara abierta", "parada", "alto riesgo"]},
+{id:"b044",grupo:"alevin",trimestre:4,semana:26,categoria:"Swing",nombre:"El Swing con Viento",objetivo:"Ajustar el swing según las condiciones de viento.",descripcion:"Viento en contra: más palo, swing suave, bola baja. Viento a favor: menos palo, swing normal. Viento cruzado: apuntar compensando.",duracion:"25 min",material:"Hierros, bolas, campo abierto con viento",variantes:["Simular el viento con ventilador", "Con viento real", "Registrar la desviación"],tags:["viento", "ajuste", "bola baja", "compensación"]},
+{id:"b045",grupo:"alevin",trimestre:1,semana:6,categoria:"Juego",nombre:"La Ronda de Práctica Temática",objetivo:"Practicar un aspecto concreto durante toda una ronda.",descripcion:"El alumno elige UN objetivo para la ronda. Al finalizar, evalúa cuántas veces siguió el plan.",duracion:"90 min",material:"Set completo, ficha de objetivos",variantes:["Solo los primeros 6 hoyos", "El profesor elige el objetivo", "Registro de adherencia al plan"],tags:["objetivo único", "ronda", "plan", "práctica deliberada"]},
+{id:"b046",grupo:"alevin",trimestre:2,semana:12,categoria:"Putting",nombre:"El Putting Cuesta Abajo",objetivo:"Dominar el putt más difícil: cuesta abajo.",descripcion:"Putt cuesta abajo: la bola rueda más rápido, el romper se exagera. 15 putts desde 3m cuesta abajo desde distintos ángulos.",duracion:"20 min",material:"Putter, bolas, zona de green con pendiente",variantes:["Comparar con cuesta arriba", "Con velocidad de green rápido", "Desde 5m"],tags:["putt", "cuesta abajo", "velocidad", "romper"]},
+{id:"b047",grupo:"alevin",trimestre:3,semana:19,categoria:"Mental",nombre:"Mi Palabra Clave",objetivo:"Establecer una palabra clave de activación pre-shot.",descripcion:"Cada alumno elige UNA palabra clave personal que lo centra antes de golpear. Se practica durante 10 golpes repetiéndola en voz alta.",duracion:"15 min",material:"Palos, bolas",variantes:["Palabra en otro idioma", "Frase corta de 2 palabras", "Gesto físico como gatillo"],tags:["palabra clave", "gatillo", "mental", "activación"]},
+{id:"b048",grupo:"alevin",trimestre:4,semana:23,categoria:"Juego Largo",nombre:"El Segundo Golpe en Par 5",objetivo:"Gestionar el segundo golpe de un par 5 inteligentemente.",descripcion:"No siempre hay que ir al green en 2. Se practican las dos opciones y se calcula el score esperado.",duracion:"25 min",material:"Madera 3, híbrido, hierros, bolas",variantes:["Con agua a 80m del green", "Calculando score esperado", "Game plan escrito del par 5"],tags:["par 5", "segundo golpe", "gestión", "lay up"]},
+{id:"b049",grupo:"alevin",trimestre:4,semana:27,categoria:"Chip",nombre:"El Short Game de Campeonato",objetivo:"Competición de short game con todas las habilidades.",descripcion:"Circuito de 9 estaciones: chip desde rough, pitch de 30m, flop, bunker, putt de 1m, putt de 3m, putt de 5m, chip de pendiente, up&down.",duracion:"40 min",material:"Wedges, putter, bolas, 9 estaciones",variantes:["Solo short game", "Por parejas", "Con tiempo límite por estación"],tags:["short game", "circuito", "campeonato", "puntuación"]},
+{id:"b050",grupo:"alevin",trimestre:4,semana:28,categoria:"Mental",nombre:"Carta al Yo del Siguiente Año",objetivo:"Reflexión profunda sobre el curso y los objetivos futuros.",descripcion:"El alumno escribe una carta a su yo del año próximo. El profesor la guarda y la entrega al inicio del siguiente año.",duracion:"20 min",material:"Papel, sobre, bolígrafo",variantes:["En digital email a futuro", "Compartirla con el grupo", "Con foto del alumno dentro"],tags:["reflexión", "carta", "objetivos", "crecimiento", "cierre"]},
+{id:"pa001",grupo:"benjamin",trimestre:1,semana:1,categoria:"Swing",nombre:"Biomecánica del Swing — Análisis 3D",objetivo:"Entender la biomecánica del swing a nivel técnico avanzado.",descripcion:"Análisis de los 4 pilares: plano de swing, path de la cabeza, ángulo de ataque y cara en el impacto.",duracion:"30 min",material:"Hierro 7, tecnología de análisis si disponible",variantes:["Sin tecnología solo video", "Con radar de velocidad", "Comparar con pro de tour"],tags:["biomecánica", "plano", "path", "ángulo de ataque"]},
+{id:"pa002",grupo:"benjamin",trimestre:1,semana:2,categoria:"Putting",nombre:"Estadísticas de Putting",objetivo:"Medir y analizar el rendimiento en el putting.",descripcion:"Medir el % de emboques a 1m, 2m, 3m y 5m. Calcular la media de putts por ronda. Identificar la distancia más débil.",duracion:"30 min",material:"Putter, bolas, app de estadísticas o hoja Excel",variantes:["Con app de putting", "Comparar con media del Tour", "Plan mensual de mejora"],tags:["estadísticas", "putting", "porcentaje", "análisis"]},
+{id:"pa003",grupo:"benjamin",trimestre:1,semana:3,categoria:"Juego Largo",nombre:"Smash Factor y Eficiencia de Impacto",objetivo:"Maximizar la eficiencia del impacto con cada palo.",descripcion:"El smash factor ideal con driver es 1.5. Se trabajan los factores que lo mejoran: sweet spot, ángulo de ataque, cara cuadrada.",duracion:"25 min",material:"Driver, 7-hierro, marcadores de impacto, bolas",variantes:["Con radar si disponible", "Solo hierros", "Comparar marcas de impacto antes/después"],tags:["smash factor", "impacto", "sweet spot", "eficiencia"]},
+{id:"pa004",grupo:"benjamin",trimestre:1,semana:4,categoria:"Mental",nombre:"El Plan de Temporada",objetivo:"Establecer objetivos de la temporada de competición.",descripcion:"El alumno establece: handicap objetivo, torneos a disputar, objetivos técnicos y mentales. Plan firmado con el profesor.",duracion:"30 min",material:"Plantilla de plan de temporada, bolígrafo",variantes:["Con padres", "Revisión mensual", "Tablero visual de objetivos"],tags:["temporada", "objetivos", "plan", "competición"]},
+{id:"pa005",grupo:"benjamin",trimestre:1,semana:5,categoria:"Chip",nombre:"El Short Game Test",objetivo:"Medir la situación actual del short game de forma objetiva.",descripcion:"Test estándar de short game: 18 chips desde posiciones específicas alrededor del green. Se mide la distancia de cada bola al hoyo.",duracion:"30 min",material:"Wedges, putter, bolas, medidor de distancias",variantes:["Solo bunker", "Solo putts", "Comparar con promedio del grupo"],tags:["test", "short game", "medición", "mensual"]},
+{id:"pa006",grupo:"benjamin",trimestre:1,semana:6,categoria:"Juego Largo",nombre:"El Driving Range Eficiente",objetivo:"Practicar en el campo de prácticas con intención y estructura.",descripcion:"Sesión de 45 min con estructura: 10 min calentamiento, 15 min hierros, 10 min approach, 10 min driver.",duracion:"45 min",material:"Set completo, bolas",variantes:["Con registro de aciertos", "Con objetivo específico en cada palo", "Con compañero evaluando"],tags:["campo de prácticas", "estructura", "intención", "calentamiento"]},
+{id:"pa007",grupo:"benjamin",trimestre:1,semana:7,categoria:"Putting",nombre:"La Línea de Putt Perfecta",objetivo:"Dominar la alineación de la cara del putter.",descripcion:"Con una línea dibujada en la bola, el alumno la alinea con la línea de putt. Verifica que la cara también está perfectamente alineada.",duracion:"20 min",material:"Putter, bolas con línea marcada, regla de putting",variantes:["Con laser de alineación", "En green con pendiente", "Velocidades de green distintas"],tags:["alineación", "línea de putt", "cara del putter", "precisión"]},
+{id:"pa008",grupo:"benjamin",trimestre:1,semana:8,categoria:"Reglas",nombre:"Reglamento de Torneo",objetivo:"Conocer las condiciones locales y reglas de torneo.",descripcion:"Análisis de un cartel de condiciones locales real. El alumno lee y explica cada condición.",duracion:"30 min",material:"Cartel de condiciones locales, reglamento RFEG",variantes:["Con arbitraje real", "Preguntas sobre condiciones locales", "Comparar condiciones de varios torneos"],tags:["condiciones locales", "torneo", "reglamento", "preparación"]},
+{id:"pa009",grupo:"benjamin",trimestre:2,semana:9,categoria:"Swing",nombre:"La Velocidad de Cabeza de Palo",objetivo:"Aumentar la velocidad de swing de forma controlada.",descripcion:"Series de velocidad: 5 swings al 60%, 5 al 80%, 5 al 100%, 5 al 110% (máximo). El objetivo: aumentar 5 km/h en 4 semanas.",duracion:"25 min",material:"Driver, hierros, radar de velocidad si disponible",variantes:["Con speed sticks", "Solo con hierro 7", "Warm-up dinámico antes"],tags:["velocidad", "head speed", "km/h", "potencia"]},
+{id:"pa010",grupo:"benjamin",trimestre:2,semana:10,categoria:"Juego Largo",nombre:"El Approach de Torneo",objetivo:"Reproducir approach shots de competición bajo presión.",descripcion:"Desde 5 posiciones distintas (100m-140m) se lanza a un green real. Se cuenta el % de greens alcanzados.",duracion:"30 min",material:"Set de hierros, bolas, green real",variantes:["Con agua o bunker frontal", "Bandera en borde de green", "Registrar distancia exacta al hoyo"],tags:["approach", "torneo", "presión", "GIR"]},
+{id:"pa011",grupo:"benjamin",trimestre:2,semana:11,categoria:"Chip",nombre:"El Short Game Score",objetivo:"Simular el short game de una ronda completa.",descripcion:"18 situaciones alrededor del green simulando una ronda: 6 chips, 6 pitches, 6 putts. Score total de la ronda de short game.",duracion:"45 min",material:"Wedges, putter, bolas, 18 posiciones marcadas",variantes:["Con el mismo recorrido siempre", "Variando las posiciones", "Comparar con compañero"],tags:["short game", "score", "18 situaciones", "ronda simulada"]},
+{id:"pa012",grupo:"benjamin",trimestre:2,semana:12,categoria:"Mental",nombre:"El Pre-Torneo Mental",objetivo:"Preparación mental completa antes de una competición.",descripcion:"La noche antes del torneo: revisar plan de ronda, visualización de 5 hoyos clave, rutina de sueño. Mañana: calentamiento estructurado.",duracion:"45 min",material:"Plan de torneo, diario",variantes:["Audio guiado de visualización", "Con el profesor", "Protocolo personalizado"],tags:["pre-torneo", "mental", "visualización", "noche antes", "protocolo"]},
+{id:"pa013",grupo:"benjamin",trimestre:2,semana:13,categoria:"Putting",nombre:"La Consistencia de Putting",objetivo:"Medir y mejorar la consistencia del stroke.",descripcion:"Con un putting mirror, el alumno trabaja: alineación de ojos sobre la línea, cabeza inmóvil, cara cuadrada al impacto. 50 putts de 1,5m.",duracion:"25 min",material:"Putter, bolas, putting mirror",variantes:["Sin espejo", "Con línea en el suelo", "Video desde atrás"],tags:["consistencia", "putting mirror", "alineación", "ojos"]},
+{id:"pa014",grupo:"benjamin",trimestre:2,semana:14,categoria:"Swing",nombre:"El Swing de Recuperación",objetivo:"Ejecutar golpes de recuperación desde posiciones difíciles.",descripcion:"Situaciones: bajo árbol (punch shot), rough muy largo, terreno irregular, bola sobre raíz de árbol.",duracion:"30 min",material:"Set completo, campo real",variantes:["Solo situaciones de rough", "Con árbol real", "Con reglamento en mano"],tags:["recuperación", "situaciones difíciles", "punch shot", "creatividad"]},
+{id:"pa015",grupo:"benjamin",trimestre:2,semana:15,categoria:"Juego",nombre:"El Torneo de Hándicap",objetivo:"Competición con hándicap completo en torneo oficial.",descripcion:"Participación en torneo federado con hándicap real. El profesor hace seguimiento y feedback post-ronda.",duracion:"240 min",material:"Set completo, tarjeta federada",variantes:["Solo 18 hoyos", "9 hoyos si es el primero", "Análisis post-torneo en grupo"],tags:["torneo", "hándicap", "federado", "oficial"]},
+{id:"pa016",grupo:"benjamin",trimestre:3,semana:16,categoria:"Swing",nombre:"El Work-in del Iron Swing",objetivo:"Dominar el divot correcto con hierros medios y cortos.",descripcion:"Divot delante de la bola siempre. Se practica en zona de tierra para ver el patrón del divot. El divot ideal es delgado y alargado.",duracion:"20 min",material:"Hierros 7-9, PW, zona de tierra o arena",variantes:["En fairway real", "Video de frente y lado", "Comparar divot antes/después"],tags:["divot", "hierros", "contacto", "descendente"]},
+{id:"pa017",grupo:"benjamin",trimestre:3,semana:17,categoria:"Juego Largo",nombre:"El Juego de Números — Trackman",objetivo:"Entender los datos de vuelo de la bola.",descripcion:"Si hay radar: analizar carry, distance, spin rate, launch angle y smash factor. Si no: app gratuita de análisis de vuelo.",duracion:"30 min",material:"Driver y hierros, radar/app si disponible",variantes:["Sin radar solo estimación", "Con hoja de datos completa", "Objetivos por dato"],tags:["datos", "trackman", "carry", "spin", "launch angle"]},
+{id:"pa018",grupo:"benjamin",trimestre:3,semana:18,categoria:"Chip",nombre:"El Bunker Mojado y Duro",objetivo:"Gestionar el bunker con arena mojada o muy compacta.",descripcion:"Arena mojada: no hay explosión, abrir menos la cara y golpear más limpio. Arena dura: jugar como chip desde suelo. 15 repeticiones.",duracion:"25 min",material:"SW, bolas, bunker mojado/arena compacta",variantes:["Arena muy suelta", "Sin arena sobre cemento", "Bola en agua dentro del bunker"],tags:["bunker", "mojado", "duro", "adaptación"]},
+{id:"pa019",grupo:"benjamin",trimestre:3,semana:19,categoria:"Mental",nombre:"El Post-Mortem de Torneo",objetivo:"Analizar un torneo completo con metodología estructurada.",descripcion:"Tras un torneo: (1) Estadísticas por categoría, (2) Decisiones clave (buenas y malas), (3) Emocional.",duracion:"45 min",material:"Tarjeta del torneo, hoja de análisis",variantes:["Con el profesor", "Video de algunos golpes", "Comparar con anterior torneo"],tags:["post-mortem", "análisis", "torneo", "estadísticas"]},
+{id:"pa020",grupo:"benjamin",trimestre:3,semana:20,categoria:"Putting",nombre:"El Putting en Velocidad Alta",objetivo:"Adaptar el putt a greens rápidos.",descripcion:"Se simulan greens rápidos. El alumno aprende a reducir el backswing y a golpear muy suave. 20 putts de 3m.",duracion:"20 min",material:"Putter, bolas, green rápido o tabla inclinada",variantes:["Desde 5m", "Cuesta abajo en green rápido", "Comparar 2m en lento vs rápido"],tags:["putting", "green rápido", "velocidad alta", "adaptación"]},
+{id:"pa021",grupo:"benjamin",trimestre:3,semana:21,categoria:"Juego",nombre:"Torneo Stableford Pars — 18 Hoyos",objetivo:"Competición de alto nivel con reglas y tarjeta real.",descripcion:"Torneo de 18 hoyos en Stableford con hándicap completo. Se compite contra todos los Pars y la plantilla histórica del grupo.",duracion:"240 min",material:"Set completo, tarjeta Stableford",variantes:["Con árbitro externo", "En parejas mejor bola", "Clasificación con premios"],tags:["Stableford", "18 hoyos", "hándicap", "clasificación"]},
+{id:"pa022",grupo:"benjamin",trimestre:3,semana:22,categoria:"Juego Largo",nombre:"El Juego de Viento Cruzado",objetivo:"Manejar el viento lateral de ambos lados.",descripcion:"Viento de la derecha: apuntar a la derecha y dejar que la bola baje. Viento de la izquierda: al revés. Alternativa: curvar la bola contra el viento.",duracion:"25 min",material:"Hierros, driver, bolas, campo abierto",variantes:["Solo viento de la derecha", "Con bandera de referencia", "Comparar curvar vs compensar"],tags:["viento cruzado", "compensación", "curva", "lateral"]},
+{id:"pa023",grupo:"benjamin",trimestre:4,semana:23,categoria:"Swing",nombre:"La Corrección del Error Principal",objetivo:"Trabajar específicamente en el error técnico más importante.",descripcion:"Basada en el vídeo análisis del trimestre anterior, se trabaja el error #1 del alumno con un drill específico. 200 repeticiones.",duracion:"45 min",material:"Palo específico según el error, bolas, drill tools",variantes:["Con espejo", "Con varilla de corrección", "Video de confirmación al final"],tags:["corrección", "error principal", "drill", "repetición"]},
+{id:"pa024",grupo:"benjamin",trimestre:4,semana:24,categoria:"Juego",nombre:"El Recorrido de Match Play Pars",objetivo:"Competición de match play de 18 hoyos entre los Pars.",descripcion:"Torneo de match play. Cuadro de eliminatorias. El ganador se enfrenta al profesor en el hoyo 18. Premio especial.",duracion:"240 min",material:"Set completo, cuadro de eliminatorias, trofeo",variantes:["Por parejas mejor bola", "Hoyo 18 con galería de padres", "Nassau"],tags:["match play", "eliminatorias", "18 hoyos", "reto final"]},
+{id:"pa025",grupo:"benjamin",trimestre:4,semana:25,categoria:"Mental",nombre:"El Score Mental de la Ronda",objetivo:"Evaluar el rendimiento mental durante una ronda.",descripcion:"El alumno lleva un score mental en paralelo: +1 si completó la rutina, +1 si gestionó bien una emoción, -1 si se descontroló.",duracion:"120 min",material:"Tarjeta de score mental, bolígrafo",variantes:["Solo 9 hoyos", "Con compañero que también evalúa", "Comparar score mental vs score real"],tags:["mental", "score mental", "autoevaluación", "rutina"]},
+{id:"pa026",grupo:"benjamin",trimestre:4,semana:26,categoria:"Chip",nombre:"El Short Game Total Pars",objetivo:"Test final de short game con todas las habilidades.",descripcion:"Test final del año: 9 chips, 6 pitches, 3 bunkers, 9 putts. Score total máximo de 54 puntos. Comparar con test de inicio de curso.",duracion:"45 min",material:"Set de short game completo",variantes:["Solo comparar inicio vs final", "Publicar resultados del grupo", "Premio al más mejorado"],tags:["test final", "short game", "comparativa", "mejora"]},
+{id:"pa027",grupo:"benjamin",trimestre:4,semana:27,categoria:"Juego Largo",nombre:"El Driving de Fin de Curso",objetivo:"Medir la mejora en distancia y precisión con el driver.",descripcion:"Test final: 10 drives midiendo distancia y si entra en el fairway. Comparar con el test de inicio de curso.",duracion:"20 min",material:"Driver, tees, bolas, medidor",variantes:["Solo distancia", "Solo fairways", "Con video comparativo inicio/fin"],tags:["driver", "test final", "distancia", "fairway"]},
+{id:"pa028",grupo:"benjamin",trimestre:4,semana:28,categoria:"Juego",nombre:"Torneo de Clausura Pars",objetivo:"Torneo de fin de curso con reconocimiento y celebración.",descripcion:"Torneo de 18 hoyos Stableford con hándicap. Ceremonia de entrega de trofeos, diplomas y discurso.",duracion:"240 min",material:"Set completo, trofeos, diplomas",variantes:["Con padres en los últimos hoyos", "Con buffet posterior", "Video del año"],tags:["clausura", "trofeos", "diploma", "celebración"]},
+{id:"pa029",grupo:"benjamin",trimestre:1,semana:3,categoria:"Putting",nombre:"La Rueda del Putting",objetivo:"Dominar los putts desde los 8 puntos cardinales a 2 metros.",descripcion:"8 bolas a 2m alrededor del hoyo. El alumno debe embocar las 8. Si falla una, empieza desde donde falló.",duracion:"25 min",material:"Putter, 8 bolas, hoyo",variantes:["A 2,5m", "Solo los 4 puntos cardinales", "Con observador"],tags:["putting", "8 puntos", "cardinales", "presión"]},
+{id:"pa030",grupo:"benjamin",trimestre:2,semana:11,categoria:"Coordinación",nombre:"Preparación Física Específica Golf",objetivo:"Programa completo de preparación física para el golf.",descripcion:"Sesión completa: movilidad articular (15 min), fuerza de core (15 min), velocidad de rotación (10 min), estiramiento final (5 min).",duracion:"45 min",material:"Bandas, esterilla, palo de golf, pelota medicinal",variantes:["Versión de 20 min", "Solo calentamiento pre-ronda", "Con video guía"],tags:["preparación física", "fuerza", "movilidad", "velocidad"]},
+{id:"pa031",grupo:"benjamin",trimestre:3,semana:16,categoria:"Putting",nombre:"El Putting Gate",objetivo:"Controlar la cara del putter al impacto.",descripcion:"Dos tees a 2cm a cada lado de la bola. El putter debe pasar por la puerta sin tocarlos. Garantiza una cara cuadrada al impacto.",duracion:"20 min",material:"Putter, bolas, tees",variantes:["Puerta más estrecha (1,5cm)", "Desde 2m", "Con putting mirror además"],tags:["putting gate", "cara cuadrada", "tees", "técnica"]},
+{id:"pa032",grupo:"benjamin",trimestre:1,semana:6,categoria:"Chip",nombre:"El Pitch de Maestría",objetivo:"Dominar el pitch a distintas alturas según la situación.",descripcion:"3 tipos de pitch: alto (cara abierta), medio (stance normal), bajo (manos adelantadas, bola atrasada). Los 3 desde la misma posición.",duracion:"25 min",material:"SW, PW, 9-hierro, bolas",variantes:["Con obstáculo intermedio", "Solo alto", "Identificar cuándo usar cada uno"],tags:["pitch", "alto", "medio", "bajo", "versatilidad"]},
+{id:"pa033",grupo:"benjamin",trimestre:2,semana:14,categoria:"Mental",nombre:"Gestión del Hándicap",objetivo:"Entender y trabajar para bajar el hándicap.",descripcion:"Cálculo del hándicap: las 8 mejores de las últimas 20 rondas. El alumno identifica qué hoyos le cuestan más diferencial.",duracion:"30 min",material:"Histórico de tarjetas, calculadora, hoja de Excel",variantes:["Con app de hándicap", "Simular diferentes scores", "Objetivo de hándicap a final de año"],tags:["hándicap", "diferencial", "cálculo", "objetivo"]},
+{id:"pa034",grupo:"benjamin",trimestre:3,semana:18,categoria:"Juego Largo",nombre:"El Approach Controlado",objetivo:"Approach shots de alta precisión a zonas específicas del green.",descripcion:"En lugar de apuntar a la bandera, apuntar a cuadrantes del green. Desde 100-150m, elegir el cuadrante correcto según la bandera y el viento.",duracion:"25 min",material:"Hierros, bolas, green dividido en 4 cuadrantes",variantes:["Con radar de distancia", "Registrar cuadrante alcanzado", "Comparar vs apuntar siempre a la bandera"],tags:["approach", "cuadrantes", "precisión", "estrategia de green"]},
+{id:"pa035",grupo:"benjamin",trimestre:4,semana:21,categoria:"Swing",nombre:"El Swing en Terreno Irregular",objetivo:"Adaptar el swing a los 4 tipos de terreno irregular.",descripcion:"Bola por encima de los pies, por debajo de los pies, cuesta arriba, cuesta abajo. Para cada situación: ajuste de postura y cara.",duracion:"30 min",material:"Set de hierros, bolas, terreno irregular del campo",variantes:["Solo un tipo por sesión", "En campo real", "Registrar el ajuste necesario"],tags:["terreno irregular", "adaptación", "cuesta arriba", "cuesta abajo"]},
+{id:"pa036",grupo:"benjamin",trimestre:1,semana:7,categoria:"Juego",nombre:"9 Hoyos de Práctica Deliberada",objetivo:"Jugar 9 hoyos con un objetivo técnico específico.",descripcion:"El alumno elige UN objetivo técnico y lo aplica en 9 hoyos. No importa el score, solo el % de cumplimiento del objetivo.",duracion:"120 min",material:"Set completo, ficha de objetivos",variantes:["El profesor elige el objetivo", "2 objetivos complementarios", "Comparar score con objetivo vs sin objetivo"],tags:["práctica deliberada", "objetivo único", "9 hoyos", "proceso"]},
+{id:"pa037",grupo:"benjamin",trimestre:2,semana:10,categoria:"Chip",nombre:"El Par Propio en Short Game",objetivo:"Definir y mejorar el par propio en el short game.",descripcion:"Se define el par propio para chip y putt según el nivel del alumno. Objetivo: alcanzar ese par propio en el 70% de las situaciones.",duracion:"25 min",material:"Wedges, putter, bolas",variantes:["Desde 20m", "Desde rough (par propio de 4)", "Registrar % semanalmente"],tags:["par propio", "short game", "chip", "porcentaje"]},
+{id:"pa038",grupo:"benjamin",trimestre:3,semana:20,categoria:"Putting",nombre:"El Putting de Puente",objetivo:"Eliminar el error de desaceleración en el putt.",descripcion:"Dos tees paralelos forman un puente. El putter debe pasar siempre acelerando hacia el hoyo (through-swing siempre mayor).",duracion:"20 min",material:"Putter, bolas, tees formando puente",variantes:["Con metrónomo de aceleración", "Sin puente para confirmar", "En pendiente"],tags:["putting", "aceleración", "desaceleración", "through-swing"]},
+{id:"pa039",grupo:"benjamin",trimestre:4,semana:22,categoria:"Reglas",nombre:"Árbitro Certificado Nivel 1",objetivo:"Prepararse para el curso de árbitro de nivel 1 de la RFEG.",descripcion:"Las 10 reglas más usadas en torneo, resolución de incidentes, comunicación con los jugadores. Práctica de arbitraje en torneo interno.",duracion:"60 min",material:"Reglamento RFEG completo, casos prácticos",variantes:["Con árbitro oficial invitado", "Examen simulado", "Arbitrando el torneo de los Birdies"],tags:["árbitro", "RFEG", "nivel 1", "reglamento"]},
+{id:"pa040",grupo:"benjamin",trimestre:2,semana:13,categoria:"Swing",nombre:"La Presión del Grip Perfecta",objetivo:"Identificar y mantener la presión ideal del grip.",descripcion:"En escala del 1 al 10 (1=suave, 10=máximo), la presión ideal es entre 5 y 6. 30 golpes evaluando la presión.",duracion:"20 min",material:"Hierro 7, bolas, escala de presión visual",variantes:["Desde 1 a 10 de forma progresiva", "Con varillas en las manos", "Autoevaluación post-golpe"],tags:["grip", "presión", "sensación", "escala"]},
+{id:"pa041",grupo:"benjamin",trimestre:3,semana:19,categoria:"Juego",nombre:"La Ronda Táctica",objetivo:"Jugar una ronda completa con enfoque 100% táctico.",descripcion:"18 hoyos verbalizando en voz alta la decisión táctica completa antes de cada golpe.",duracion:"240 min",material:"Set completo, ficha de evaluación táctica",variantes:["Solo 9 hoyos", "Con caddie que pregunta la decisión", "Grabar las verbalizaciones"],tags:["táctica", "verbalizar", "decisión", "ronda"]},
+{id:"pa042",grupo:"benjamin",trimestre:4,semana:24,categoria:"Chip",nombre:"La Competición de Short Game Pars",objetivo:"Torneo de short game completo.",descripcion:"18 situaciones: chips, pitches, bunkers, putts. Score total. Clasificación y premio especial.",duracion:"60 min",material:"Wedges, putter, bolas, clasificación",variantes:["Solo pitches y chips", "Con puntuación por cercanía al hoyo", "Equipos de 2"],tags:["competición", "short game", "clasificación", "trofeo"]},
+{id:"pa043",grupo:"benjamin",trimestre:1,semana:4,categoria:"Juego Largo",nombre:"El Hitting Stations",objetivo:"Practicar todos los palos en rotación con objetivos.",descripcion:"10 estaciones en el campo de prácticas, cada una con un palo y un objetivo específico. El alumno rota cada 10 minutos.",duracion:"50 min",material:"Set completo, 10 objetivos marcados",variantes:["Solo los 5 palos más usados", "Con scorecard por estación", "Un palo toda la sesión como contraejemplo"],tags:["rotación", "estaciones", "todos los palos", "variedad"]},
+{id:"pa044",grupo:"benjamin",trimestre:2,semana:12,categoria:"Mental",nombre:"La Rueda de Rendimiento",objetivo:"Evaluar el rendimiento en 8 áreas del juego.",descripcion:"Rueda de rendimiento con 8 áreas (driver, hierros, approach, chip, bunker, putt largo, putt corto, mental). El alumno puntúa del 1 al 10.",duracion:"20 min",material:"Plantilla de rueda de rendimiento, bolígrafo",variantes:["Trimestral", "Con el profesor", "Compartir con el grupo"],tags:["rueda de rendimiento", "evaluación", "8 áreas", "autodiagnóstico"]},
+{id:"pa045",grupo:"benjamin",trimestre:3,semana:17,categoria:"Putting",nombre:"El Putting de Lectura Avanzada",objetivo:"Leer putts de doble pendiente.",descripcion:"Putts de doble break: la bola rompe en un sentido y luego en otro. Se aprende a leer el break más cerca del hoyo primero.",duracion:"25 min",material:"Putter, bolas, green con doble pendiente",variantes:["Solo el break final", "Predecir la línea completa dibujándola", "Con compañero que lee y el otro golpea"],tags:["putting", "doble break", "lectura avanzada", "pendiente compleja"]},
+{id:"pa046",grupo:"benjamin",trimestre:4,semana:23,categoria:"Juego Largo",nombre:"El Drive de Precisión Máxima",objetivo:"Maximizar el fairway sin sacrificar demasiada distancia.",descripcion:"Driver a 85% de velocidad en un pasillo de 20m. 20 drives midiendo distancia y fairway.",duracion:"25 min",material:"Driver, tees, bolas, conos en fairway",variantes:["Pasillo de 15m", "Con consecuencia si sale del pasillo", "Registrar el % óptimo personal"],tags:["driver", "precisión", "85%", "fairway", "velocidad óptima"]},
+{id:"pa047",grupo:"benjamin",trimestre:2,semana:15,categoria:"Chip",nombre:"La Salida de Bunker con Viento",objetivo:"Gestionar el viento en la salida de bunker.",descripcion:"Viento en contra: abrir más la cara, más fuerza. Viento a favor: menos swing, cara menos abierta. Viento cruzado: apuntar compensando.",duracion:"20 min",material:"SW, bolas, bunker, día de viento o ventilador",variantes:["Solo viento en contra", "Con objetivo específico", "Comparar los 3 tipos"],tags:["bunker", "viento", "adaptación", "cara abierta"]},
+{id:"pa048",grupo:"benjamin",trimestre:3,semana:21,categoria:"Swing",nombre:"La Sesión de Feedback de Pares",objetivo:"Aprender del swing de los compañeros.",descripcion:"En grupos de 3: uno golpea, otro graba, el tercero da feedback verbal. Rotan. El profesor supervisa la calidad del feedback.",duracion:"30 min",material:"Hierros, bolas, móvil para grabar",variantes:["Con checklist de observación", "Feedback escrito", "Solo feedback positivo"],tags:["feedback", "pares", "aprendizaje colaborativo", "observación"]},
+{id:"pa049",grupo:"benjamin",trimestre:4,semana:26,categoria:"Juego",nombre:"El Scramble de Clausura",objetivo:"Torneo de equipo de cierre de curso en formato scramble.",descripcion:"Equipos de 4 alumnos mezclando grupos de edad. Formato scramble: todos golpean desde la mejor bola. 18 hoyos.",duracion:"240 min",material:"Set completo, tarjeta de scramble, premios de equipo",variantes:["Solo 9 hoyos", "Con padres como compañeros", "Fotos del torneo y publicación"],tags:["scramble", "equipos", "clausura", "mezcla de edades"]},
+{id:"pa050",grupo:"benjamin",trimestre:4,semana:28,categoria:"Mental",nombre:"El Objetivo del Próximo Año",objetivo:"Planificar la temporada siguiente.",descripcion:"¿Qué hándicap quiero tener? ¿Qué torneos? ¿Qué aspecto técnico será mi prioridad? Plan firmado con el profesor.",duracion:"30 min",material:"Plantilla de plan anual, sobre sellado",variantes:["Con padres", "Presentación al grupo", "Audio personal grabado"],tags:["planificación", "objetivos", "temporada siguiente", "hándicap"]},
+{id:"bp001",grupo:"infantil",trimestre:1,semana:1,categoria:"Swing",nombre:"Análisis de Swing de Alto Rendimiento",objetivo:"Análisis técnico exhaustivo al inicio de temporada.",descripcion:"Análisis de 360°: frente, lateral, atrás y desde arriba. Identificación de 3 prioridades técnicas para la temporada. Plan firmado.",duracion:"45 min",material:"Set completo, tecnología de análisis avanzada",variantes:["Con Trackman si disponible", "Con comparativa de temporada anterior", "Plan técnico documentado"],tags:["alto rendimiento", "análisis 360°", "prioridades", "plan técnico"]},
+{id:"bp002",grupo:"infantil",trimestre:1,semana:2,categoria:"Putting",nombre:"Estadísticas Avanzadas de Putting",objetivo:"Gestionar el putting con datos de alto nivel.",descripcion:"Strokes Gained Putting. Promedios: putts por ronda, conversión desde 2-5m, 3-putt avoidance, birdie putts. App de estadísticas.",duracion:"30 min",material:"App de estadísticas (Arccos, Shot Scope o similar), bolas, putter",variantes:["Con app gratuita", "Solo los 3 datos más importantes", "Comparar con benchmark Tour"],tags:["estadísticas", "strokes gained", "putting", "datos avanzados"]},
+{id:"bp003",grupo:"infantil",trimestre:1,semana:3,categoria:"Mental",nombre:"El Perfil Mental del Competidor",objetivo:"Identificar el perfil mental y las áreas de mejora psicológica.",descripcion:"Cuestionario de perfil mental: ansiedad competitiva, concentración, motivación, resiliencia, visión de futuro.",duracion:"45 min",material:"Cuestionario de perfil mental, bolígrafo",variantes:["Con psicólogo deportivo", "Solo autoevaluación", "Comparar inicio vs final de curso"],tags:["perfil mental", "psicología", "competidor", "evaluación", "resiliencia"]},
+{id:"bp004",grupo:"infantil",trimestre:1,semana:4,categoria:"Juego Largo",nombre:"El Protocolo de Calentamiento de Competición",objetivo:"Desarrollar un protocolo de calentamiento reproducible.",descripcion:"45 min pre-ronda: estiramientos dinámicos (10min), chipping y putting (15min), hierros cortos a largos (10min), driver (5min), putting pre-salida (5min).",duracion:"45 min",material:"Set completo, zona de práctica",variantes:["Versión de 30 min", "Versión de 20 min", "Adaptado al horario del torneo"],tags:["calentamiento", "protocolo", "competición", "pre-ronda"]},
+{id:"bp005",grupo:"infantil",trimestre:1,semana:5,categoria:"Chip",nombre:"El Short Game de Alta Presión",objetivo:"Ejecutar el short game en situaciones de máxima presión.",descripcion:"Simulación de torneo: el alumno debe hacer up&down en los últimos 3 hoyos de un campeonato. El profesor y otros observan.",duracion:"30 min",material:"Wedges, putter, bolas, 3 posiciones de alta dificultad",variantes:["Con cronómetro", "Con galería de espectadores", "Con comentario en vivo del profesor"],tags:["presión", "short game", "up&down", "galería", "simulación"]},
+{id:"bp006",grupo:"infantil",trimestre:1,semana:6,categoria:"Juego",nombre:"El Recorrido de Reconocimiento",objetivo:"Preparar el campo para un torneo conociendo cada hoyo.",descripcion:"9 hoyos de reconocimiento: el alumno anota zona de caída de salida, punto de peligro, zona segura del green y breaks principales de putt.",duracion:"120 min",material:"Libreta de campo, bolígrafo, set completo",variantes:["18 hoyos", "Con mapa del campo", "Comparar notas con compañero"],tags:["reconocimiento", "campo", "preparación", "notas", "estrategia"]},
+{id:"bp007",grupo:"infantil",trimestre:1,semana:7,categoria:"Putting",nombre:"El Putt de 1 Metro bajo Presión Máxima",objetivo:"Dominar el putt de 1 metro en cualquier condición.",descripcion:"La presión máxima: embocar 10 putts seguidos de 1 metro. Si fallas el décimo, empiezas desde 1. Registrar el tiempo. Hacerlo semanal.",duracion:"20 min",material:"Putter, bolas, hoyo, cronómetro",variantes:["15 seguidos", "Con observadores", "Con consecuencia deportiva real"],tags:["1 metro", "presión máxima", "10 seguidos", "resistencia"]},
+{id:"bp008",grupo:"infantil",trimestre:1,semana:8,categoria:"Reglas",nombre:"Reglamento a Nivel Árbitro",objetivo:"Dominar el reglamento a nivel de árbitro nivel 2.",descripcion:"Preparación para árbitro nivel 2 RFEG: casos complejos, recurso de decisiones, reglas especiales de handicap.",duracion:"60 min",material:"Reglamento RFEG completo, decisiones de comité",variantes:["Con árbitro oficial", "Casos de la Real Academia de Árbitros", "Examen online RFEG"],tags:["árbitro", "nivel 2", "RFEG", "reglamento avanzado"]},
+{id:"bp009",grupo:"infantil",trimestre:2,semana:9,categoria:"Swing",nombre:"Optimización de la Velocidad de Swing",objetivo:"Maximizar la velocidad de swing sin sacrificar la dirección.",descripcion:"Protocolo de velocidad: calentamiento de velocidad (5 swings máximo), series de speed sticks (3 series de 5), vuelta a la técnica.",duracion:"30 min",material:"Speed sticks, driver, radar de velocidad",variantes:["Con SuperSpeed o similar", "Solo en temporada baja", "Programa de 6 semanas"],tags:["velocidad", "speed sticks", "km/h", "maximizar", "protocolo"]},
+{id:"bp010",grupo:"infantil",trimestre:2,semana:10,categoria:"Juego Largo",nombre:"Strokes Gained Approach",objetivo:"Analizar y mejorar el rendimiento en approach shots con datos.",descripcion:"Durante 3 rondas, registrar cada approach shot: distancia, resultado. Calcular el Strokes Gained Approach personal.",duracion:"Trabajo de 3 rondas + análisis 30 min",material:"App de estadísticas, set de hierros",variantes:["Solo distancias de 100-150m", "Comparar viento/sin viento", "Plan de mejora por rango de distancia"],tags:["strokes gained", "approach", "estadísticas avanzadas", "benchmark"]},
+{id:"bp011",grupo:"infantil",trimestre:2,semana:11,categoria:"Chip",nombre:"El Short Game con Trackman",objetivo:"Analizar el short game con datos objetivos.",descripcion:"Con Trackman/Flightscope: medir spin rate, launch angle y distancia en chips y pitches. Identificar patrones.",duracion:"30 min",material:"Wedges, bolas, Trackman o similar",variantes:["Sin tecnología solo análisis visual", "Con radar básico", "Enfoque en un solo palo"],tags:["Trackman", "spin rate", "launch angle", "short game"]},
+{id:"bp012",grupo:"infantil",trimestre:2,semana:12,categoria:"Mental",nombre:"Mindfulness para Golfistas",objetivo:"Técnicas de mindfulness aplicadas a la concentración.",descripcion:"Sesión de 20 min de mindfulness: respiración consciente, body scan, anchoring en el presente. Aplicación en el campo.",duracion:"45 min",material:"Esterilla, espacio tranquilo, app de meditación",variantes:["App Headspace/Calm", "Solo 5 min diarios", "Con psicólogo deportivo"],tags:["mindfulness", "meditación", "presente", "anchor", "concentración"]},
+{id:"bp013",grupo:"infantil",trimestre:2,semana:13,categoria:"Putting",nombre:"El Putting Estadístico",objetivo:"Usar estadísticas para mejorar el putting.",descripcion:"Sesión de medición: 10 putts desde cada distancia (1m-10m). Calcular el % de emboques desde cada distancia. Identificar el make zone personal.",duracion:"40 min",material:"Putter, bolas, hoja de registro, calculadora",variantes:["Con app de estadísticas", "Comparar con media del Tour", "Plan semanal basado en datos"],tags:["estadísticas", "putting", "make zone", "porcentaje"]},
+{id:"bp014",grupo:"infantil",trimestre:2,semana:14,categoria:"Juego",nombre:"El Torneo de Clasificación",objetivo:"Torneo de clasificación para selección de equipo.",descripcion:"Torneo de clasificación interno: los 2 mejores representan al club en torneo externo. Presión real de selección. Stableford 18 hoyos.",duracion:"240 min",material:"Set completo, tarjeta federada",variantes:["Con árbitro externo", "Transmisión de scores en tiempo real", "Análisis post-torneo obligatorio"],tags:["clasificación", "selección", "representación", "presión real"]},
+{id:"bp015",grupo:"infantil",trimestre:2,semana:15,categoria:"Swing",nombre:"La Corrección Técnica de Alto Nivel",objetivo:"Trabajar un cambio técnico complejo con método y paciencia.",descripcion:"Los cambios técnicos requieren 2000-5000 repeticiones. Se establece un drill específico y un plan de 8 semanas.",duracion:"45 min",material:"El palo específico del cambio, bolas, drill tools",variantes:["Con espejo", "Video diario del cambio", "Con coach externo visitante"],tags:["corrección técnica", "repeticiones", "8 semanas", "cambio", "método"]},
+{id:"bp016",grupo:"infantil",trimestre:3,semana:16,categoria:"Juego Largo",nombre:"El Driving de Alta Velocidad Controlada",objetivo:"Maximizar la distancia manteniendo el 75% de fairways.",descripcion:"El alumno trabaja en encontrar su velocidad óptima: la que maximiza la distancia mientras mantiene el 75% de fairways.",duracion:"30 min",material:"Driver, conos en fairway imaginario, bolas",variantes:["Con radar de velocidad", "En campo real", "Registrar velocidad vs % fairway"],tags:["driving", "velocidad óptima", "fairway", "75%"]},
+{id:"bp017",grupo:"infantil",trimestre:3,semana:17,categoria:"Chip",nombre:"El Bunker de Competición Avanzado",objetivo:"Dominar el bunker en todas las condiciones de competición.",descripcion:"Situaciones avanzadas: bunker borde de green, bunker de 30m al hoyo, arena muy suelta, arena húmeda, bola cerca del labio.",duracion:"40 min",material:"SW, LW, bolas, bunker con distintas condiciones",variantes:["Solo situaciones de torneo", "Con observador puntuando", "Comparar SW vs LW en cada situación"],tags:["bunker", "avanzado", "competición", "versatilidad"]},
+{id:"bp018",grupo:"infantil",trimestre:3,semana:18,categoria:"Mental",nombre:"El Protocolo de Recuperación Mental",objetivo:"Recuperarse de un mal inicio de ronda.",descripcion:"Cuando la ronda empieza mal: reset físico (respiración profunda), reset emocional (semáforo), reset táctico (objetivo próximo hoyo).",duracion:"30 min",material:"Hoja de protocolo, bolígrafo",variantes:["Simulación de mal inicio", "Con compañero que evalúa la recuperación", "Vídeo de pro recuperándose"],tags:["recuperación", "mal inicio", "protocolo", "reset", "resiliencia"]},
+{id:"bp019",grupo:"infantil",trimestre:3,semana:19,categoria:"Putting",nombre:"La Gestión del Putting en Torneo",objetivo:"Estrategia de putting para minimizar los 3-putts.",descripcion:"El 3-putt destruye el score. Estrategia: desde más de 6m, prioridad la distancia no la dirección. Lag putting a zona de 1m. Nunca el primer putt corto.",duracion:"30 min",material:"Putter, bolas, green real",variantes:["Con mediciones en el putting green", "Registrar 3-putts en 3 rondas", "Comparar antes/después del protocolo"],tags:["putting", "3-putt", "lag", "torneo", "estrategia"]},
+{id:"bp020",grupo:"infantil",trimestre:3,semana:20,categoria:"Juego",nombre:"Torneo Regional — Preparación y Ejecución",objetivo:"Preparación completa para un torneo regional.",descripcion:"Semana de torneo: lunes reconocimiento, martes práctica larga, miércoles práctica corta, jueves ronda de práctica, viernes torneo.",duracion:"Semana completa",material:"Set completo, plan de torneo escrito",variantes:["Solo los 2 días previos", "Con psicólogo deportivo", "Análisis post-torneo en video"],tags:["torneo regional", "preparación", "semana de torneo", "plan"]},
+{id:"bp021",grupo:"infantil",trimestre:3,semana:21,categoria:"Chip",nombre:"El Flop Shot de Alta Presión",objetivo:"Ejecutar el flop shot en situaciones de máxima dificultad.",descripcion:"El flop shot requiere valentía y técnica. Se entrena especialmente en situaciones de alta presión: hoyo 18, necesito par.",duracion:"25 min",material:"LW o SW, bolas, bunker, obstáculo",variantes:["Con espectadores", "Con consecuencia real", "Solo desde rough largo"],tags:["flop shot", "alta presión", "valentía", "situación límite"]},
+{id:"bp022",grupo:"infantil",trimestre:3,semana:22,categoria:"Swing",nombre:"El Work-in de Driver en Competición",objetivo:"Mejorar el driver específicamente para condiciones de torneo.",descripcion:"Simulación de primer tee de torneo: rutina completa, observadores, primera bola con consecuencia. 10 repeticiones.",duracion:"30 min",material:"Driver, tees, bolas, simulación de público",variantes:["Con música de torneo", "Con árbitro observando", "Con cuenta atrás de tiempo"],tags:["driver", "torneo", "primer tee", "presión", "rutina"]},
+{id:"bp023",grupo:"infantil",trimestre:4,semana:23,categoria:"Juego Largo",nombre:"El Game Plan del Torneo",objetivo:"Diseñar un game plan completo de 18 hoyos para un torneo.",descripcion:"Para cada hoyo: salida óptima y palo, approach desde zona A y zona B, posición de bandera: atacar o no. Mapa del campo.",duracion:"60 min",material:"Mapa del campo, bolígrafo, tarjeta de anotaciones",variantes:["Solo 9 hoyos", "Con guía anterior del campo", "Revisar el plan vs lo ejecutado"],tags:["game plan", "18 hoyos", "torneo", "mapa", "estrategia completa"]},
+{id:"bp024",grupo:"infantil",trimestre:4,semana:24,categoria:"Mental",nombre:"La Carta al Yo Competidor",objetivo:"Conectar con la motivación profunda para la competición.",descripcion:"El alumno escribe una carta a su yo competidor: por qué juego al golf, qué significa competir, cómo quiero que me recuerden.",duracion:"20 min",material:"Papel, bolígrafo",variantes:["Audio grabado", "Se comparte con el profesor", "Revisarla al final de la temporada"],tags:["motivación", "carta", "competidor", "por qué", "propósito"]},
+{id:"bp025",grupo:"infantil",trimestre:4,semana:25,categoria:"Putting",nombre:"La Sesión de Putting de 500 Bolas",objetivo:"Sesión intensiva de putting para automatizar el stroke.",descripcion:"500 putts distribuidos: 200 de 1m (automatización), 150 de 2m (confianza), 100 de 3m (control), 50 de 5m+ (distancia).",duracion:"90 min",material:"Putter, bolas, hoyos, registro",variantes:["Con agua cada 100 bolas", "Con música de concentración", "Evaluando cada 50 bolas"],tags:["500 bolas", "putting", "intensivo", "automatización"]},
+{id:"bp026",grupo:"infantil",trimestre:4,semana:26,categoria:"Juego",nombre:"El Torneo de Alto Rendimiento Birdie+",objetivo:"Torneo de máximo nivel del grupo Birdie+.",descripcion:"18 hoyos con reglas federadas de máximo nivel, árbitro externo, horario de torneo real, caddie permitido.",duracion:"240 min",material:"Set completo, árbitro externo, trofeo importante",variantes:["Con invitados de otros clubes", "Con scoring en app", "Con entrevista posterior"],tags:["alto rendimiento", "torneo", "árbitro externo", "caddie"]},
+{id:"bp027",grupo:"infantil",trimestre:4,semana:27,categoria:"Swing",nombre:"El Test de Rendimiento Birdie+",objetivo:"Medir todos los parámetros de rendimiento al final del curso.",descripcion:"Test completo: distancia driver, % fairways (10 drives), % GIR (10 approach de 150m), chips (10 a 10m), putts (10 de 2m).",duracion:"60 min",material:"Set completo, medidor de distancias, registro",variantes:["Con radar de velocidad", "Publicar resultados del grupo", "Premio al más mejorado"],tags:["test", "rendimiento", "distancia", "fairway", "GIR"]},
+{id:"bp028",grupo:"infantil",trimestre:4,semana:28,categoria:"Juego",nombre:"El Torneo de Clausura y Premiación Birdie+",objetivo:"Cierre de temporada con máxima exigencia y celebración.",descripcion:"18 hoyos. Ceremonia de entrega de trofeos con clasificación, mención al mejor mejorado, mejor actitud. Diploma de Birdie+ Golfista.",duracion:"240 min",material:"Set completo, trofeos, diplomas personalizados",variantes:["Con padres y familiares", "Video del año", "Cena de cierre"],tags:["clausura", "gala", "trofeos", "diplomas", "celebración"]},
+{id:"bp029",grupo:"infantil",trimestre:1,semana:3,categoria:"Juego Largo",nombre:"El Driving en Condiciones Adversas",objetivo:"Mantener la eficiencia con el driver en lluvia, viento y frío.",descripcion:"Protocolo de condiciones adversas: guante de lluvia, grip seco, swing más corto al 85%, más palo en viento.",duracion:"30 min",material:"Driver, guantes de lluvia, toalla de golf",variantes:["Con lluvia real", "Con ventilador", "Comparar condiciones buenas vs adversas"],tags:["condiciones adversas", "lluvia", "viento", "frío"]},
+{id:"bp030",grupo:"infantil",trimestre:2,semana:10,categoria:"Chip",nombre:"El Wedge System Personal",objetivo:"Dominar las distancias exactas con cada wedge.",descripcion:"Con 4 wedges y 3 posiciones de swing (¼, ½, ¾), el alumno tiene 12 distancias exactas. Medir, anotar y memorizar el sistema.",duracion:"45 min",material:"4 wedges, bolas, medidor de distancias",variantes:["Solo 3 wedges", "Solo swing ½", "Crear tarjeta de bolsillo con las distancias"],tags:["wedge system", "4 wedges", "distancias exactas", "memorizar"]},
+{id:"bp031",grupo:"infantil",trimestre:3,semana:15,categoria:"Putting",nombre:"La Velocidad de Green Avanzada",objetivo:"Leer y adaptarse a la velocidad del green en minutos.",descripcion:"Antes de un torneo: 5 putts largos para calibrar la velocidad. Ajustar el backswing según la velocidad medida.",duracion:"20 min",material:"Putter, bolas, Stimpmeter si disponible",variantes:["Con Stimpmeter", "Comparar mañana vs tarde", "En distintos greens"],tags:["velocidad de green", "calibrar", "Stimpmeter", "adaptación"]},
+{id:"bp032",grupo:"infantil",trimestre:1,semana:5,categoria:"Mental",nombre:"La Zona de Confort y el Rendimiento",objetivo:"Entender y expandir la zona de confort competitiva.",descripcion:"El rendimiento óptimo está en el borde de la zona de confort. Sesión teórica + práctica fuera de la zona de confort del alumno.",duracion:"45 min",material:"Pizarra, materiales de la situación elegida",variantes:["Con psicólogo deportivo", "Solo la parte práctica", "Situar al alumno en torneo más difícil"],tags:["zona de confort", "rendimiento óptimo", "expansión", "crecimiento"]},
+{id:"bp033",grupo:"infantil",trimestre:2,semana:12,categoria:"Juego",nombre:"La Ronda de Score Objetivo",objetivo:"Jugar una ronda con un score objetivo específico.",descripcion:"El alumno establece un score objetivo realista. Diseña la estrategia hoyo a hoyo: dónde puede hacer birdie, dónde evitar doble bogey.",duracion:"240 min",material:"Set completo, tarjeta con plan y score objetivo",variantes:["Con el profesor en los últimos hoyos", "Evaluación post-ronda del plan", "Revisión quincenal del mejor score"],tags:["score objetivo", "estrategia", "birdie", "bogey doble"]},
+{id:"bp034",grupo:"infantil",trimestre:3,semana:17,categoria:"Chip",nombre:"El Análisis de Short Game con Video",objetivo:"Detectar y corregir errores sutiles del short game.",descripcion:"Grabación de 10 chips y 10 pitches desde ángulos clave. Análisis con el profesor: cara al impacto, punto de entrada, follow-through.",duracion:"40 min",material:"Wedges, bolas, móvil/tablet, app de análisis",variantes:["Comparar con pro del Tour", "App CoachesEye o similar", "Plan de corrección de 4 semanas"],tags:["video análisis", "short game", "error sutil", "corrección", "drill"]},
+{id:"bp035",grupo:"infantil",trimestre:4,semana:21,categoria:"Putting",nombre:"El Putting Psicológico",objetivo:"Dominar el aspecto psicológico del putting en momentos clave.",descripcion:"Yips y presión en putts cortos. Técnicas: cambio de grip, putt de atrás hacia delante, respiración, mirada corta.",duracion:"30 min",material:"Putter, bolas, situaciones de presión simuladas",variantes:["Con compañeros observando", "Con consecuencias reales", "Con psicólogo deportivo"],tags:["yips", "presión", "putting psicológico", "solución personal"]},
+{id:"bp036",grupo:"infantil",trimestre:1,semana:7,categoria:"Juego Largo",nombre:"El Fitting de Palos",objetivo:"Entender y realizar un fitting básico de palos para alto rendimiento.",descripcion:"El fitting determina: longitud del palo, loft y lie, flex del shaft, grip size. Sesión de fitting básico.",duracion:"60 min",material:"Palos de fitting si disponibles, radar de velocidad",variantes:["En tienda de golf especializada", "Fitting digital con datos", "Comparar antes/después del fitting"],tags:["fitting", "personalización", "shaft", "loft", "grip size"]},
+{id:"bp037",grupo:"infantil",trimestre:2,semana:11,categoria:"Swing",nombre:"El Swing en Situación de Play-off",objetivo:"Reproducir el mejor swing bajo la máxima presión posible.",descripcion:"Simulación de play-off: hoyo 18, empate, solo 1 alumno puede ganar. Debe ejecutar su mejor drive y approach.",duracion:"30 min",material:"Set completo, conos en el hoyo de play-off elegido",variantes:["Con cronómetro para la rutina", "Con árbitro externo", "Repetir hasta dominar la situación"],tags:["play-off", "presión máxima", "swing", "rutina", "eliminación"]},
+{id:"bp038",grupo:"infantil",trimestre:3,semana:19,categoria:"Juego",nombre:"La Semana de Intensificación",objetivo:"Semana de entrenamiento intensivo pre-temporada.",descripcion:"Lunes-viernes: 4h diarias divididas en técnica (2h), juego (1h) y físico/mental (1h).",duracion:"4h x 5 días",material:"Set completo, todos los recursos del club",variantes:["Solo 3 días", "Con nutricionista", "Con psicólogo deportivo"],tags:["intensificación", "semana", "4 horas", "salto de rendimiento"]},
+{id:"bp039",grupo:"infantil",trimestre:4,semana:22,categoria:"Juego Largo",nombre:"El Iron Play de Tour",objetivo:"Dominar el juego de hierros con consistencia de nivel de tour.",descripcion:"Objetivo: 70% GIR desde 150m en green real. 20 approach shots midiendo resultado. Análisis de dispersión.",duracion:"40 min",material:"Hierros, bolas, green real, medidor",variantes:["Desde 120m", "Desde 170m", "Bajo presión con observadores"],tags:["iron play", "GIR", "70%", "150m", "dispersión"]},
+{id:"bp040",grupo:"infantil",trimestre:2,semana:13,categoria:"Chip",nombre:"El Chip de 1 Mano",objetivo:"Desarrollar la sensación en la mano líder del chip.",descripcion:"20 chips solo con la mano izquierda (diestros), luego 20 con la derecha, luego 20 con las dos. La mano izquierda controla la cara.",duracion:"20 min",material:"Wedge, bolas",variantes:["Ojos cerrados", "Alternando sin parar", "Desde rough"],tags:["chip", "una mano", "mano líder", "sensación"]},
+{id:"bp041",grupo:"infantil",trimestre:3,semana:20,categoria:"Mental",nombre:"La Concentración Entre Golpes",objetivo:"Gestionar la energía mental entre golpe y golpe.",descripcion:"Entre golpe y golpe: desconexión total. Antes del siguiente golpe: reconexión total (rutina). Técnica on/off.",duracion:"Práctica en campo (ronda de 9 hoyos)",material:"Set completo, ficha de evaluación on/off",variantes:["Con cronómetro del tiempo de conexión", "Evaluación post-ronda", "Comparar con ronda sin técnica on/off"],tags:["concentración", "on/off", "entre golpes", "energía mental"]},
+{id:"bp042",grupo:"infantil",trimestre:4,semana:23,categoria:"Putting",nombre:"El Tour of Greens",objetivo:"Practicar en todos los greens del campo para conocer sus particularidades.",descripcion:"5 putts en cada green del campo (18 greens). En cada green: nota la velocidad, el break predominante y el comportamiento cerca del hoyo.",duracion:"120 min",material:"Putter, bolas, libreta de campo",variantes:["Solo los 9 greens más difíciles", "Con compañero comparando lecturas", "Repetir en condiciones diferentes"],tags:["greens", "libreta", "velocidad", "break", "conocimiento del campo"]},
+{id:"bp043",grupo:"infantil",trimestre:1,semana:8,categoria:"Juego",nombre:"La Simulación de Torneo Nacional",objetivo:"Simular las condiciones de un torneo de nivel nacional.",descripcion:"18 hoyos en condiciones de torneo nacional: salida en hora exacta, árbitro, grupo de 3, scoring en vivo.",duracion:"240 min",material:"Set completo, árbitro, app de scoring",variantes:["Con scoring app público", "Con galería de padres", "Con invited pro"],tags:["simulación", "nacional", "árbitro", "scoring"]},
+{id:"bp044",grupo:"infantil",trimestre:2,semana:14,categoria:"Swing",nombre:"El Trabajo de Video Diario",objetivo:"Establecer una práctica diaria de auto-análisis con video.",descripcion:"El alumno graba un vídeo de 20 golpes cada sesión y lo analiza durante 5 minutos. Compara con la semana anterior.",duracion:"5 min diarios de análisis",material:"Móvil, trípode, hierro 7",variantes:["App CoachesEye", "Análisis quincenal con profesor", "Compendio de 3 meses"],tags:["video diario", "auto-análisis", "seguimiento", "progresión", "hábito"]},
+{id:"bp045",grupo:"infantil",trimestre:3,semana:18,categoria:"Juego Largo",nombre:"El Approach en Torneo Federado",objetivo:"Ejecutar approach shots en condiciones de torneo federado.",descripcion:"En un torneo federado real: registrar todos los approach shots (distancia, palo elegido, resultado). Análisis post-torneo.",duracion:"Torneo real + análisis 30 min",material:"Set completo, registro de approach shots",variantes:["Con app de estadísticas", "Solo los approach de par 4", "Comparar con torneos anteriores"],tags:["approach", "torneo federado", "estadísticas", "análisis real"]},
+{id:"bp046",grupo:"infantil",trimestre:4,semana:25,categoria:"Chip",nombre:"El High Pressure Short Game Test",objetivo:"Test de short game en condiciones de presión extrema.",descripcion:"El alumno ejecuta 18 situaciones de short game con el grupo observando y con puntuación pública.",duracion:"45 min",material:"Wedges, putter, bolas, tabla de puntuación pública",variantes:["Transmisión por pantalla", "Con árbitro externo", "Premio significativo al ganador"],tags:["test", "presión extrema", "short game", "público"]},
+{id:"bp047",grupo:"infantil",trimestre:1,semana:6,categoria:"Putting",nombre:"La Lectura de Green Profesional",objetivo:"Leer el green como un profesional con AimPoint o similar.",descripcion:"Introducción al sistema AimPoint Express: lectura de la pendiente con los pies, número de dedos = cantidad de break.",duracion:"30 min",material:"Putter, bolas, green con pendientes variadas",variantes:["Sistema de 3 puntos", "Con GPS de inclinación", "Comparar 5 lecturas hechas y predichas"],tags:["AimPoint", "lectura profesional", "pendiente", "break"]},
+{id:"bp048",grupo:"infantil",trimestre:2,semana:15,categoria:"Mental",nombre:"El Control de la Adrenalina",objetivo:"Transformar la adrenalina competitiva en energía positiva.",descripcion:"La adrenalina es energía, no el enemigo. Técnicas: respiración de activación, movimiento físico, palabras de activación.",duracion:"30 min",material:"Situaciones de presión simuladas",variantes:["Con psicólogo deportivo", "En situación de torneo real", "Comparar rendimiento con/sin protocolo"],tags:["adrenalina", "activación", "energía positiva", "competición"]},
+{id:"bp049",grupo:"infantil",trimestre:3,semana:21,categoria:"Juego",nombre:"El Grand Slam de la Academia",objetivo:"Torneo por equipos donde compiten todos los grupos.",descripcion:"Torneo especial donde Pollitos, Eagles, Birdies, Pars y Birdie+ compiten en formato adaptado. El Birdie+ actúa como capitán.",duracion:"120 min",material:"Set completo adaptado, formato especial por grupos",variantes:["Formato scramble mixto", "Con padres", "Video y fotos para redes sociales"],tags:["grand slam", "academia", "equipos mixtos", "espíritu de escuela"]},
+{id:"bp050",grupo:"infantil",trimestre:4,semana:28,categoria:"Mental",nombre:"El Legado del Birdie+",objetivo:"Reflexión final y traspaso de conocimiento a los grupos menores.",descripcion:"Los alumnos Birdie+ hacen una presentación al resto: qué aprendieron, su momento más especial, su consejo para los más pequeños.",duracion:"45 min",material:"Presentación simple, sala o campo al aire libre",variantes:["Con vídeo de los mejores momentos", "Con padres", "Carta al próximo Birdie+"],tags:["legado", "traspaso", "presentación", "emocional", "cierre de año"]},
+];
+
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: MENSAJERÍA Y ARCHIVOS
+// ═══════════════════════════════════════════════════════════════════
+function ModMensajeria({data,setData}){
+  const [fbMensajes,setFbMensajes]=useState([]);
+  useEffect(()=>{
+    const unsub=onSnapshot(
+      query(collection(db,"mensajes"),orderBy("timestamp","desc")),
+      snap=>setFbMensajes(snap.docs.map(d=>({...d.data(),_fbId:d.id}))),
+      err=>console.warn("Mensajes Firebase error:",err)
+    );
+    return ()=>unsub();
+  },[]);
+  const [tab,setTab]=useState("recibidos");
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [verMsg,setVerMsg]=useState(null);
+
+  const localMensajes=data.mensajes||[];
+  // Merge Firebase messages with local, deduplicate by id
+  const mensajes=useMemo(()=>{
+    const all=[...localMensajes,...fbMensajes];
+    const seen=new Set();
+    return all.filter(m=>{if(seen.has(m.id))return false;seen.add(m.id);return true;})
+      .sort((a,b)=>new Date(b.fecha)-new Date(a.fecha));
+  },[localMensajes,fbMensajes]);
+  const alumnos=data.alumnos||[];
+
+  function alumnoNombre(id){return alumnos.find(a=>a.id===id)?.nombre||"—";}
+
+  const recibidos=mensajes.filter(m=>m.para==="profesor").sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const enviados=mensajes.filter(m=>m.de==="profesor").sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const noLeidos=recibidos.filter(m=>!m.leido).length;
+
+  function marcarLeido(id){
+    setData({...data,mensajes:mensajes.map(m=>m.id===id?{...m,leido:true}:m)});
+    // Also update in Firebase
+    const fbMsg=fbMensajes.find(m=>m.id===id);
+    if(fbMsg?._fbId) updateDoc(doc(db,"mensajes",fbMsg._fbId),{leido:true}).catch(e=>console.warn(e));
+  }
+
+  function eliminarMsg(id){
+    if(!confirm("¿Eliminar este mensaje?")) return;
+    setData({...data,mensajes:mensajes.filter(m=>m.id!==id)});
+  }
+
+  function openNuevo(){
+    setForm({destinatario:"alumno",alumnoIds:[],grupoId:"",asunto:"",cuerpo:"",tipo:"mensaje"});
+    setModal("nuevo");
+  }
+
+  function enviar(){
+    if(!form.asunto.trim()||!form.cuerpo.trim()) return;
+    const fecha=new Date().toISOString();
+    let destinatarios=[];
+    if(form.destinatario==="alumno") destinatarios=form.alumnoIds;
+    else if(form.destinatario==="grupo") destinatarios=alumnos.filter(a=>a.nivel===form.grupoId&&a.activo).map(a=>a.id);
+    else if(form.destinatario==="todos") destinatarios=alumnos.filter(a=>a.activo).map(a=>a.id);
+
+    const nuevos=destinatarios.map(aid=>({
+      id:uid(), de:"profesor", para:aid,
+      asunto:form.asunto, cuerpo:form.cuerpo,
+      tipo:form.tipo, adjunto:form.adjunto||null,
+      adjuntoNombre:form.adjuntoNombre||null,
+      fecha, leido:false,
+    }));
+    // Guardar en Firebase para sincronización entre dispositivos
+    Promise.all(nuevos.map(msg=>addDoc(collection(db,"mensajes"),{...msg,timestamp:serverTimestamp()}))).catch(e=>console.warn("Firebase msg error:",e));
+    // También en localStorage como backup
+    setData({...data,mensajes:[...mensajes,...nuevos]});
+    setModal(null);
+    alert(`✅ Mensaje enviado a ${nuevos.length} alumno${nuevos.length!==1?"s":""}.`);
+  }
+
+  function leerArchivo(e){
+    const file=e.target.files[0]; if(!file) return;
+    if(file.size>2*1024*1024){alert("El archivo no puede superar 2MB.");return;}
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      setForm(f=>({...f,adjunto:ev.target.result,adjuntoNombre:file.name}));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function descargarAdjunto(adjunto,nombre){
+    const a=document.createElement("a");
+    a.href=adjunto; a.download=nombre||"archivo";
+    a.click();
+  }
+
+  const MsgCard=({m,tipo})=>{
+    const alumno=alumnos.find(a=>a.id===(tipo==="recibido"?m.de:m.para));
+    return <div onClick={()=>{setVerMsg(m);if(tipo==="recibido"&&!m.leido)marcarLeido(m.id);}}
+      style={{background:G.white,borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.07)",padding:"14px 16px",marginBottom:10,cursor:"pointer",
+        borderLeft:`4px solid ${m.tipo==="informe"?G.purple:m.tipo==="archivo"?G.sky:G.grass}`,
+        opacity:tipo==="recibido"&&!m.leido?1:0.85}}>
+      <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+        <div style={{fontSize:20,flexShrink:0}}>{m.tipo==="informe"?"📋":m.tipo==="archivo"?"📎":"💬"}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,color:G.ink,fontSize:14}}>{m.asunto}</span>
+            {tipo==="recibido"&&!m.leido&&<span style={{background:G.danger,color:G.white,borderRadius:10,padding:"1px 8px",fontSize:11,fontWeight:700}}>NUEVO</span>}
+            <span style={{fontSize:11,color:G.soft,marginLeft:"auto"}}>{m.fecha?.slice(0,16).replace("T"," ")}</span>
+          </div>
+          <div style={{fontSize:12,color:G.soft,marginTop:3}}>
+            {tipo==="recibido"?"De: "+(alumno?.nombre||"Alumno"):"Para: "+(alumno?.nombre||"Alumno")}
+          </div>
+          <div style={{fontSize:13,color:"#555",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.cuerpo}</div>
+          {m.adjuntoNombre&&<div style={{fontSize:12,color:G.sky,marginTop:4}}>📎 {m.adjuntoNombre}</div>}
+        </div>
+        <Btn small color="danger" onClick={e=>{e.stopPropagation();eliminarMsg(m.id);}}>✕</Btn>
+      </div>
+    </div>;
+  };
+
+  const SUBTABS=[
+    {id:"recibidos",label:`📥 Recibidos${noLeidos>0?` (${noLeidos})`:""}` },
+    {id:"enviados", label:"📤 Enviados"},
+  ];
+
+  return <div>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:20}}>
+      {[[recibidos.length,"Recibidos","📥",G.fairway],[noLeidos,"Sin leer","🔴",G.danger],[enviados.length,"Enviados","📤",G.sky],[mensajes.filter(m=>m.adjunto).length,"Con archivo","📎",G.purple]].map(([v,l,i,c])=>(
+        <Card key={l} style={{textAlign:"center"}}>
+          <div style={{fontSize:20,marginBottom:4}}>{i}</div>
+          <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft,marginTop:1}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Subtabs + botón nuevo */}
+    <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"center",flexWrap:"wrap"}}>
+      {SUBTABS.map(s=><button key={s.id} onClick={()=>setTab(s.id)}
+        style={{background:tab===s.id?G.fairway:G.mist,color:tab===s.id?G.white:G.fairway,border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+        {s.label}
+      </button>)}
+      <div style={{marginLeft:"auto"}}>
+        <Btn color="primary" onClick={openNuevo}>✉ Nuevo mensaje</Btn>
+      </div>
+    </div>
+
+    {/* Lista mensajes */}
+    {tab==="recibidos"&&<div>
+      {recibidos.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Sin mensajes recibidos.</div>}
+      {recibidos.map(m=><MsgCard key={m.id} m={m} tipo="recibido"/>)}
+    </div>}
+    {tab==="enviados"&&<div>
+      {enviados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Sin mensajes enviados.</div>}
+      {enviados.map(m=><MsgCard key={m.id} m={m} tipo="enviado"/>)}
+    </div>}
+
+    {/* Modal: ver mensaje completo */}
+    {verMsg&&<Modal title={verMsg.asunto} onClose={()=>setVerMsg(null)} wide>
+      <div style={{fontSize:12,color:G.soft,marginBottom:12}}>
+        {verMsg.de==="profesor"
+          ?<>📤 Enviado a <b>{alumnoNombre(verMsg.para)}</b></>
+          :<>📥 De <b>{alumnoNombre(verMsg.de)}</b></>
+        } · {verMsg.fecha?.slice(0,16).replace("T"," ")}
+      </div>
+      <div style={{background:"#f9f9f9",borderRadius:10,padding:16,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:14}}>
+        {verMsg.cuerpo}
+      </div>
+      {verMsg.adjunto&&<div style={{marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:G.sky,marginBottom:8}}>📎 ARCHIVO ADJUNTO</div>
+        <Btn color="sky" onClick={()=>descargarAdjunto(verMsg.adjunto,verMsg.adjuntoNombre)}>⬇ Descargar {verMsg.adjuntoNombre}</Btn>
+      </div>}
+      <Btn color="secondary" onClick={()=>setVerMsg(null)}>Cerrar</Btn>
+    </Modal>}
+
+    {/* Modal: nuevo mensaje */}
+    {modal==="nuevo"&&<Modal title="Nuevo mensaje / archivo" onClose={()=>setModal(null)} wide>
+      {/* Tipo de mensaje */}
+      <div style={{marginBottom:14}}>
+        <label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>TIPO</label>
+        <div style={{display:"flex",gap:8}}>
+          {[["mensaje","💬 Mensaje"],["informe","📋 Informe"],["archivo","📎 Archivo"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setForm(f=>({...f,tipo:v}))}
+              style={{background:form.tipo===v?G.fairway:G.mist,color:form.tipo===v?G.white:G.fairway,border:"none",borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Destinatario */}
+      <div style={{marginBottom:14}}>
+        <label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>ENVIAR A</label>
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          {[["alumno","👤 Alumno concreto"],["grupo","👥 Grupo/Nivel"],["todos","📢 Todos los alumnos"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setForm(f=>({...f,destinatario:v,alumnoIds:[],grupoId:""}))}
+              style={{background:form.destinatario===v?G.fairway:G.mist,color:form.destinatario===v?G.white:G.fairway,border:"none",borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        {form.destinatario==="alumno"&&<div>
+          <label style={{fontSize:12,color:G.soft,marginBottom:4,display:"block"}}>Selecciona alumno(s):</label>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:6}}>
+            {alumnos.filter(a=>a.activo).map(a=>{
+              const sel=(form.alumnoIds||[]).includes(a.id);
+              return <button key={a.id} onClick={()=>setForm(f=>{
+                const ids=f.alumnoIds||[];
+                return {...f,alumnoIds:sel?ids.filter(x=>x!==a.id):[...ids,a.id]};
+              })} style={{background:sel?G.grass:G.mist,color:sel?G.white:G.fairway,border:"none",borderRadius:8,padding:"7px 12px",fontSize:13,fontWeight:sel?700:400,cursor:"pointer",textAlign:"left"}}>
+                {sel?"✔ ":""}{a.nombre}
+              </button>;
+            })}
+          </div>
+        </div>}
+
+        {form.destinatario==="grupo"&&<div>
+          <label style={{fontSize:12,color:G.soft,marginBottom:4,display:"block"}}>Selecciona nivel:</label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {["Iniciación","Intermedio","Avanzado","Competición"].map(n=>(
+              <button key={n} onClick={()=>setForm(f=>({...f,grupoId:n}))}
+                style={{background:form.grupoId===n?G.fairway:G.mist,color:form.grupoId===n?G.white:G.fairway,border:"none",borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                {n} ({alumnos.filter(a=>a.nivel===n&&a.activo).length})
+              </button>
+            ))}
+          </div>
+          {form.grupoId&&<div style={{fontSize:12,color:G.soft,marginTop:6}}>
+            Se enviará a {alumnos.filter(a=>a.nivel===form.grupoId&&a.activo).length} alumno(s).
+          </div>}
+        </div>}
+
+        {form.destinatario==="todos"&&<div style={{background:G.mist,borderRadius:8,padding:"8px 12px",fontSize:13,color:G.fairway,fontWeight:600}}>
+          📢 Se enviará a todos los {alumnos.filter(a=>a.activo).length} alumnos activos.
+        </div>}
+      </div>
+
+      <Field label="Asunto *"><Input value={form.asunto||""} onChange={v=>setForm(f=>({...f,asunto:v}))} placeholder="Asunto del mensaje"/></Field>
+      <Field label="Mensaje *"><Textarea value={form.cuerpo||""} onChange={v=>setForm(f=>({...f,cuerpo:v}))} rows={5} placeholder="Escribe aquí el contenido del mensaje o informe…"/></Field>
+
+      {/* Adjunto */}
+      <div style={{marginBottom:14}}>
+        <label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>ADJUNTAR ARCHIVO (máx. 2MB)</label>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <label style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-block"}}>
+            📎 Seleccionar archivo
+            <input type="file" onChange={leerArchivo} style={{display:"none"}} accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp4,.xlsx,.xls"/>
+          </label>
+          {form.adjuntoNombre&&<div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:13,color:G.sky}}>✔ {form.adjuntoNombre}</span>
+            <Btn small color="danger" onClick={()=>setForm(f=>({...f,adjunto:null,adjuntoNombre:null}))}>✕</Btn>
+          </div>}
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:4}}>Formatos: PDF, Word, imagen (JPG/PNG), video (MP4), Excel</div>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={enviar} disabled={!form.asunto.trim()||!form.cuerpo.trim()||(form.destinatario==="alumno"&&(form.alumnoIds||[]).length===0)||(form.destinatario==="grupo"&&!form.grupoId)}>
+          ✉ Enviar
+        </Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ── MENSAJERÍA EN EL PORTAL DEL ALUMNO ──────────────────────────
+function ModMensajeriaAlumno({data,setData,alumnoId}){
+  const [tab,setTab]=useState("recibidos");
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [verMsg,setVerMsg]=useState(null);
+
+  const mensajes=data.mensajes||[];
+  const recibidos=mensajes.filter(m=>m.para===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const enviados=mensajes.filter(m=>m.de===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const noLeidos=recibidos.filter(m=>!m.leido).length;
+
+  function marcarLeido(id){
+    setData({...data,mensajes:mensajes.map(m=>m.id===id?{...m,leido:true}:m)});
+    // Also update in Firebase
+    const fbMsg=fbMensajes.find(m=>m.id===id);
+    if(fbMsg?._fbId) updateDoc(doc(db,"mensajes",fbMsg._fbId),{leido:true}).catch(e=>console.warn(e));
+  }
+
+  function leerArchivo(e){
+    const file=e.target.files[0]; if(!file) return;
+    if(file.size>2*1024*1024){alert("El archivo no puede superar 2MB.");return;}
+    const reader=new FileReader();
+    reader.onload=ev=>setForm(f=>({...f,adjunto:ev.target.result,adjuntoNombre:file.name}));
+    reader.readAsDataURL(file);
+  }
+
+  function enviarAlProfesor(){
+    if(!form.asunto?.trim()||!form.cuerpo?.trim()) return;
+    const nuevo={
+      id:uid(), de:alumnoId, para:"profesor",
+      asunto:form.asunto, cuerpo:form.cuerpo,
+      tipo:"mensaje", adjunto:form.adjunto||null,
+      adjuntoNombre:form.adjuntoNombre||null,
+      fecha:new Date().toISOString(), leido:false,
+    };
+    setData({...data,mensajes:[...mensajes,nuevo]});
+    setModal(null);
+    alert("✅ Mensaje enviado al profesor.");
+  }
+
+  function descargarAdjunto(adjunto,nombre){
+    const a=document.createElement("a"); a.href=adjunto; a.download=nombre||"archivo"; a.click();
+  }
+
+  const MsgCardA=({m,tipo})=><div onClick={()=>{setVerMsg(m);if(tipo==="recibido"&&!m.leido)marcarLeido(m.id);}}
+    style={{background:G.white,borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.07)",padding:"14px 16px",marginBottom:10,cursor:"pointer",
+      borderLeft:`4px solid ${m.tipo==="informe"?G.purple:m.tipo==="archivo"?G.sky:G.grass}`,
+      opacity:tipo==="recibido"&&!m.leido?1:0.85}}>
+    <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+      <div style={{fontSize:20,flexShrink:0}}>{m.tipo==="informe"?"📋":m.tipo==="archivo"?"📎":"💬"}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontWeight:700,color:G.ink,fontSize:14}}>{m.asunto}</span>
+          {tipo==="recibido"&&!m.leido&&<span style={{background:G.danger,color:G.white,borderRadius:10,padding:"1px 8px",fontSize:11,fontWeight:700}}>NUEVO</span>}
+          <span style={{fontSize:11,color:G.soft,marginLeft:"auto"}}>{m.fecha?.slice(0,16).replace("T"," ")}</span>
+        </div>
+        <div style={{fontSize:12,color:G.soft,marginTop:3}}>{tipo==="recibido"?"De: Tu profesor":"Para: Tu profesor"}</div>
+        <div style={{fontSize:13,color:"#555",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.cuerpo}</div>
+        {m.adjuntoNombre&&<div style={{fontSize:12,color:G.sky,marginTop:4}}>📎 {m.adjuntoNombre}</div>}
+      </div>
+    </div>
+  </div>;
+
+  return <div>
+    {/* Subtabs */}
+    <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"center",flexWrap:"wrap"}}>
+      {[{id:"recibidos",label:`📥 Del profesor${noLeidos>0?` (${noLeidos})`:""}` },{id:"enviados",label:"📤 Mis mensajes"}].map(s=>(
+        <button key={s.id} onClick={()=>setTab(s.id)}
+          style={{background:tab===s.id?G.fairway:G.mist,color:tab===s.id?G.white:G.fairway,border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          {s.label}
+        </button>
+      ))}
+      <div style={{marginLeft:"auto"}}>
+        <Btn onClick={()=>{setForm({asunto:"",cuerpo:""});setModal("nuevo");}}>✉ Escribir al profesor</Btn>
+      </div>
+    </div>
+
+    {tab==="recibidos"&&<div>
+      {recibidos.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>No tienes mensajes de tu profesor todavía.</div>}
+      {recibidos.map(m=><MsgCardA key={m.id} m={m} tipo="recibido"/>)}
+    </div>}
+    {tab==="enviados"&&<div>
+      {enviados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Aún no has enviado ningún mensaje.</div>}
+      {enviados.map(m=><MsgCardA key={m.id} m={m} tipo="enviado"/>)}
+    </div>}
+
+    {/* Ver mensaje */}
+    {verMsg&&<Modal title={verMsg.asunto} onClose={()=>setVerMsg(null)} wide>
+      <div style={{fontSize:12,color:G.soft,marginBottom:12}}>
+        {verMsg.de==="profesor"?"📥 De tu profesor":"📤 Enviado a tu profesor"} · {verMsg.fecha?.slice(0,16).replace("T"," ")}
+      </div>
+      <div style={{background:"#f9f9f9",borderRadius:10,padding:16,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:14}}>{verMsg.cuerpo}</div>
+      {verMsg.adjunto&&<div style={{marginBottom:14}}>
+        <Btn color="sky" onClick={()=>descargarAdjunto(verMsg.adjunto,verMsg.adjuntoNombre)}>⬇ Descargar {verMsg.adjuntoNombre}</Btn>
+      </div>}
+      <Btn color="secondary" onClick={()=>setVerMsg(null)}>Cerrar</Btn>
+    </Modal>}
+
+    {/* Nuevo mensaje al profesor */}
+    {modal==="nuevo"&&<Modal title="Mensaje para el profesor" onClose={()=>setModal(null)}>
+      <Field label="Asunto *"><Input value={form.asunto||""} onChange={v=>setForm(f=>({...f,asunto:v}))} placeholder="Asunto del mensaje"/></Field>
+      <Field label="Mensaje *"><Textarea value={form.cuerpo||""} onChange={v=>setForm(f=>({...f,cuerpo:v}))} rows={5} placeholder="Escribe tu mensaje aquí…"/></Field>
+      <div style={{marginBottom:14}}>
+        <label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>ADJUNTAR ARCHIVO (opcional, máx. 2MB)</label>
+        <label style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-block"}}>
+          📎 Seleccionar archivo
+          <input type="file" onChange={leerArchivo} style={{display:"none"}} accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp4,.xlsx"/>
+        </label>
+        {form.adjuntoNombre&&<span style={{marginLeft:10,fontSize:13,color:G.sky}}>✔ {form.adjuntoNombre}</span>}
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={enviarAlProfesor} disabled={!form.asunto?.trim()||!form.cuerpo?.trim()}>✉ Enviar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO CURSO 2026/2027
+// ═══════════════════════════════════════════════════════════════════
+function ModCurso({data,setData,alumnos}){
+  const [grupoSel,setGrupoSel]=useState("prebenjamin");
+  const [trimSel,setTrimSel]=useState("todos");
+  const [catSel,setCatSel]=useState("Todos");
+  const [verEj,setVerEj]=useState(null);
+  const [asignarEj,setAsignarEj]=useState(null);
+  const asignaciones=data.asignaciones||[];
+
+  const grupo=GRUPOS_EDAD.find(g=>g.id===grupoSel);
+  const filtrados=EJERCICIOS_CURSO.filter(e=>{
+    const matchGrupo=e.grupo===grupoSel;
+    const matchTrim=trimSel==="todos"||e.trimestre===Number(trimSel);
+    const matchCat=catSel==="Todos"||e.categoria===catSel;
+    return matchGrupo&&matchTrim&&matchCat;
+  });
+
+  const cats=["Todos",...new Set(EJERCICIOS_CURSO.filter(e=>e.grupo===grupoSel).map(e=>e.categoria))];
+
+  function asignarEjercicio(ejId,alumnoId,notas){
+    setData({...data,asignaciones:[...asignaciones,{id:uid(),ejId,alumnoId,fecha:today(),notas,completado:false}]});
+    setAsignarEj(null);
+  }
+
+  return <div>
+    {/* Selector de grupo */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+      {GRUPOS_EDAD.map(g=>(
+        <button key={g.id} onClick={()=>{setGrupoSel(g.id);setCatSel("Todos");}}
+          style={{background:grupoSel===g.id?g.color:"#f0f0f0",color:grupoSel===g.id?G.white:"#555",border:"none",borderRadius:20,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",transition:"all .15s"}}>
+          {g.emoji} {g.nombre} <span style={{fontSize:11,opacity:.8}}>({g.rango})</span>
+        </button>
+      ))}
+    </div>
+
+    {/* Info del grupo */}
+    {grupo&&<div style={{background:grupo.color,color:G.white,borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+      <span style={{fontSize:32}}>{grupo.emoji}</span>
+      <div>
+        <div style={{fontWeight:800,fontSize:16}}>{grupo.nombre} — {grupo.rango}</div>
+        <div style={{fontSize:13,opacity:.9,marginTop:2}}>{grupo.descripcion}</div>
+        <div style={{fontSize:12,opacity:.8,marginTop:4}}>
+          {EJERCICIOS_CURSO.filter(e=>e.grupo===grupoSel).length} ejercicios programados para el curso 2026/2027
+        </div>
+      </div>
+    </div>}
+
+    {/* Filtros */}
+    <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+      <Sel value={trimSel} onChange={setTrimSel} options={[{value:"todos",label:"Todos los trimestres"},{value:"1",label:"1er Trimestre"},{value:"2",label:"2º Trimestre"},{value:"3",label:"3er Trimestre"},{value:"4",label:"4º Trimestre"}]}/>
+      <Sel value={catSel} onChange={setCatSel} options={cats.map(c=>({value:c,label:c}))}/>
+      <span style={{fontSize:13,color:G.soft}}>{filtrados.length} ejercicio{filtrados.length!==1?"s":""}</span>
+    </div>
+
+    {/* Lista por semana */}
+    <div style={{display:"grid",gap:8}}>
+      {filtrados.sort((a,b)=>a.trimestre-b.trimestre||a.semana-b.semana).map(e=>{
+        const asignado=asignaciones.some(a=>a.ejId===e.id);
+        return <Card key={e.id} style={{borderLeft:`3px solid ${grupo?.color||G.grass}`}}>
+          <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{background:grupo?.color||G.grass,color:G.white,borderRadius:8,padding:"4px 8px",textAlign:"center",flexShrink:0,minWidth:52}}>
+              <div style={{fontSize:9,opacity:.8}}>T{e.trimestre} S{e.semana}</div>
+              <div style={{fontSize:13,fontWeight:800}}>{e.categoria.split(" ")[0]}</div>
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{e.nombre}</div>
+              <div style={{fontSize:12,color:G.soft,marginTop:2}}>{e.objetivo}</div>
+              <div style={{fontSize:11,color:G.soft,marginTop:3}}>⏱ {e.duracion} · 🎒 {e.material.split(",")[0]}{e.material.includes(",")?"…":""}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>
+                {(e.tags||[]).slice(0,4).map(t=><span key={t} style={{background:"#f0f0f0",color:"#666",borderRadius:10,padding:"1px 7px",fontSize:10}}>#{t}</span>)}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:5,flexShrink:0,flexDirection:"column",alignItems:"flex-end"}}>
+              <Btn small color="secondary" onClick={()=>setVerEj(e)}>Ver</Btn>
+              <Btn small color={asignado?"gold":"sky"} onClick={()=>setAsignarEj(e)}>{asignado?"+ Reasignar":"Asignar"}</Btn>
+            </div>
+          </div>
+        </Card>;
+      })}
+    </div>
+
+    {/* Modal detalle */}
+    {verEj&&<EjercicioDetalle ej={verEj} onClose={()=>setVerEj(null)} onAsignar={()=>{setAsignarEj(verEj);setVerEj(null);}}/>}
+    {asignarEj&&<AsignarModal ej={asignarEj} alumnos={alumnos} onClose={()=>setAsignarEj(null)} onSave={asignarEjercicio}/>}
+  </div>;
+}
+
+function ModEjerciciosAdmin({ data, setData }) {
+  const [catFiltro, setCatFiltro] = useState("Todos");
+  const [nivelFiltro, setNivelFiltro] = useState("Todos");
+  const [search, setSearch] = useState("");
+  const [verEj, setVerEj] = useState(null);
+  const [asignarModal, setAsignarModal] = useState(null);
+  const [tabPrincipal, setTabPrincipal] = useState("biblioteca"); // "biblioteca"|"tests"|"asignados"|"resultados"
+
+  // Ejercicios personalizados creados por el profesor
+  const ejerciciosCustom = data.ejerciciosCustom || [];
+  const asignaciones = data.asignaciones || [];   // {id, alumnoId, ejId, fecha, notas, completado}
+  const resultadosTest = data.resultadosTest || []; // {id, alumnoId, testCat, fecha, score, total, detalle}
+  const alumnos = data.alumnos || [];
+
+  const todosEj = [...EJERCICIOS_BIBLIOTECA, ...ejerciciosCustom];
+
+  const filtrados = todosEj.filter(e => {
+    const matchCat = catFiltro === "Todos" || e.categoria === catFiltro;
+    const matchNivel = nivelFiltro === "Todos" || e.nivel === nivelFiltro || e.nivel === "Todos";
+    const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || (e.tags||[]).some(t=>t.includes(search.toLowerCase()));
+    return matchCat && matchNivel && matchSearch;
+  });
+
+  function asignarEjercicio(ejId, alumnoId, notas) {
+    const nueva = { id: uid(), ejId, alumnoId, fecha: today(), notas, completado: false };
+    setData({ ...data, asignaciones: [...asignaciones, nueva] });
+    setAsignarModal(null);
+  }
+
+  function toggleCompletado(id) {
+    setData({ ...data, asignaciones: asignaciones.map(a => a.id === id ? { ...a, completado: !a.completado } : a) });
+  }
+
+  function alumnoNombre(id) { return alumnos.find(a => a.id === id)?.nombre || "—"; }
+  function ejNombre(id) { return todosEj.find(e => e.id === id)?.nombre || "—"; }
+
+  // ── Sub-tabs ──────────────────────────────────────────────────────
+  const SUB = [
+    { id:"biblioteca", label:"📚 Biblioteca" },
+    { id:"curso",      label:"🏫 Curso 2026/27" },
+    { id:"asignados",  label:"📌 Asignados" },
+    { id:"tests",      label:"🧩 Tests" },
+    { id:"resultados", label:"📊 Resultados" },
+  ];
+
+  return (
+    <div>
+      {/* Sub-navegación */}
+      <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
+        {SUB.map(s => (
+          <button key={s.id} onClick={() => setTabPrincipal(s.id)}
+            style={{ background: tabPrincipal===s.id ? G.fairway : G.mist, color: tabPrincipal===s.id ? G.white : G.fairway,
+              border:"none", borderRadius:8, padding:"8px 14px", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── CURSO 2026/2027 ── */}
+      {tabPrincipal==="curso" && <ModCurso data={data} setData={setData} alumnos={alumnos}/>}
+
+      {/* ── BIBLIOTECA ── */}
+      {tabPrincipal==="biblioteca" && <div>
+        {/* Filtros */}
+        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar ejercicio o tag…"
+            style={{ flex:1, minWidth:160, border:"1.5px solid #d0e0d0", borderRadius:8, padding:"8px 12px", fontSize:14, fontFamily:"inherit" }}/>
+          <Sel value={nivelFiltro} onChange={setNivelFiltro} options={["Todos","Iniciación","Intermedio","Avanzado"].map(v=>({value:v,label:v}))}/>
+        </div>
+        {/* Categorías */}
+        <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+          {CATS.map(c => (
+            <button key={c} onClick={() => setCatFiltro(c)}
+              style={{ background: catFiltro===c ? G.fairway : "#f0f0f0", color: catFiltro===c ? G.white : G.soft,
+                border:"none", borderRadius:20, padding:"5px 12px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+              {CAT_ICONS[c]||"📌"} {c} {c!=="Todos"&&<span style={{opacity:.7}}>({todosEj.filter(e=>e.categoria===c).length})</span>}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize:13, color:G.soft, marginBottom:12 }}>{filtrados.length} ejercicio{filtrados.length!==1?"s":""}</div>
+        <div style={{ display:"grid", gap:10 }}>
+          {filtrados.map(e => (
+            <Card key={e.id}>
+              <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
+                <div style={{ fontSize:28, flexShrink:0 }}>{CAT_ICONS[e.categoria]||"📌"}</div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:4 }}>
+                    <span style={{ fontWeight:700, color:G.ink, fontSize:15 }}>{e.nombre}</span>
+                    <Badge color={CAT_COLORS[e.categoria]||"gray"}>{e.categoria}</Badge>
+                    <Badge color={e.nivel==="Iniciación"?"green":e.nivel==="Intermedio"?"gold":e.nivel==="Avanzado"?"blue":"gray"}>{e.nivel}</Badge>
+                    {e.duracion && <Badge color="gray">⏱ {e.duracion}</Badge>}
+                  </div>
+                  <div style={{ fontSize:13, color:G.soft, marginBottom:6 }}>{e.objetivo}</div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+                    {(e.tags||[]).map(t => <span key={t} style={{ background:"#f0f0f0", color:"#666", borderRadius:12, padding:"2px 8px", fontSize:11 }}>#{t}</span>)}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                  <Btn small color="secondary" onClick={() => setVerEj(e)}>Ver</Btn>
+                  <Btn small color="sky" onClick={() => setAsignarModal(e)}>Asignar</Btn>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>}
+
+      {/* ── ASIGNADOS ── */}
+      {tabPrincipal==="asignados" && <div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:12, marginBottom:20 }}>
+          {[[asignaciones.length,"Total asignados",G.fairway],[asignaciones.filter(a=>!a.completado).length,"Pendientes",G.orange],[asignaciones.filter(a=>a.completado).length,"Completados",G.grass]].map(([v,l,c])=>(
+            <Card key={l} style={{textAlign:"center"}}><div style={{fontSize:24,fontWeight:800,color:c}}>{v}</div><div style={{fontSize:12,color:G.soft,marginTop:2}}>{l}</div></Card>
+          ))}
+        </div>
+        <div style={{ display:"grid", gap:10 }}>
+          {asignaciones.length===0 && <div style={{ color:G.soft, textAlign:"center", padding:30 }}>Sin ejercicios asignados. Ve a la Biblioteca y asigna ejercicios a los alumnos.</div>}
+          {[...asignaciones].sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(a => (
+            <Card key={a.id} style={{ borderLeft:`3px solid ${a.completado?G.grass:G.orange}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ fontSize:20 }}>{a.completado?"✅":"📌"}</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:700, color:G.ink }}>{ejNombre(a.ejId)}</div>
+                  <div style={{ fontSize:12, color:G.soft }}>👤 {alumnoNombre(a.alumnoId)} · 📅 {a.fecha}</div>
+                  {a.notas && <div style={{ fontSize:12, color:"#555", marginTop:3 }}>{a.notas}</div>}
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <Badge color={a.completado?"green":"gold"}>{a.completado?"Hecho":"Pendiente"}</Badge>
+                  <Btn small color={a.completado?"secondary":"sky"} onClick={()=>toggleCompletado(a.id)}>{a.completado?"↩":"✔"}</Btn>
+                  <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,asignaciones:asignaciones.filter(x=>x.id!==a.id)});}}>✕</Btn>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </div>}
+
+      {/* ── TESTS ── */}
+      {tabPrincipal==="tests" && <PanelTests data={data} setData={setData} modo="admin"/>}
+
+      {/* ── RESULTADOS ── */}
+      {tabPrincipal==="resultados" && <div>
+        <h3 style={{ margin:"0 0 14px", color:G.fairway }}>📊 Resultados de Tests</h3>
+        {resultadosTest.length===0 && <div style={{ color:G.soft, textAlign:"center", padding:30 }}>Sin resultados de tests todavía.</div>}
+        {[...resultadosTest].sort((a,b)=>b.fecha.localeCompare(a.fecha)).map(r => (
+          <Card key={r.id} style={{ marginBottom:10 }}>
+            <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+              <div style={{ fontSize:28 }}>{CAT_ICONS[r.testCat]||"🧩"}</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:700, color:G.ink }}>{alumnoNombre(r.alumnoId)}</div>
+                <div style={{ fontSize:13, color:G.soft }}>Test {r.testCat} · {r.fecha}</div>
+                <div style={{ marginTop:6 }}>
+                  <div style={{ display:"inline-flex", alignItems:"center", gap:6, background:G.mist, borderRadius:8, padding:"4px 10px" }}>
+                    <span style={{ fontWeight:800, color:G.fairway, fontSize:18 }}>{r.score}/{r.total}</span>
+                    <span style={{ fontSize:13, color:G.soft }}>({Math.round(r.score/r.total*100)}%)</span>
+                    <Badge color={r.score/r.total>=.7?"green":r.score/r.total>=.5?"gold":"red"}>{r.score/r.total>=.7?"Superado":r.score/r.total>=.5?"Mejorable":"Repasar"}</Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>}
+
+      {/* Modal: Ver ejercicio completo */}
+      {verEj && <EjercicioDetalle ej={verEj} onClose={()=>setVerEj(null)} onAsignar={()=>{setAsignarModal(verEj);setVerEj(null);}}/>}
+
+      {/* Modal: Asignar ejercicio */}
+      {asignarModal && <AsignarModal ej={asignarModal} alumnos={alumnos} onClose={()=>setAsignarModal(null)} onSave={asignarEjercicio}/>}
+    </div>
+  );
+}
+
+// ─── Detalle ejercicio ────────────────────────────────────────────
+// Golf exercise illustrations - SVG React components
+// One per exercise ID
+
+const ILUSTRACIONES = {
+
+// ══════════════════════════════════════════════════
+// PUTT
+// ══════════════════════════════════════════════════
+
+"ej001": ({}) => (
+<svg viewBox="0 0 260 220" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="220" fill="#e8f5eb" rx="14"/>
+  {/* Green surface */}
+  <ellipse cx="130" cy="130" rx="110" ry="75" fill="#4caf65" opacity="0.3"/>
+  <ellipse cx="130" cy="130" rx="85" ry="58" fill="#2e7d3c" opacity="0.2"/>
+  {/* Hole */}
+  <circle cx="130" cy="125" r="11" fill="#1a2e1d"/>
+  <circle cx="130" cy="125" r="7" fill="#0d1f10"/>
+  {/* Flag */}
+  <line x1="130" y1="114" x2="130" y2="78" stroke="#999" strokeWidth="2.5"/>
+  <polygon points="130,78 152,86 130,94" fill="#c0392b"/>
+  {/* Square 1m */}
+  <rect x="82" y="83" width="96" height="96" fill="none" stroke="#c8a84b" strokeWidth="2.5" strokeDasharray="8,5" rx="3"/>
+  {/* Tee markers at corners */}
+  {[["82","83"],["178","83"],["82","179"],["178","179"]].map(([cx,cy],i)=>(
+    <g key={i}>
+      <line x1={Number(cx)} y1={Number(cy)-10} x2={Number(cx)} y2={Number(cy)} stroke="#8B6914" strokeWidth="3" strokeLinecap="round"/>
+      <line x1={Number(cx)-5} y1={Number(cy)-2} x2={Number(cx)+5} y2={Number(cy)-2} stroke="#8B6914" strokeWidth="3" strokeLinecap="round"/>
+    </g>
+  ))}
+  {/* Balls */}
+  <circle cx="82" cy="83" r="6" fill="white" stroke="#aaa" strokeWidth="2"/>
+  <circle cx="178" cy="83" r="6" fill="white" stroke="#aaa" strokeWidth="2"/>
+  <circle cx="82" cy="179" r="6" fill="white" stroke="#aaa" strokeWidth="2"/>
+  <circle cx="178" cy="179" r="6" fill="white" stroke="#aaa" strokeWidth="2"/>
+  {/* Arrow from top-left ball to hole */}
+  <path d="M88,89 Q110,100 121,116" fill="none" stroke="#1a5c2a" strokeWidth="2.5" markerEnd="url(#a1)"/>
+  <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#1a5c2a"/></marker></defs>
+  {/* Dimension labels */}
+  <text x="130" y="210" textAnchor="middle" fontSize="12" fill="#1a2e1d" fontWeight="bold">1 metro entre tees</text>
+  <text x="130" y="30" textAnchor="middle" fontSize="10" fill="#555">Embocar 3 consecutivos desde cada esquina</text>
+  <text x="130" y="44" textAnchor="middle" fontSize="10" fill="#555">sin fallar · Repite hasta conseguirlo</text>
+</svg>
+),
+
+"ej002": ({}) => (
+<svg viewBox="0 0 260 260" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="260" fill="#e8f5eb" rx="14"/>
+  {/* Green circles */}
+  <circle cx="130" cy="130" r="110" fill="#4caf65" opacity="0.2"/>
+  <circle cx="130" cy="130" r="80" fill="#2e7d3c" opacity="0.15"/>
+  <circle cx="130" cy="130" r="50" fill="#1a5c2a" opacity="0.12"/>
+  {/* Hole */}
+  <circle cx="130" cy="130" r="10" fill="#1a2e1d"/>
+  <line x1="130" y1="120" x2="130" y2="90" stroke="#aaa" strokeWidth="2"/>
+  <polygon points="130,90 148,98 130,106" fill="#c0392b"/>
+  {/* 12 balls at clock positions */}
+  {Array.from({length:12},(_,i)=>{
+    const ang=(i*30-90)*Math.PI/180;
+    const r=90, bx=130+r*Math.cos(ang), by=130+r*Math.sin(ang);
+    const hour=i===0?12:i;
+    const done=i<4;
+    return <g key={i}>
+      <circle cx={bx} cy={by} r="8" fill={done?"#c8a84b":"white"} stroke={done?"#8B6914":"#aaa"} strokeWidth="2"/>
+      <text x={bx} y={by+4} textAnchor="middle" fontSize="8" fill={done?"white":"#555"} fontWeight="bold">{hour}</text>
+    </g>;
+  })}
+  {/* Radial lines */}
+  {Array.from({length:12},(_,i)=>{
+    const ang=(i*30-90)*Math.PI/180;
+    return <line key={i} x1={130+42*Math.cos(ang)} y1={130+42*Math.sin(ang)}
+      x2={130+78*Math.cos(ang)} y2={130+78*Math.sin(ang)}
+      stroke="#2e7d3c" strokeWidth="1" opacity="0.3"/>;
+  })}
+  <text x="130" y="252" textAnchor="middle" fontSize="11" fill="#1a2e1d" fontWeight="bold">12 posiciones · Sin fallar ninguna</text>
+</svg>
+),
+
+"ej003": ({}) => (
+<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
+  <rect width="280" height="200" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="50" width="260" height="120" fill="#4caf65" opacity="0.2" rx="8"/>
+  {/* Hole+flag */}
+  <circle cx="240" cy="115" r="10" fill="#1a2e1d"/>
+  <line x1="240" y1="105" x2="240" y2="75" stroke="#aaa" strokeWidth="2"/>
+  <polygon points="240,75 258,83 240,91" fill="#c0392b"/>
+  {/* Target ring */}
+  <circle cx="240" cy="115" r="22" fill="none" stroke="#c0392b" strokeWidth="2" strokeDasharray="5,3" opacity="0.8"/>
+  <text x="240" y="148" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">zona 30cm</text>
+  {/* Distance lines */}
+  {[[60,"3m"],[120,"6m"],[180,"9m"]].map(([x,label])=>(
+    <g key={label}>
+      <line x1={x} y1="52" x2={x} y2="168" stroke="#c8a84b" strokeWidth="1.5" strokeDasharray="6,4"/>
+      <text x={x} y="46" textAnchor="middle" fontSize="11" fill="#8B6914" fontWeight="bold">{label}</text>
+    </g>
+  ))}
+  {/* Balls */}
+  {[[60,115],[120,115],[180,115]].map(([x,y],i)=>(
+    <g key={i}>
+      <circle cx={x} cy={y} r="7" fill="white" stroke="#888" strokeWidth="2"/>
+      <line x1={x+7} y1={y} x2={220} y2={115} stroke="#1a5c2a" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.5"/>
+    </g>
+  ))}
+  {/* Putter */}
+  <line x1="30" y1="90" x2="52" y2="112" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
+  <rect x="47" y="110" width="14" height="8" fill="#777" rx="3"/>
+  <text x="140" y="192" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Deja la bola cerca del hoyo — controla la velocidad</text>
+</svg>
+),
+
+"ej004": ({}) => (
+<svg viewBox="0 0 260 230" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="230" fill="#e8f5eb" rx="14"/>
+  <ellipse cx="130" cy="115" rx="115" ry="90" fill="#4caf65" opacity="0.25"/>
+  {/* 18 numbered holes as a winding path */}
+  {[
+    [30,80],[58,55],[95,45],[135,48],[170,60],[200,85],[210,115],
+    [198,148],[170,170],[135,178],[95,175],[58,162],[35,138],[45,108],
+    [72,90],[108,75],[148,80],[182,105]
+  ].map(([x,y],i)=>(
+    <g key={i}>
+      <circle cx={x} cy={y} r="9" fill={i<9?"#1a5c2a":"#3a7abf"} stroke="white" strokeWidth="1.5"/>
+      <text x={x} y={y+4} textAnchor="middle" fontSize="7.5" fill="white" fontWeight="bold">{i+1}</text>
+    </g>
+  ))}
+  {/* Winding path */}
+  <polyline points="30,80 58,55 95,45 135,48 170,60 200,85 210,115 198,148 170,170 135,178 95,175 58,162 35,138 45,108 72,90 108,75 148,80 182,105"
+    fill="none" stroke="#c8a84b" strokeWidth="2" strokeDasharray="6,4" opacity="0.6"/>
+  {/* Putter + ball at start */}
+  <circle cx="30" cy="80" r="6" fill="white" stroke="#888" strokeWidth="2"/>
+  <line x1="20" y1="65" x2="28" y2="77" stroke="#555" strokeWidth="3" strokeLinecap="round"/>
+  {/* Legend */}
+  <circle cx="20" cy="210" r="7" fill="#1a5c2a"/>
+  <text x="32" y="214" fontSize="10" fill="#555">Hoyos 1-9</text>
+  <circle cx="110" cy="210" r="7" fill="#3a7abf"/>
+  <text x="122" y="214" fontSize="10" fill="#555">Hoyos 10-18</text>
+  <text x="130" y="228" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Diseña tu propio recorrido de 18 putts</text>
+</svg>
+),
+
+// ══════════════════════════════════════════════════
+// JUEGO CORTO
+// ══════════════════════════════════════════════════
+
+"ej005": ({}) => (
+<svg viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
+  <rect width="280" height="210" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="55" width="260" height="125" fill="#4caf65" opacity="0.25" rx="8"/>
+  {/* Green */}
+  <ellipse cx="230" cy="120" rx="40" ry="30" fill="#2e7d3c" opacity="0.5"/>
+  <circle cx="230" cy="116" r="8" fill="#1a2e1d"/>
+  <line x1="230" y1="108" x2="230" y2="82" stroke="#aaa" strokeWidth="2"/>
+  <polygon points="230,82 246,90 230,98" fill="#c0392b"/>
+  {/* Ball */}
+  <circle cx="30" cy="120" r="8" fill="white" stroke="#888" strokeWidth="2"/>
+  {/* Landing coin */}
+  <circle cx="110" cy="118" r="9" fill="#c8a84b" stroke="#8B6914" strokeWidth="2"/>
+  <text x="110" y="122" textAnchor="middle" fontSize="9" fill="#4a3000" fontWeight="bold">€</text>
+  <line x1="110" y1="108" x2="110" y2="98" stroke="#8B6914" strokeWidth="1.5"/>
+  <text x="110" y="95" textAnchor="middle" fontSize="9" fill="#8B6914" fontWeight="bold">1/3</text>
+  {/* Trajectory arc */}
+  <path d="M38,118 Q110,55 202,116" fill="none" stroke="#1a5c2a" strokeWidth="3" strokeDasharray="7,4"/>
+  <polygon points="202,116 192,112 194,123" fill="#1a5c2a"/>
+  {/* Roll arrow */}
+  <path d="M202,116 Q218,118 222,116" fill="none" stroke="#1a5c2a" strokeWidth="2"/>
+  {/* Labels */}
+  <text x="30" y="148" textAnchor="middle" fontSize="9" fill="#555">bola</text>
+  <text x="230" y="158" textAnchor="middle" fontSize="9" fill="#555">objetivo</text>
+  <text x="140" y="200" textAnchor="middle" fontSize="11" fill="#1a2e1d" fontWeight="bold">Moneda = punto de caída (1/3 distancia)</text>
+</svg>
+),
+
+"ej006": ({}) => (
+<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
+  <rect width="280" height="200" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="45" width="260" height="120" fill="#4caf65" opacity="0.25" rx="8"/>
+  {/* Player silhouette */}
+  <circle cx="30" cy="95" r="10" fill="#1a5c2a"/>
+  <line x1="30" y1="105" x2="30" y2="130" stroke="#1a5c2a" strokeWidth="4" strokeLinecap="round"/>
+  <line x1="30" y1="115" x2="18" y2="128" stroke="#1a5c2a" strokeWidth="3" strokeLinecap="round"/>
+  <line x1="30" y1="115" x2="44" y2="126" stroke="#1a5c2a" strokeWidth="3" strokeLinecap="round"/>
+  {/* Distance markers */}
+  {[[70,"5m"],[120,"10m"],[170,"15m"],[230,"20m"]].map(([x,label],i)=>(
+    <g key={i}>
+      <line x1={x} y1="48" x2={x} y2="165" stroke={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} strokeWidth="2" strokeDasharray="6,4"/>
+      <text x={x} y="43" textAnchor="middle" fontSize="11" fill={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} fontWeight="bold">{label}</text>
+      {/* Ball arc for each */}
+      <path d={`M42,118 Q${(42+x)/2},${75-i*8} ${x-3},118`} fill="none"
+        stroke={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} strokeWidth="2" strokeDasharray="5,3" opacity="0.8"/>
+      <circle cx={x-3} cy="118" r="5" fill="white" stroke={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} strokeWidth="1.5"/>
+    </g>
+  ))}
+  <text x="140" y="192" textAnchor="middle" fontSize="11" fill="#1a2e1d" fontWeight="bold">Mismo palo · Varía solo el tamaño del swing</text>
+</svg>
+),
+
+"ej007": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Bunker shape */}
+  <ellipse cx="125" cy="155" rx="100" ry="50" fill="#f5f0e8"/>
+  <ellipse cx="125" cy="155" rx="88" ry="42" fill="#e8d5a0"/>
+  {/* Sand texture dots */}
+  {[[80,145],[100,160],[120,148],[140,162],[160,145],[90,168],[150,168],[115,172]].map(([x,y],i)=>(
+    <ellipse key={i} cx={x} cy={y} rx="7" ry="3.5" fill="#d4b866" opacity="0.45" transform={`rotate(${i*22},${x},${y})`}/>
+  ))}
+  {/* Ball in bunker */}
+  <circle cx="115" cy="148" r="8" fill="white" stroke="#888" strokeWidth="2"/>
+  {/* Entry point - 5-7cm behind */}
+  <line x1="96" y1="148" x2="107" y2="148" stroke="#c0392b" strokeWidth="3" strokeLinecap="round"/>
+  <text x="95" y="143" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">5-7cm</text>
+  {/* Club - open face indicator */}
+  <line x1="80" y1="95" x2="105" y2="142" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
+  <ellipse cx="107" cy="146" rx="12" ry="6" fill="none" stroke="#555" strokeWidth="3" transform="rotate(-25,107,146)"/>
+  <text x="68" y="108" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">cara</text>
+  <text x="68" y="118" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">abierta</text>
+  {/* Trajectory */}
+  <path d="M115,140 Q148,75 195,65" fill="none" stroke="#1a5c2a" strokeWidth="3"/>
+  <polygon points="195,65 183,68 186,79" fill="#1a5c2a"/>
+  {/* Green target */}
+  <ellipse cx="210" cy="60" rx="30" ry="18" fill="#2e7d3c" opacity="0.6"/>
+  <circle cx="210" cy="57" r="6" fill="#1a2e1d"/>
+  <line x1="210" y1="51" x2="210" y2="35" stroke="#aaa" strokeWidth="1.5"/>
+  <polygon points="210,35 222,41 210,47" fill="#c0392b"/>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Entrada 5-7cm tras la bola · Cara abierta · Explosión</text>
+</svg>
+),
+
+"ej008": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="140" width="240" height="50" fill="#4caf65" opacity="0.35" rx="5"/>
+  {/* Green target */}
+  <ellipse cx="210" cy="138" rx="32" ry="12" fill="#2e7d3c" opacity="0.7"/>
+  <circle cx="210" cy="135" r="6" fill="#1a2e1d"/>
+  <line x1="210" y1="129" x2="210" y2="108" stroke="#aaa" strokeWidth="1.5"/>
+  <polygon points="210,108 222,114 210,120" fill="#c0392b"/>
+  {/* Obstacle */}
+  <rect x="110" y="70" width="8" height="72" fill="#888" rx="3"/>
+  <rect x="90" y="67" width="48" height="10" fill="#c0392b" rx="4"/>
+  <text x="114" y="63" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">obstáculo</text>
+  {/* Measurement */}
+  <line x1="90" y1="55" x2="90" y2="67" stroke="#555" strokeWidth="1" strokeDasharray="3,2"/>
+  <line x1="138" y1="55" x2="138" y2="67" stroke="#555" strokeWidth="1" strokeDasharray="3,2"/>
+  <line x1="90" y1="58" x2="138" y2="58" stroke="#555" strokeWidth="1.5"/>
+  <text x="114" y="52" textAnchor="middle" fontSize="9" fill="#555">~1m alto</text>
+  {/* Ball */}
+  <circle cx="38" cy="138" r="8" fill="white" stroke="#888" strokeWidth="2"/>
+  {/* High lob trajectory */}
+  <path d="M46,134 Q114,18 178,134" fill="none" stroke="#1a5c2a" strokeWidth="3"/>
+  <polygon points="178,134 168,130 170,141" fill="#1a5c2a"/>
+  {/* Swing arc */}
+  <path d="M26,150 Q38,112 50,150" fill="none" stroke="#c8a84b" strokeWidth="2.5" strokeDasharray="4,3"/>
+  <text x="35" y="170" textAnchor="middle" fontSize="9" fill="#c8a84b">swing U</text>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Lob sobre obstáculo · Cara muy abierta · Swing en U</text>
+</svg>
+),
+
+"ej009": ({}) => (
+<svg viewBox="0 0 260 240" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="240" fill="#e8f5eb" rx="14"/>
+  <ellipse cx="130" cy="110" rx="110" ry="85" fill="#2e7d3c" opacity="0.3"/>
+  {/* Hole */}
+  <circle cx="130" cy="100" r="10" fill="#1a2e1d"/>
+  <line x1="130" y1="90" x2="130" y2="62" stroke="#aaa" strokeWidth="2"/>
+  <polygon points="130,62 146,70 130,78" fill="#c0392b"/>
+  {/* 9 positions with terrain types */}
+  {[
+    [22,85,"rough","#2e7d3c"],
+    [30,148,"pendiente","#4caf65"],
+    [72,188,"bunker","#e8d5a0"],
+    [130,196,"fairway","#81c784"],
+    [190,188,"rough","#2e7d3c"],
+    [232,140,"pendiente","#4caf65"],
+    [236,80,"rough","#2e7d3c"],
+    [185,30,"fairway","#81c784"],
+    [65,32,"bunker","#e8d5a0"],
+  ].map(([x,y,tipo,color],i)=>(
+    <g key={i}>
+      <circle cx={x} cy={y} r="14" fill={color} stroke="#555" strokeWidth="1.5"/>
+      <text x={x} y={y+5} textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">{i+1}</text>
+    </g>
+  ))}
+  {/* Legend */}
+  {[["#e8d5a0","bunker"],["#2e7d3c","rough"],["#81c784","fairway"],["#4caf65","pendiente"]].map(([c,l],i)=>(
+    <g key={l}>
+      <rect x={10+i*62} y={218} width="12" height="12" fill={c} stroke="#555" strokeWidth="1" rx="3"/>
+      <text x={25+i*62} y={228} fontSize="9" fill="#555">{l}</text>
+    </g>
+  ))}
+</svg>
+),
+
+// ══════════════════════════════════════════════════
+// JUEGO LARGO
+// ══════════════════════════════════════════════════
+
+"ej010": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="125" width="240" height="55" fill="#4caf65" opacity="0.35" rx="6"/>
+  {/* Ball */}
+  <circle cx="130" cy="123" r="9" fill="white" stroke="#888" strokeWidth="2.5"/>
+  {/* Divot AFTER ball */}
+  <path d="M140,130 Q162,136 182,129" fill="#8B6914" opacity="0.7"/>
+  <text x="162" y="150" textAnchor="middle" fontSize="9" fill="#8B6914" fontWeight="bold">divot → delante</text>
+  <line x1="162" y1="142" x2="158" y2="130" stroke="#8B6914" strokeWidth="1.5"/>
+  {/* Club - 7 iron */}
+  <line x1="108" y1="55" x2="128" y2="118" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
+  <rect x="122" y="116" width="16" height="20" fill="#777" rx="3" transform="rotate(-15,130,126)"/>
+  {/* Pendulum arc */}
+  <path d="M72,75 Q130,42 188,75" fill="none" stroke="#c8a84b" strokeWidth="2.5" strokeDasharray="6,4"/>
+  <text x="130" y="38" textAnchor="middle" fontSize="10" fill="#c8a84b" fontWeight="bold">swing pendular</text>
+  {/* Weight arrows */}
+  <text x="55" y="100" textAnchor="middle" fontSize="11" fill="#1a5c2a" fontWeight="bold">50%</text>
+  <text x="205" y="100" textAnchor="middle" fontSize="11" fill="#1a5c2a" fontWeight="bold">50%</text>
+  <text x="55" y="112" textAnchor="middle" fontSize="9" fill="#555">atrás</text>
+  <text x="205" y="112" textAnchor="middle" fontSize="9" fill="#555">adelante</text>
+  {/* Foot marks */}
+  <ellipse cx="108" cy="162" rx="14" ry="7" fill="#1a5c2a" opacity="0.3"/>
+  <ellipse cx="152" cy="162" rx="14" ry="7" fill="#1a5c2a" opacity="0.3"/>
+  <text x="130" y="202" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">7-hierro al 50% · Solo el contacto importa</text>
+</svg>
+),
+
+"ej011": ({}) => (
+<svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
+  <rect width="280" height="200" fill="#e8f5eb" rx="14"/>
+  {/* Fairway */}
+  <rect x="10" y="55" width="260" height="110" fill="#4caf65" opacity="0.3" rx="6"/>
+  {/* Rough sides */}
+  <rect x="10" y="55" width="38" height="110" fill="#2e7d3c" opacity="0.5"/>
+  <rect x="232" y="55" width="38" height="110" fill="#2e7d3c" opacity="0.5"/>
+  <text x="29" y="115" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold" transform="rotate(-90,29,115)">ROUGH</text>
+  <text x="251" y="115" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold" transform="rotate(90,251,115)">ROUGH</text>
+  {/* Target zone */}
+  <rect x="158" y="72" width="62" height="76" fill="#c8a84b" opacity="0.3" rx="5"/>
+  <rect x="158" y="72" width="62" height="76" fill="none" stroke="#c8a84b" strokeWidth="3" rx="5" strokeDasharray="7,4"/>
+  <text x="189" y="112" textAnchor="middle" fontSize="11" fill="#8B6914" fontWeight="bold">ZONA</text>
+  <text x="189" y="126" textAnchor="middle" fontSize="10" fill="#8B6914">20×20m</text>
+  {/* Player */}
+  <circle cx="42" cy="108" r="9" fill="#1a5c2a"/>
+  <line x1="42" y1="117" x2="42" y2="138" stroke="#1a5c2a" strokeWidth="3" strokeLinecap="round"/>
+  {/* Trajectories */}
+  <path d="M52,108 Q105,72 165,108" fill="none" stroke="#1a5c2a" strokeWidth="2.5" strokeDasharray="6,3"/>
+  <path d="M52,110 Q100,85 168,100" fill="none" stroke="#1a5c2a" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6"/>
+  <path d="M52,106 Q108,78 160,118" fill="none" stroke="#1a5c2a" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6"/>
+  <circle cx="168" cy="106" r="6" fill="white" stroke="#888" strokeWidth="2"/>
+  <text x="140" y="192" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">30 golpes · Aterriza en la zona objetivo</text>
+</svg>
+),
+
+"ej012": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Fairway top view */}
+  <rect x="95" y="15" width="70" height="178" fill="#4caf65" opacity="0.3" rx="10"/>
+  {/* Tee */}
+  <rect x="108" y="168" width="44" height="10" fill="#888" rx="3"/>
+  <circle cx="130" cy="166" r="7" fill="white" stroke="#888" strokeWidth="2.5"/>
+  {/* Draw - curves right to left */}
+  <path d="M130,166 Q162,108 145,22" fill="none" stroke="#3a7abf" strokeWidth="3.5"/>
+  <polygon points="145,22 137,33 148,31" fill="#3a7abf"/>
+  <text x="170" y="70" fontSize="11" fill="#3a7abf" fontWeight="bold">DRAW</text>
+  <text x="170" y="84" fontSize="9" fill="#3a7abf">der→izq</text>
+  {/* Fade - curves left to right */}
+  <path d="M130,166 Q98,108 115,22" fill="none" stroke="#c0392b" strokeWidth="3.5"/>
+  <polygon points="115,22 108,31 119,33" fill="#c0392b"/>
+  <text x="22" y="70" fontSize="11" fill="#c0392b" fontWeight="bold">FADE</text>
+  <text x="22" y="84" fontSize="9" fill="#c0392b">izq→der</text>
+  {/* Straight reference */}
+  <line x1="130" y1="166" x2="130" y2="20" stroke="#555" strokeWidth="1.5" strokeDasharray="5,4" opacity="0.35"/>
+  {/* Driver club */}
+  <line x1="116" y1="174" x2="106" y2="190" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
+  <ellipse cx="105" cy="192" rx="9" ry="6" fill="#333"/>
+  <text x="130" y="208" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Alterna draw (azul) y fade (rojo) · 10 de cada</text>
+</svg>
+),
+
+"ej013": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Table */}
+  <rect x="12" y="14" width="236" height="28" fill="#1a5c2a" rx="8"/>
+  <text x="130" y="33" textAnchor="middle" fontSize="13" fill="white" fontWeight="bold">Mi tabla de distancias</text>
+  {[
+    ["🏌️ Driver","230m","#c8a84b"],
+    ["🌲 3-madera","200m","#3a7abf"],
+    ["🔷 5-hierro","165m","#2e7d3c"],
+    ["7️⃣ 7-hierro","140m","#1a5c2a"],
+    ["9️⃣ 9-hierro","115m","#7b5ea7"],
+    ["🎯 PW","95m","#c8a84b"],
+    ["⛳ SW","70m","#c0392b"],
+  ].map(([palo,dist,col],i)=>(
+    <g key={i}>
+      <rect x="12" y={46+i*23} width="236" height="23" fill={i%2===0?"#f0f8f0":"white"} rx="2"/>
+      <text x="22" y={62+i*23} fontSize="12" fill="#1a2e1d">{palo}</text>
+      <rect x="168" y={48+i*23} width="68" height="19" fill={col} opacity="0.2" rx="4"/>
+      <text x="202" y={62+i*23} textAnchor="middle" fontSize="12" fill={col} fontWeight="bold">{dist}</text>
+    </g>
+  ))}
+  <text x="130" y="208" textAnchor="middle" fontSize="10" fill="#555">5 golpes por palo · Anota tu distancia media real</text>
+</svg>
+),
+
+"ej014": ({}) => (
+<svg viewBox="0 0 260 220" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="220" fill="#e8f5eb" rx="14"/>
+  {/* Hole layout - dogleg */}
+  <path d="M25,185 L88,185 L88,128 L152,128 L152,60 L215,60"
+    fill="none" stroke="#4caf65" strokeWidth="24" strokeOpacity="0.35" strokeLinecap="round" strokeLinejoin="round"/>
+  <path d="M25,185 L88,185 L88,128 L152,128 L152,60 L215,60"
+    fill="none" stroke="#2e7d3c" strokeWidth="9" strokeOpacity="0.65" strokeLinecap="round" strokeLinejoin="round"/>
+  {/* Water */}
+  <ellipse cx="120" cy="128" rx="26" ry="18" fill="#3a7abf" opacity="0.65"/>
+  <text x="120" y="133" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold">💧agua</text>
+  {/* Tree */}
+  <circle cx="88" cy="96" r="16" fill="#1a5c2a" opacity="0.85"/>
+  <line x1="88" y1="112" x2="88" y2="126" stroke="#6B3A2A" strokeWidth="4"/>
+  <text x="88" y="82" textAnchor="middle" fontSize="9" fill="#1a2e1d">árbol</text>
+  {/* Green */}
+  <ellipse cx="210" cy="60" rx="24" ry="18" fill="#4caf65" opacity="0.9"/>
+  <circle cx="210" cy="57" r="6" fill="#1a2e1d"/>
+  <line x1="210" y1="51" x2="210" y2="34" stroke="#aaa" strokeWidth="2"/>
+  <polygon points="210,34 222,41 210,48" fill="#c0392b"/>
+  {/* Tee */}
+  <circle cx="32" cy="177" r="8" fill="white" stroke="#888" strokeWidth="2.5"/>
+  {/* Arrows */}
+  <path d="M40,170 Q65,148 100,132" fill="none" stroke="#1a5c2a" strokeWidth="2.5" strokeDasharray="6,3"/>
+  <polygon points="100,132 90,129 92,140" fill="#1a5c2a"/>
+  <text x="72" y="162" fontSize="9" fill="#1a5c2a" fontWeight="bold">zona segura</text>
+  <path d="M40,172 Q85,152 120,132" fill="none" stroke="#c0392b" strokeWidth="2" strokeDasharray="4,3" opacity="0.7"/>
+  <text x="130" y="215" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Planifica antes de golpear · Zona segura siempre</text>
+</svg>
+),
+
+// ══════════════════════════════════════════════════
+// ESTRATEGIA
+// ══════════════════════════════════════════════════
+
+"ej015": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <path d="M25,180 Q115,165 205,105" fill="none" stroke="#4caf65" strokeWidth="24" strokeOpacity="0.35" strokeLinecap="round"/>
+  <path d="M25,180 Q115,165 205,105" fill="none" stroke="#2e7d3c" strokeWidth="9" strokeOpacity="0.6" strokeLinecap="round"/>
+  {/* Danger zone */}
+  <ellipse cx="172" cy="118" rx="32" ry="22" fill="#c0392b" opacity="0.3"/>
+  <text x="172" y="115" textAnchor="middle" fontSize="10" fill="#c0392b" fontWeight="bold">⚠ RIESGO</text>
+  <text x="172" y="128" textAnchor="middle" fontSize="9" fill="#c0392b">agua/OB</text>
+  {/* Safe zone */}
+  <ellipse cx="115" cy="150" rx="34" ry="22" fill="#1a5c2a" opacity="0.2"/>
+  <text x="115" y="148" textAnchor="middle" fontSize="10" fill="#1a5c2a" fontWeight="bold">✓ SEGURO</text>
+  {/* Ball */}
+  <circle cx="32" cy="172" r="8" fill="white" stroke="#888" strokeWidth="2.5"/>
+  {/* Safe arrow */}
+  <path d="M40,168 Q78,155 106,152" fill="none" stroke="#1a5c2a" strokeWidth="3.5"/>
+  <polygon points="106,152 96,147 96,158" fill="#1a5c2a"/>
+  {/* Risky arrow */}
+  <path d="M40,170 Q108,140 158,120" fill="none" stroke="#c0392b" strokeWidth="2.5" strokeDasharray="6,3" opacity="0.75"/>
+  <polygon points="158,120 148,117 150,128" fill="#c0392b" opacity="0.75"/>
+  {/* Green */}
+  <ellipse cx="210" cy="104" rx="25" ry="18" fill="#4caf65" opacity="0.75"/>
+  <circle cx="210" cy="101" r="6" fill="#1a2e1d"/>
+  <text x="130" y="204" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Elige siempre la zona segura · Evita riesgos</text>
+</svg>
+),
+
+"ej016": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="12" width="240" height="32" fill="#1a5c2a" rx="8"/>
+  <text x="130" y="33" textAnchor="middle" fontSize="13" fill="white" fontWeight="bold">GAME PLAN — Hoyo 7 par 4</text>
+  {[
+    ["1","Salida","Fairway izq · Evitar OB derecho · 5-hierro","#3a7abf"],
+    ["2","Approach","Desde zona A: 130m · 8-hierro · Centro del green","#2e7d3c"],
+    ["3","No hacer","Bunker trasero izq · No atacar bandera atrás","#c0392b"],
+    ["4","Green","Leer desde detrás · Lag putt a 1m · Sin 3-putt","#7b5ea7"],
+  ].map(([n,tit,desc,col],i)=>(
+    <g key={n}>
+      <rect x="10" y={50+i*38} width="240" height="36" fill="white" stroke={col} strokeWidth="2" rx="8"/>
+      <circle cx="30" cy={68+i*38} r="12" fill={col}/>
+      <text x="30" y={73+i*38} textAnchor="middle" fontSize="13" fill="white" fontWeight="bold">{n}</text>
+      <text x="47" y={63+i*38} fontSize="11" fill={col} fontWeight="bold">{tit}</text>
+      <text x="47" y={76+i*38} fontSize="9.5" fill="#555">{desc}</text>
+    </g>
+  ))}
+  <text x="130" y="206" textAnchor="middle" fontSize="9.5" fill="#555">Planifica hoyo a hoyo antes de salir al campo</text>
+</svg>
+),
+
+"ej017": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect x="10" y="12" width="240" height="28" fill="#1a5c2a" rx="7"/>
+  <text x="130" y="31" textAnchor="middle" fontSize="12" fill="white" fontWeight="bold">Par propio — Hándicap 18</text>
+  {/* Table */}
+  {[["Hoyo","Dif.","Par oficial","Tu par","Objetivo"],
+    ["1","1","4","6","bogey doble ✓"],
+    ["2","5","4","5","bogey ✓"],
+    ["3","10","3","4","bogey ✓"],
+    ["4","2","5","7","doble ✓"],
+    ["5","8","4","5","bogey ✓"],
+    ["...","...","...","...","..."],
+  ].map((row,i)=>(
+    <g key={i}>
+      <rect x="10" y={44+i*25} width="240" height="25" fill={i===0?"#2e7d3c":i%2===0?"#f0f8f0":"white"} rx={i===0?4:2}/>
+      {row.map((cell,j)=>(
+        <text key={j} x={20+j*48} y={61+i*25} fontSize={i===0?9.5:9}
+          fill={i===0?"white":j===3?"#3a7abf":j===4?"#2e7d3c":"#1a2e1d"}
+          fontWeight={i===0||j===3?"bold":"normal"}>{cell}</text>
+      ))}
+    </g>
+  ))}
+  <text x="130" y="207" textAnchor="middle" fontSize="9.5" fill="#555">Juega contra tu propio par, no el oficial del campo</text>
+</svg>
+),
+
+// ══════════════════════════════════════════════════
+// REGLAS
+// ══════════════════════════════════════════════════
+
+"ej018": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Book */}
+  <rect x="28" y="18" width="168" height="140" fill="white" stroke="#1a5c2a" strokeWidth="3" rx="8"/>
+  <rect x="28" y="18" width="10" height="140" fill="#1a5c2a" rx="4"/>
+  <text x="118" y="46" textAnchor="middle" fontSize="12" fill="#1a5c2a" fontWeight="bold">REGLAMENTO</text>
+  <text x="118" y="60" textAnchor="middle" fontSize="11" fill="#1a5c2a" fontWeight="bold">RFEG 2023</text>
+  {[
+    ["💧","Zona roja → 3 opciones de alivio"],
+    ["🔍","Bola perdida → 3 min búsqueda"],
+    ["🚫","OB → golpe y distancia (penaliza)"],
+    ["🔧","Obst. inamovible → alivio sin penal."],
+    ["📍","Pitchmark → reparar siempre"],
+  ].map(([icon,text],i)=>(
+    <g key={i}>
+      <text x="42" y={82+i*18} fontSize="13">{icon}</text>
+      <text x="60" y={82+i*18} fontSize="9.5" fill="#1a2e1d">{text}</text>
+    </g>
+  ))}
+  {/* Stakes */}
+  <line x1="58" y1="168" x2="66" y2="205" stroke="#c0392b" strokeWidth="5" strokeLinecap="round"/>
+  <line x1="78" y1="168" x2="86" y2="205" stroke="#c0392b" strokeWidth="5" strokeLinecap="round"/>
+  <text x="72" y="164" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">ROJA</text>
+  <line x1="175" y1="168" x2="183" y2="205" stroke="white" strokeWidth="4" strokeLinecap="round"/>
+  <line x1="175" y1="168" x2="183" y2="205" stroke="#aaa" strokeWidth="1.5" strokeDasharray="4,3"/>
+  <text x="179" y="164" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">OB</text>
+  <line x1="115" y1="168" x2="123" y2="205" stroke="#3a7abf" strokeWidth="5" strokeLinecap="round"/>
+  <text x="119" y="164" textAnchor="middle" fontSize="9" fill="#3a7abf" fontWeight="bold">AZUL</text>
+</svg>
+),
+
+"ej019": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <ellipse cx="130" cy="105" rx="110" ry="85" fill="#2e7d3c" opacity="0.35"/>
+  {/* Hole */}
+  <circle cx="130" cy="98" r="10" fill="#1a2e1d"/>
+  <line x1="130" y1="88" x2="130" y2="62" stroke="white" strokeWidth="2"/>
+  <polygon points="130,62 148,70 130,78" fill="#c0392b"/>
+  {/* Pitchmark to repair */}
+  <ellipse cx="92" cy="108" rx="10" ry="6" fill="#1a5c2a" opacity="0.7"/>
+  <text x="92" y="124" textAnchor="middle" fontSize="8" fill="#1a5c2a" fontWeight="bold">reparar ✓</text>
+  {/* Ball marked */}
+  <circle cx="72" cy="96" r="8" fill="white" stroke="#888" strokeWidth="2"/>
+  <rect x="68" y="105" width="10" height="6" fill="#c8a84b" rx="2"/>
+  <text x="72" y="120" textAnchor="middle" fontSize="8" fill="#555">marcar</text>
+  {/* Competitor ball */}
+  <circle cx="162" cy="114" r="8" fill="#f5f549" stroke="#888" strokeWidth="2"/>
+  <rect x="158" y="123" width="10" height="6" fill="#3a7abf" rx="2"/>
+  <text x="162" y="138" textAnchor="middle" fontSize="8" fill="#555">rival</text>
+  {/* Casual water */}
+  <ellipse cx="145" cy="82" rx="18" ry="10" fill="#3a7abf" opacity="0.5"/>
+  <text x="145" y="86" textAnchor="middle" fontSize="7.5" fill="#1a2e1d">agua casual</text>
+  <text x="145" y="68" textAnchor="middle" fontSize="8" fill="#3a7abf" fontWeight="bold">alivio s/pen.</text>
+  <line x1="145" y1="70" x2="145" y2="72" stroke="#3a7abf" strokeWidth="1.5"/>
+  {/* Putt line */}
+  <path d="M78,97 Q105,88 120,94" fill="none" stroke="#1a5c2a" strokeWidth="2" strokeDasharray="4,2"/>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Reglas del green · Marcar · Reparar · Respetar</text>
+</svg>
+),
+
+"ej020": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  {[
+    {x:65,y:55,icon:"⛳",label:"Bola incrustada",sub:"alivio sin penalidad",col:"#1a5c2a"},
+    {x:195,y:55,icon:"📋",label:"Score incorrecto",sub:"descalificación",col:"#c0392b"},
+    {x:65,y:135,icon:"⚠️",label:"Bola equivocada",sub:"2 golpes penalización",col:"#c8a84b"},
+    {x:195,y:135,icon:"🎯",label:"Caddie alineando",sub:"1 golpe penalización",col:"#3a7abf"},
+  ].map(({x,y,icon,label,sub,col})=>(
+    <g key={label}>
+      <rect x={x-52} y={y-32} width="104" height="66" fill="white" stroke={col} strokeWidth="2.5" rx="10"/>
+      <text x={x} y={y-10} textAnchor="middle" fontSize="20">{icon}</text>
+      <text x={x} y={y+10} textAnchor="middle" fontSize="9.5" fill={col} fontWeight="bold">{label}</text>
+      <text x={x} y={y+24} textAnchor="middle" fontSize="8.5" fill="#555">{sub}</text>
+    </g>
+  ))}
+  {/* RFEG badge */}
+  <circle cx="130" cy="95" r="22" fill="none" stroke="#1a5c2a" strokeWidth="2.5"/>
+  <text x="130" y="92" textAnchor="middle" fontSize="10" fill="#1a5c2a" fontWeight="bold">RFEG</text>
+  <text x="130" y="105" textAnchor="middle" fontSize="8" fill="#1a5c2a">2023</text>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Situaciones avanzadas en competición</text>
+</svg>
+),
+
+// ══════════════════════════════════════════════════
+// MENTAL
+// ══════════════════════════════════════════════════
+
+"ej021": ({}) => (
+<svg viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
+  <rect width="280" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Timeline */}
+  <line x1="20" y1="110" x2="260" y2="110" stroke="#ddd" strokeWidth="4"/>
+  {[
+    {x:20,n:"1",l:"Leer",s:"situación",c:"#3a7abf"},
+    {x:68,n:"2",l:"Elegir",s:"palo/obj.",c:"#2e7d3c"},
+    {x:120,n:"3",l:"2 swings",s:"práctica",c:"#c8a84b"},
+    {x:172,n:"4",l:"Alinear",s:"cara+pies",c:"#7b5ea7"},
+    {x:230,n:"5",l:"Gatillo",s:"inicio",c:"#c0392b"},
+  ].map(({x,n,l,s,c})=>(
+    <g key={n}>
+      <circle cx={x} cy="110" r="20" fill={c} stroke="white" strokeWidth="2"/>
+      <text x={x} y="116" textAnchor="middle" fontSize="15" fill="white" fontWeight="bold">{n}</text>
+      <text x={x} y="140" textAnchor="middle" fontSize="9.5" fill={c} fontWeight="bold">{l}</text>
+      <text x={x} y="152" textAnchor="middle" fontSize="8.5" fill="#555">{s}</text>
+    </g>
+  ))}
+  {/* Clock */}
+  <circle cx="140" cy="55" r="35" fill="white" stroke="#c8a84b" strokeWidth="3.5"/>
+  <line x1="140" y1="55" x2="140" y2="28" stroke="#c8a84b" strokeWidth="3" strokeLinecap="round"/>
+  <line x1="140" y1="55" x2="158" y2="61" stroke="#1a2e1d" strokeWidth="3" strokeLinecap="round"/>
+  <circle cx="140" cy="55" r="4" fill="#1a2e1d"/>
+  {/* Tick marks */}
+  {Array.from({length:12},(_,i)=>{
+    const a=(i*30-90)*Math.PI/180;
+    return <line key={i} x1={140+28*Math.cos(a)} y1={55+28*Math.sin(a)}
+      x2={140+33*Math.cos(a)} y2={55+33*Math.sin(a)} stroke="#ccc" strokeWidth="2"/>;
+  })}
+  <text x="140" y="72" textAnchor="middle" fontSize="8.5" fill="#c8a84b" fontWeight="bold">20-25 seg</text>
+  <text x="140" y="204" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Misma rutina · Mismo tiempo · Siempre</text>
+</svg>
+),
+
+"ej022": ({}) => (
+<svg viewBox="0 0 220 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:260,display:"block",margin:"0 auto"}}>
+  <rect width="220" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Traffic light body */}
+  <rect x="75" y="14" width="70" height="148" fill="#333" rx="35"/>
+  {/* Red */}
+  <circle cx="110" cy="45" r="22" fill="#c0392b"/>
+  <text x="110" y="41" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">ROJO</text>
+  <text x="110" y="53" textAnchor="middle" fontSize="9" fill="white">0-10 seg</text>
+  {/* Amber */}
+  <circle cx="110" cy="90" r="22" fill="#c8a84b"/>
+  <text x="110" y="86" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">ÁMBAR</text>
+  <text x="110" y="98" textAnchor="middle" fontSize="9" fill="white">10-30 seg</text>
+  {/* Green */}
+  <circle cx="110" cy="135" r="22" fill="#2e7d3c"/>
+  <text x="110" y="131" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">VERDE</text>
+  <text x="110" y="143" textAnchor="middle" fontSize="9" fill="white">&gt;30 seg</text>
+  {/* Labels right */}
+  <text x="152" y="42" fontSize="9" fill="#c0392b" fontWeight="bold">Reacción</text>
+  <text x="152" y="53" fontSize="8.5" fill="#555">natural</text>
+  <text x="152" y="87" fontSize="9" fill="#c8a84b" fontWeight="bold">Respira</text>
+  <text x="152" y="98" fontSize="8.5" fill="#555">y suelta</text>
+  <text x="152" y="132" fontSize="9" fill="#2e7d3c" fontWeight="bold">Siguiente</text>
+  <text x="152" y="143" fontSize="8.5" fill="#555">golpe</text>
+  {/* Post */}
+  <rect x="107" y="162" width="6" height="28" fill="#555"/>
+  <text x="110" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Reset emocional tras cada mal golpe</text>
+</svg>
+),
+
+"ej023": ({}) => (
+<svg viewBox="0 0 240 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:280,display:"block",margin:"0 auto"}}>
+  <rect width="240" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Head outline */}
+  <ellipse cx="120" cy="80" rx="62" ry="68" fill="#f0ebfa" stroke="#7b5ea7" strokeWidth="3"/>
+  {/* Brain folds */}
+  {["M80,52 Q100,42 120,52 Q140,42 160,52","M75,68 Q98,55 120,68 Q142,55 165,68",
+    "M72,84 Q95,72 120,84 Q145,72 168,84"].map((d,i)=>(
+    <path key={i} d={d} fill="none" stroke="#7b5ea7" strokeWidth="1.5" opacity="0.4"/>
+  ))}
+  {/* Golf scene inside */}
+  <ellipse cx="120" cy="88" rx="44" ry="32" fill="#4caf65" opacity="0.4"/>
+  {/* Mini golfer */}
+  <circle cx="90" cy="78" r="6" fill="#1a5c2a"/>
+  <line x1="90" y1="84" x2="90" y2="96" stroke="#1a5c2a" strokeWidth="2.5" strokeLinecap="round"/>
+  <line x1="90" y1="88" x2="82" y2="94" stroke="#1a5c2a" strokeWidth="2" strokeLinecap="round"/>
+  {/* Ball flight */}
+  <path d="M93,80 Q118,58 150,78" fill="none" stroke="#c8a84b" strokeWidth="3"/>
+  <circle cx="150" cy="78" r="5" fill="white" stroke="#888" strokeWidth="1.5"/>
+  {/* Sparkles */}
+  {[[95,55],[130,50],[158,62],[75,62]].map(([x,y],i)=>(
+    <text key={i} x={x} y={y} fontSize="12">✨</text>
+  ))}
+  {/* Steps */}
+  <text x="120" y="162" textAnchor="middle" fontSize="9.5" fill="#7b5ea7" fontWeight="bold">Cierra los ojos · Imagina el golpe perfecto</text>
+  <text x="120" y="176" textAnchor="middle" fontSize="9" fill="#7b5ea7">Siente el contacto · Ve la bola volar</text>
+  <text x="120" y="190" textAnchor="middle" fontSize="8.5" fill="#555">10 minutos diarios · Antes de entrenar</text>
+  <text x="120" y="206" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Visualización · El swing mental perfecto</text>
+</svg>
+),
+
+// ══════════════════════════════════════════════════
+// FITNESS GOLF
+// ══════════════════════════════════════════════════
+
+"ej024": ({}) => (
+<svg viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
+  <rect width="280" height="210" fill="#e8f5eb" rx="14"/>
+  {/* 5 exercise circles */}
+  {[
+    {x:50,y:62,icon:"🧘",label:"Hip 90/90",sub:"2×30seg"},
+    {x:140,y:62,icon:"🏋️",label:"Goblet squat",sub:"3×10"},
+    {x:230,y:62,icon:"🔄",label:"Rot. torácica",sub:"3×15"},
+    {x:90,y:152,icon:"🦵",label:"Paso cruzado",sub:"2×12"},
+    {x:190,y:152,icon:"🤸",label:"Hip hinge",sub:"3×12"},
+  ].map(({x,y,icon,label,sub})=>(
+    <g key={label}>
+      <circle cx={x} cy={y} r="34" fill="white" stroke="#d4651a" strokeWidth="2.5"/>
+      <text x={x} y={y-8} textAnchor="middle" fontSize="18">{icon}</text>
+      <text x={x} y={y+10} textAnchor="middle" fontSize="8.5" fill="#d4651a" fontWeight="bold">{label}</text>
+      <text x={x} y={y+22} textAnchor="middle" fontSize="8.5" fill="#555">{sub}</text>
+    </g>
+  ))}
+  {/* Hip rotation arrow */}
+  <path d="M104,120 Q140,108 176,120" fill="none" stroke="#d4651a" strokeWidth="3"/>
+  <polygon points="176,120 165,114 165,126" fill="#d4651a"/>
+  <text x="140" y="116" textAnchor="middle" fontSize="9" fill="#d4651a" fontWeight="bold">rotación</text>
+  <text x="140" y="204" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Movilidad de cadera → más velocidad de swing</text>
+</svg>
+),
+
+"ej025": ({}) => (
+<svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
+  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  {/* Plank figure */}
+  <rect x="28" y="90" width="130" height="14" fill="#1a5c2a" opacity="0.85" rx="7"/>
+  <circle cx="172" cy="93" r="14" fill="#d4a574"/>
+  {/* Arms */}
+  <line x1="28" y1="97" x2="14" y2="116" stroke="#1a5c2a" strokeWidth="7" strokeLinecap="round"/>
+  <rect x="6" y="114" width="18" height="7" fill="#888" rx="3"/>
+  {/* Legs */}
+  <line x1="28" y1="104" x2="12" y2="128" stroke="#1a5c2a" strokeWidth="6" strokeLinecap="round"/>
+  <line x1="20" y1="104" x2="5" y2="126" stroke="#1a5c2a" strokeWidth="5" strokeLinecap="round"/>
+  {/* Core triangle */}
+  <polygon points="80,85 120,85 100,58" fill="none" stroke="#c0392b" strokeWidth="3" strokeDasharray="5,3"/>
+  <text x="100" y="75" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">CORE</text>
+  {/* Exercises list */}
+  {[
+    ["1","Plank + toque hombros","3×20"],
+    ["2","Pallof press","3×12"],
+    ["3","Dead bug","3×10"],
+    ["4","Plank lateral","2×30seg"],
+    ["5","Rotación con palo","3×15"],
+  ].map(([n,ex,sets],i)=>(
+    <g key={n}>
+      <circle cx="22" cy={130+i*14} r="8" fill="#1a5c2a"/>
+      <text x="22" y={134+i*14} textAnchor="middle" fontSize="8.5" fill="white" fontWeight="bold">{n}</text>
+      <text x="34" y={134+i*14} fontSize="9" fill="#1a2e1d">{ex}</text>
+      <text x="248" y={134+i*14} textAnchor="end" fontSize="8.5" fill="#888">{sets}</text>
+    </g>
+  ))}
+  <text x="130" y="207" textAnchor="middle" fontSize="9.5" fill="#1a2e1d" fontWeight="bold">Core estable = postura consistente en el swing</text>
+</svg>
+),
+
+};
+
+
+function EjercicioDetalle({ ej, onClose, onAsignar }) {
+  const Ilus = ILUSTRACIONES[ej.id];
+  return (
+    <Modal title={ej.nombre} onClose={onClose} wide color={G.grass}>
+      {Ilus && <div style={{background:"#f0f8f0",borderRadius:12,padding:"12px 8px",marginBottom:16}}><Ilus/></div>}
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
+        <Badge color={CAT_COLORS[ej.categoria]||"gray"}>{CAT_ICONS[ej.categoria]} {ej.categoria}</Badge>
+        <Badge color={ej.nivel==="Iniciación"?"green":ej.nivel==="Intermedio"?"gold":"blue"}>{ej.nivel}</Badge>
+        {ej.duracion && <Badge color="gray">⏱ {ej.duracion}</Badge>}
+        {ej.material && <Badge color="gray">🎒 {ej.material}</Badge>}
+      </div>
+
+      <div style={{ background:G.mist, borderRadius:10, padding:14, marginBottom:14 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:G.fairway, marginBottom:4 }}>🎯 OBJETIVO</div>
+        <div style={{ fontSize:14, color:G.ink }}>{ej.objetivo}</div>
+      </div>
+
+      <div style={{ marginBottom:14 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:G.soft, marginBottom:6 }}>📝 DESCRIPCIÓN</div>
+        <div style={{ fontSize:14, color:G.ink, lineHeight:1.6 }}>{ej.descripcion}</div>
+      </div>
+
+      {ej.variantes && ej.variantes.length>0 && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:G.sky, marginBottom:6 }}>🔄 VARIANTES</div>
+          {ej.variantes.map((v,i) => <div key={i} style={{ fontSize:13, color:G.ink, marginBottom:4, paddingLeft:8, borderLeft:`2px solid ${G.sky}` }}>· {v}</div>)}
+        </div>
+      )}
+
+      {ej.kpis && ej.kpis.length>0 && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:G.flag, marginBottom:6 }}>📏 KPIs — Cómo medir el progreso</div>
+          {ej.kpis.map((k,i) => <div key={i} style={{ fontSize:13, color:G.ink, marginBottom:4 }}>✔ {k}</div>)}
+        </div>
+      )}
+
+      {ej.erroresComunes && ej.erroresComunes.length>0 && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:G.danger, marginBottom:6 }}>⚠️ ERRORES COMUNES</div>
+          {ej.erroresComunes.map((e,i) => <div key={i} style={{ fontSize:13, color:G.ink, marginBottom:4 }}>✗ {e}</div>)}
+        </div>
+      )}
+
+      {/* Test preguntas si lo tiene (reglas) */}
+      {ej.preguntas && ej.preguntas.length>0 && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:G.purple, marginBottom:8 }}>❓ PREGUNTAS DEL TEST</div>
+          {ej.preguntas.map((p,i) => (
+            <div key={i} style={{ background:G.lavender, borderRadius:10, padding:12, marginBottom:8 }}>
+              <div style={{ fontWeight:600, fontSize:13, color:G.purple, marginBottom:4 }}>P{i+1}: {p.p}</div>
+              <div style={{ fontSize:12, color:G.fairway, fontStyle:"italic" }}>R: {p.r}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
+        <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+          {(ej.tags||[]).map(t=><span key={t} style={{ background:"#f0f0f0",color:"#666",borderRadius:12,padding:"2px 8px",fontSize:11 }}>#{t}</span>)}
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <Btn color="secondary" onClick={onClose}>Cerrar</Btn>
+          {onAsignar && <Btn color="sky" onClick={onAsignar}>Asignar a alumno</Btn>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Modal asignar ────────────────────────────────────────────────
+function AsignarModal({ ej, alumnos, onClose, onSave }) {
+  const [alumnoId, setAlumnoId] = useState(alumnos[0]?.id||"");
+  const [notas, setNotas] = useState("");
+  return (
+    <Modal title={`Asignar: ${ej.nombre}`} onClose={onClose}>
+      <div style={{ background:G.mist, borderRadius:10, padding:12, marginBottom:16 }}>
+        <Badge color={CAT_COLORS[ej.categoria]||"gray"}>{CAT_ICONS[ej.categoria]} {ej.categoria}</Badge>
+        <span style={{ marginLeft:8, fontSize:13, color:G.soft }}>{ej.nivel} · {ej.duracion}</span>
+      </div>
+      <Field label="Alumno *">
+        <Sel value={alumnoId} onChange={setAlumnoId} options={alumnos.map(a=>({value:a.id,label:a.nombre}))}/>
+      </Field>
+      <Field label="Notas para el alumno (opcional)">
+        <Textarea value={notas} onChange={setNotas} placeholder="Instrucciones adicionales, contexto…" rows={3}/>
+      </Field>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:8 }}>
+        <Btn color="secondary" onClick={onClose}>Cancelar</Btn>
+        <Btn color="sky" onClick={()=>onSave(ej.id,alumnoId,notas)} disabled={!alumnoId}>Asignar</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PANEL TESTS (compartido admin + alumno)
+// ═══════════════════════════════════════════════════════════════════
+function PanelTests({ data, setData, modo, alumnoId }) {
+  const [catSel, setCatSel] = useState(null);      // null = no sesión
+  const [testActivo, setTestActivo] = useState(null);
+  const [resumen, setResumen] = useState(null);
+
+  const testCats = Object.keys(TESTS_BANCO);
+  const resultadosTest = data.resultadosTest || [];
+  const alumnoActivo = alumnoId || null;
+
+  function iniciarTest(cat) {
+    const pregs = [...TESTS_BANCO[cat]].sort(() => Math.random()-0.5).slice(0,6);
+    setTestActivo({ cat, pregs, idx:0, respuestas:[], empezadoEn: Date.now() });
+    setCatSel(cat);
+  }
+
+  function responder(opIdx) {
+    const t = testActivo;
+    const correcta = t.pregs[t.idx].correcta;
+    const correctaRespuesta = opIdx === correcta;
+    const nuevasRespuestas = [...t.respuestas, { opIdx, correcta: correctaRespuesta }];
+
+    if (t.idx + 1 >= t.pregs.length) {
+      // Fin del test
+      const score = nuevasRespuestas.filter(r=>r.correcta).length;
+      const resultado = {
+        id: uid(),
+        alumnoId: alumnoActivo || "profesor",
+        testCat: t.cat,
+        fecha: today(),
+        score,
+        total: t.pregs.length,
+        detalle: t.pregs.map((p,i)=>({pregunta:p.pregunta,correcta:i<nuevasRespuestas.length?nuevasRespuestas[i].correcta:false,explicacion:p.explicacion}))
+      };
+      setData({ ...data, resultadosTest: [...resultadosTest, resultado] });
+      setResumen({ ...resultado, pregs: t.pregs, respuestas: nuevasRespuestas });
+      setTestActivo(null);
+    } else {
+      setTestActivo({ ...t, idx: t.idx+1, respuestas: nuevasRespuestas });
+    }
+  }
+
+  // ── Selector de categoría ─────────────────────────────────────────
+  if (!testActivo && !resumen) return (
+    <div>
+      <div style={{ marginBottom:16, color:G.soft, fontSize:14 }}>Selecciona la categoría del test. Cada test tiene 6 preguntas aleatorias.</div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:12 }}>
+        {testCats.map(cat => {
+          const misRes = resultadosTest.filter(r=>(alumnoActivo?r.alumnoId===alumnoActivo:true)&&r.testCat===cat);
+          const ultimoScore = misRes.length>0 ? misRes[misRes.length-1] : null;
+          return (
+            <Card key={cat} style={{ textAlign:"center", cursor:"pointer", border:`2px solid transparent`, transition:"border .15s" }}
+              onMouseEnter={e=>e.currentTarget.style.border=`2px solid ${G.grass}`}
+              onMouseLeave={e=>e.currentTarget.style.border="2px solid transparent"}
+              onClick={()=>iniciarTest(cat)}>
+              <div style={{ fontSize:32, marginBottom:6 }}>{CAT_ICONS[cat]||"🧩"}</div>
+              <div style={{ fontWeight:700, color:G.ink, marginBottom:4 }}>{cat}</div>
+              <div style={{ fontSize:11, color:G.soft, marginBottom:8 }}>{TESTS_BANCO[cat].length} preguntas disponibles</div>
+              {ultimoScore
+                ? <Badge color={ultimoScore.score/ultimoScore.total>=.7?"green":ultimoScore.score/ultimoScore.total>=.5?"gold":"red"}>
+                    Último: {ultimoScore.score}/{ultimoScore.total}
+                  </Badge>
+                : <Badge color="gray">Sin intentar</Badge>
+              }
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Historial de resultados del alumno */}
+      {alumnoActivo && resultadosTest.filter(r=>r.alumnoId===alumnoActivo).length>0 && (
+        <div style={{ marginTop:24 }}>
+          <h3 style={{ margin:"0 0 12px", color:G.fairway }}>📊 Mis resultados</h3>
+          {[...resultadosTest.filter(r=>r.alumnoId===alumnoActivo)].sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,10).map(r=>(
+            <Card key={r.id} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
+              <div style={{ fontSize:22 }}>{CAT_ICONS[r.testCat]||"🧩"}</div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:700, color:G.ink }}>Test {r.testCat}</div>
+                <div style={{ fontSize:12, color:G.soft }}>{r.fecha}</div>
+              </div>
+              <div style={{ fontWeight:800, color:G.fairway, fontSize:17 }}>{r.score}/{r.total}</div>
+              <Badge color={r.score/r.total>=.7?"green":r.score/r.total>=.5?"gold":"red"}>{Math.round(r.score/r.total*100)}%</Badge>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Test activo ────────────────────────────────────────────────────
+  if (testActivo) {
+    const preg = testActivo.pregs[testActivo.idx];
+    const progreso = ((testActivo.idx) / testActivo.pregs.length) * 100;
+    return (
+      <div style={{ maxWidth:560, margin:"0 auto" }}>
+        {/* Progreso */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <Badge color={CAT_COLORS[testActivo.cat]||"gray"}>{CAT_ICONS[testActivo.cat]} {testActivo.cat}</Badge>
+          <span style={{ fontSize:13, color:G.soft }}>Pregunta {testActivo.idx+1} de {testActivo.pregs.length}</span>
+        </div>
+        <div style={{ background:"#e8e8e8", borderRadius:6, height:6, marginBottom:20, overflow:"hidden" }}>
+          <div style={{ width:`${progreso}%`, height:"100%", background:G.grass, transition:"width .3s" }}/>
+        </div>
+        <Card>
+          <div style={{ fontSize:16, fontWeight:700, color:G.ink, marginBottom:20, lineHeight:1.5 }}>❓ {preg.pregunta}</div>
+          <div style={{ display:"grid", gap:10 }}>
+            {preg.opciones.map((op,i) => (
+              <button key={i} onClick={()=>responder(i)}
+                style={{ background:G.mist, color:G.ink, border:`2px solid ${G.mist}`, borderRadius:10, padding:"12px 16px", fontSize:14, textAlign:"left", cursor:"pointer", fontFamily:"inherit", lineHeight:1.4, transition:"all .15s" }}
+                onMouseEnter={e=>{e.currentTarget.style.background=G.fairway;e.currentTarget.style.color=G.white;}}
+                onMouseLeave={e=>{e.currentTarget.style.background=G.mist;e.currentTarget.style.color=G.ink;}}>
+                <span style={{ fontWeight:700, marginRight:8 }}>{String.fromCharCode(65+i)}.</span>{op}
+              </button>
+            ))}
+          </div>
+        </Card>
+        <div style={{ textAlign:"center", marginTop:14 }}>
+          <button onClick={()=>{setTestActivo(null);setResumen(null);}} style={{ background:"none", border:"none", color:G.soft, fontSize:13, cursor:"pointer" }}>Abandonar test</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Resumen final ─────────────────────────────────────────────────
+  if (resumen) {
+    const pct = Math.round(resumen.score / resumen.total * 100);
+    const emoji = pct>=80?"🏆":pct>=60?"⭐":pct>=40?"👍":"📚";
+    return (
+      <div style={{ maxWidth:560, margin:"0 auto" }}>
+        <Card style={{ textAlign:"center", marginBottom:20 }}>
+          <div style={{ fontSize:48, marginBottom:8 }}>{emoji}</div>
+          <div style={{ fontSize:28, fontWeight:800, color:pct>=70?G.grass:pct>=50?G.flag:G.danger }}>{resumen.score}/{resumen.total}</div>
+          <div style={{ fontSize:18, fontWeight:700, color:G.ink, marginBottom:4 }}>{pct}% correcto</div>
+          <div style={{ color:G.soft, fontSize:14 }}>
+            {pct>=80?"¡Excelente! Dominas esta categoría.":pct>=60?"Bien. Repasa los errores.":pct>=40?"Sigue practicando, vas por buen camino.":"Necesitas repasar esta categoría con tu profesor."}
+          </div>
+        </Card>
+
+        {/* Detalle pregunta a pregunta */}
+        <div style={{ marginBottom:16 }}>
+          {resumen.pregs.map((p,i) => {
+            const resp = resumen.respuestas[i];
+            const acierto = resp?.correcta;
+            return (
+              <Card key={i} style={{ marginBottom:10, borderLeft:`3px solid ${acierto?G.grass:G.danger}` }}>
+                <div style={{ fontSize:13, fontWeight:700, color:G.ink, marginBottom:6 }}>{i+1}. {p.pregunta}</div>
+                <div style={{ fontSize:12, marginBottom:4 }}>
+                  <span style={{ fontWeight:600, color:G.soft }}>Tu respuesta: </span>
+                  <span style={{ color:acierto?G.grass:G.danger }}>{acierto?"✔":"✗"} {p.opciones[resp?.opIdx??0]}</span>
+                </div>
+                {!acierto && <div style={{ fontSize:12, marginBottom:4 }}>
+                  <span style={{ fontWeight:600, color:G.soft }}>Correcta: </span>
+                  <span style={{ color:G.grass }}>✔ {p.opciones[p.correcta]}</span>
+                </div>}
+                <div style={{ fontSize:12, color:"#555", background:"#f9f9f9", borderRadius:8, padding:"6px 10px", marginTop:6, lineHeight:1.5 }}>
+                  💡 {p.explicacion}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+
+        <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+          <Btn color="secondary" onClick={()=>{setResumen(null);setCatSel(null);}}>Volver</Btn>
+          <Btn color="primary" onClick={()=>iniciarTest(resumen.testCat)}>Repetir test</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PORTAL ALUMNO: MÓDULO EJERCICIOS Y TESTS
+// ═══════════════════════════════════════════════════════════════════
+function ModEjerciciosAlumno({ data, setData, alumnoId }) {
+  const [tab, setTab] = useState("asignados");
+  const [verEj, setVerEj] = useState(null);
+
+  const asignaciones = (data.asignaciones||[]).filter(a=>a.alumnoId===alumnoId);
+  const todos = [...EJERCICIOS_BIBLIOTECA, ...(data.ejerciciosCustom||[])];
+  function ejDet(id){ return todos.find(e=>e.id===id); }
+
+  function completar(id){
+    setData({...data,asignaciones:(data.asignaciones||[]).map(a=>a.id===id?{...a,completado:true,fechaCompletado:today()}:a)});
+  }
+
+  const ATABS=[{id:"asignados",label:"📌 Mis ejercicios"},{id:"biblioteca",label:"📚 Biblioteca"},{id:"tests",label:"🧩 Tests"}];
+
+  return <div>
+    <div style={{ display:"flex", gap:8, marginBottom:18, flexWrap:"wrap" }}>
+      {ATABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
+        style={{ background:tab===t.id?G.fairway:G.mist, color:tab===t.id?G.white:G.fairway,
+          border:"none", borderRadius:8, padding:"7px 14px", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+        {t.label}
+      </button>)}
+    </div>
+
+    {/* ── MIS EJERCICIOS ASIGNADOS ── */}
+    {tab==="asignados" && <div>
+      {asignaciones.length===0 && <div style={{ color:G.soft, textAlign:"center", padding:30, background:G.mist, borderRadius:10 }}>
+        Tu profesor aún no te ha asignado ejercicios. Puedes explorar la Biblioteca mientras tanto.
+      </div>}
+      {asignaciones.map(a => {
+        const ej = ejDet(a.ejId);
+        if(!ej) return null;
+        return <Card key={a.id} style={{ marginBottom:12, borderLeft:`3px solid ${a.completado?G.grass:G.flag}` }}>
+          <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+            <div style={{ fontSize:26 }}>{CAT_ICONS[ej.categoria]||"📌"}</div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontWeight:700, color:G.ink }}>{ej.nombre}</div>
+              <div style={{ display:"flex", gap:6, marginTop:4, flexWrap:"wrap" }}>
+                <Badge color={CAT_COLORS[ej.categoria]||"gray"}>{ej.categoria}</Badge>
+                <Badge color="gray">⏱ {ej.duracion}</Badge>
+                {a.completado && <Badge color="green">✅ Completado</Badge>}
+              </div>
+              <div style={{ fontSize:13, color:G.soft, marginTop:6 }}>{ej.objetivo}</div>
+              {a.notas && <div style={{ fontSize:12, color:G.fairway, marginTop:4, fontStyle:"italic" }}>📝 Nota del profesor: {a.notas}</div>}
+            </div>
+            <div style={{ display:"flex", gap:6, flexShrink:0, flexDirection:"column", alignItems:"flex-end" }}>
+              <Btn small color="secondary" onClick={()=>setVerEj(ej)}>Ver</Btn>
+              {!a.completado && <Btn small color="primary" onClick={()=>completar(a.id)}>✔ Hecho</Btn>}
+            </div>
+          </div>
+        </Card>;
+      })}
+    </div>}
+
+    {/* ── BIBLIOTECA (solo lectura) ── */}
+    {tab==="biblioteca" && <div>
+      <div style={{ color:G.soft, fontSize:13, marginBottom:14 }}>Explora todos los ejercicios disponibles. Habla con tu profesor para que te los asigne.</div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
+        {EJERCICIOS_BIBLIOTECA.map(e=>(
+          <Card key={e.id} style={{ cursor:"pointer" }} onClick={()=>setVerEj(e)}>
+            <div style={{ fontSize:24, marginBottom:6 }}>{CAT_ICONS[e.categoria]||"📌"}</div>
+            <div style={{ fontWeight:700, color:G.ink, fontSize:13, marginBottom:4 }}>{e.nombre}</div>
+            <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+              <Badge color={CAT_COLORS[e.categoria]||"gray"}>{e.categoria}</Badge>
+            </div>
+            <div style={{ fontSize:11, color:G.soft, marginTop:6 }}>{e.nivel} · {e.duracion}</div>
+          </Card>
+        ))}
+      </div>
+    </div>}
+
+    {/* ── TESTS ── */}
+    {tab==="tests" && <PanelTests data={data} setData={setData} modo="alumno" alumnoId={alumnoId}/>}
+
+    {/* Modal detalle ejercicio */}
+    {verEj && <EjercicioDetalle ej={verEj} onClose={()=>setVerEj(null)}/>}
+  </div>;
+}
+
+
+
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: PROGRAMAS TRIMESTRALES
+// ═══════════════════════════════════════════════════════════════════
+
+const TIPOS_CLASE = [
+  { id:"Individual",  label:"👤 Individual",      color:"#1a5c2a", bg:"#e8f5eb" },
+  { id:"Grupo",       label:"👥 Grupo",            color:"#3a7abf", bg:"#e8f0fb" },
+  { id:"Empresa",     label:"🏢 Empresa/Evento",   color:"#c0392b", bg:"#fdecea" },
+  { id:"Junior",      label:"🧒 Junior/Infantil",  color:"#c8a84b", bg:"#fdf6e3" },
+  { id:"Online",      label:"💻 Online",           color:"#555",    bg:"#f0f0f0" },
+];
+
+// Contenidos específicos de clase
+const CONTENIDOS_CLASE = [
+  { id:"swing_completo",   label:"🏌️ Swing completo",        categoria:"Técnica" },
+  { id:"swing_corto",      label:"✂️ Juego corto (chipping)", categoria:"Técnica" },
+  { id:"putt",             label:"🎯 Trabajo de putt",        categoria:"Técnica" },
+  { id:"bunker",           label:"🏖️ Salidas de bunker",      categoria:"Técnica" },
+  { id:"approach",         label:"🎯 Approach / Approach",    categoria:"Técnica" },
+  { id:"driving",          label:"🚀 Driver / Tee shots",     categoria:"Técnica" },
+  { id:"hierros",          label:"⛳ Hierros medios y largos", categoria:"Técnica" },
+  { id:"estrategia",       label:"🗺️ Estrategia de juego",    categoria:"Táctica" },
+  { id:"gestion_campo",    label:"🧠 Gestión del campo",      categoria:"Táctica" },
+  { id:"lectura_greens",   label:"📐 Lectura de greens",      categoria:"Táctica" },
+  { id:"juego_campo",      label:"⛳ Juego en campo real",     categoria:"Campo" },
+  { id:"competicion",      label:"🏆 Preparación competición",categoria:"Campo" },
+  { id:"mental",           label:"🧘 Juego mental / Concentración", categoria:"Mental" },
+  { id:"fisico",           label:"💪 Preparación física golf",categoria:"Mental" },
+  { id:"reglas",           label:"📚 Reglas de golf",         categoria:"Teoría" },
+  { id:"etiqueta",         label:"🎩 Etiqueta y protocolo",   categoria:"Teoría" },
+  { id:"evaluacion",       label:"📊 Evaluación y seguimiento",categoria:"Evaluación"},
+  { id:"otro",             label:"📝 Otro / Libre",           categoria:"Otro" },
+];
+
+const TRIMESTRES_CURSO = [
+  { id:"t1", label:"1er Trimestre", meses:"Sep–Dic 2026", color:"#3a7abf" },
+  { id:"t2", label:"2º Trimestre",  meses:"Ene–Mar 2027", color:"#2e7d3c" },
+  { id:"t3", label:"3er Trimestre", meses:"Abr–Jun 2027", color:"#c0392b" },
+];
+
+// ── Subcomponente: Sesión individual de clase ─────────────────────
+function SesionRow({sesion, alumnos, onUpdate, onDelete}){
+  const [open, setOpen] = useState(false);
+  const tipo = TIPOS_CLASE.find(t=>t.id===sesion.tipo)||TIPOS_CLASE[0];
+
+  const presentes = (sesion.asistencia||[]).filter(a=>a.presente).length;
+  const total     = (sesion.asistencia||[]).length;
+
+  return <div style={{border:`1px solid ${tipo.color}22`,borderRadius:12,overflow:"hidden",marginBottom:8}}>
+    {/* Cabecera sesión */}
+    <div onClick={()=>setOpen(o=>!o)}
+      style={{background:tipo.bg,padding:"10px 14px",cursor:"pointer",
+        display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+      <span style={{background:tipo.color,color:"#fff",borderRadius:8,padding:"3px 10px",
+        fontSize:12,fontWeight:700,flexShrink:0}}>{tipo.label}</span>
+      <span style={{fontWeight:700,color:"#333",fontSize:14,flex:1}}>{sesion.titulo||"Sin título"}</span>
+      <span style={{fontSize:12,color:"#666"}}>{sesion.fecha||"Sin fecha"}</span>
+      {total>0&&<span style={{fontSize:12,color:tipo.color,fontWeight:700}}>
+        👥 {presentes}/{total}
+      </span>}
+      <span style={{fontSize:14,color:"#888"}}>{open?"▲":"▼"}</span>
+    </div>
+
+    {open&&<div style={{padding:14,background:"#fff"}}>
+      {/* Editar sesión */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+        <Field label="Fecha">
+          <Input type="date" value={sesion.fecha||""} onChange={v=>onUpdate({...sesion,fecha:v})}/>
+        </Field>
+        <Field label="Tipo de clase">
+          <select value={sesion.tipo||"tecnica"} onChange={e=>onUpdate({...sesion,tipo:e.target.value})}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            {TIPOS_CLASE.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Título / Objetivo de la sesión">
+        <Input value={sesion.titulo||""} onChange={v=>onUpdate({...sesion,titulo:v})}
+          placeholder="Ej: Fundamentos del swing, Putting 1m..."/>
+      </Field>
+      <Field label="Contenido trabajado">
+        <Textarea value={sesion.contenido||""} onChange={v=>onUpdate({...sesion,contenido:v})}
+          rows={2} placeholder="Ejercicios realizados, aspectos técnicos, materiales usados..."/>
+      </Field>
+      <Field label="Observaciones del profesor">
+        <Textarea value={sesion.observaciones||""} onChange={v=>onUpdate({...sesion,observaciones:v})}
+          rows={2} placeholder="Notas generales de la sesión, incidencias, aspectos a reforzar..."/>
+      </Field>
+
+      {/* Control de asistencia */}
+      {(sesion.asistencia||[]).length>0&&<div style={{marginTop:12}}>
+        <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8}}>
+          ✋ Control de asistencia
+        </div>
+        <div style={{display:"grid",gap:6}}>
+          {(sesion.asistencia||[]).map((a,i)=>{
+            const alumno = alumnos.find(x=>x.id===a.alumnoId);
+            if(!alumno) return null;
+            return <div key={a.alumnoId} style={{display:"flex",alignItems:"center",gap:10,
+              background:a.presente?"#e8f5eb":"#fdecea",borderRadius:8,padding:"8px 12px"}}>
+              <span style={{fontSize:16}}>{a.presente?"✅":"❌"}</span>
+              <span style={{flex:1,fontWeight:600,fontSize:14}}>{alumno.nombre}</span>
+              <button onClick={()=>{
+                const newAs=[...(sesion.asistencia||[])];
+                newAs[i]={...newAs[i],presente:!newAs[i].presente};
+                onUpdate({...sesion,asistencia:newAs});
+              }} style={{background:a.presente?"#c0392b":"#2e7d3c",color:"#fff",border:"none",
+                borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                {a.presente?"Marcar ausente":"Marcar presente"}
+              </button>
+              <Field label="" style={{margin:0}}>
+                <Input value={a.notaAsistencia||""} onChange={v=>{
+                  const newAs=[...(sesion.asistencia||[])];
+                  newAs[i]={...newAs[i],notaAsistencia:v};
+                  onUpdate({...sesion,asistencia:newAs});
+                }} placeholder="Nota individual..." style={{fontSize:12,padding:"4px 8px"}}/>
+              </Field>
+            </div>;
+          })}
+        </div>
+        <div style={{fontSize:12,color:G.soft,marginTop:6,textAlign:"right"}}>
+          Asistencia: {presentes}/{total} ({total>0?Math.round(presentes/total*100):0}%)
+        </div>
+      </div>}
+
+      {/* Ejercicios programados */}
+      {(sesion.ejerciciosProg||[]).length>0&&<div style={{marginTop:12}}>
+        <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:6}}>
+          🏋️ Ejercicios programados
+        </div>
+        {(sesion.ejerciciosProg||[]).map((ej,i)=>(
+          <div key={i} style={{background:G.mist,borderRadius:8,padding:"6px 12px",marginBottom:4,
+            display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:13}}>{ej}</span>
+            <button onClick={()=>{
+              const newEj=(sesion.ejerciciosProg||[]).filter((_,j)=>j!==i);
+              onUpdate({...sesion,ejerciciosProg:newEj});
+            }} style={{background:"none",border:"none",color:G.danger,cursor:"pointer",fontSize:16}}>✕</button>
+          </div>
+        ))}
+      </div>}
+      <div style={{marginTop:8,display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button onClick={()=>{
+          const texto=window.prompt("Añadir ejercicio a esta sesión:");
+          if(texto?.trim()) onUpdate({...sesion,ejerciciosProg:[...(sesion.ejerciciosProg||[]),texto.trim()]});
+        }} style={{background:G.mist,color:G.fairway,border:"none",borderRadius:8,
+          padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+          + Añadir ejercicio
+        </button>
+        <button onClick={()=>{if(golfConfirm("¿Eliminar esta sesión?"))onDelete();}}
+          style={{background:"#fdecea",color:G.danger,border:"none",borderRadius:8,
+            padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+          🗑 Eliminar sesión
+        </button>
+      </div>
+    </div>}
+  </div>;
+}
+
+// ── Subcomponente: Detalle de un Programa ────────────────────────
+function ProgramaDetalle({prog, data, setData, onBack}){
+  const alumnos = data.alumnos||[];
+  const [tabP, setTabP] = useState("sesiones");
+
+  function updateProg(updated){
+    setData({...data, programas:(data.programas||[]).map(p=>p.id===prog.id?updated:p)});
+  }
+
+  function addSesion(){
+    const newSesion = {
+      id: uid(),
+      fecha: today(),
+      tipo: "tecnica",
+      titulo: "",
+      contenido: "",
+      observaciones: "",
+      ejerciciosProg: [],
+      asistencia: (prog.alumnoIds||[]).map(aid=>({alumnoId:aid, presente:false, notaAsistencia:""})),
+    };
+    updateProg({...prog, sesiones:[...(prog.sesiones||[]), newSesion]});
+  }
+
+  function updateSesion(sid, updated){
+    updateProg({...prog, sesiones:(prog.sesiones||[]).map(s=>s.id===sid?updated:s)});
+  }
+
+  function deleteSesion(sid){
+    updateProg({...prog, sesiones:(prog.sesiones||[]).filter(s=>s.id!==sid)});
+  }
+
+  function toggleAlumno(aid){
+    const ids = prog.alumnoIds||[];
+    const newIds = ids.includes(aid)?ids.filter(x=>x!==aid):[...ids,aid];
+    // Update asistencia in all sessions too
+    const newSesiones = (prog.sesiones||[]).map(s=>({
+      ...s,
+      asistencia: newIds.map(a=>
+        (s.asistencia||[]).find(x=>x.alumnoId===a)||{alumnoId:a,presente:false,notaAsistencia:""}
+      )
+    }));
+    updateProg({...prog, alumnoIds:newIds, sesiones:newSesiones});
+  }
+
+  const alumnosPrograma = alumnos.filter(a=>(prog.alumnoIds||[]).includes(a.id));
+  const sesiones = prog.sesiones||[];
+  const trimestre = TRIMESTRES_CURSO.find(t=>t.id===prog.trimestre)||TRIMESTRES_CURSO[0];
+
+  // Stats
+  const totalSesiones = sesiones.length;
+  const sesionesConFecha = sesiones.filter(s=>s.fecha&&s.fecha<=today()).length;
+  const totalAsistencias = sesiones.reduce((acc,s)=>{
+    const pres=(s.asistencia||[]).filter(a=>a.presente).length;
+    const tot=(s.asistencia||[]).length;
+    return acc+(tot>0?pres/tot*100:0);
+  },0);
+  const pctAsistencia = sesionesConFecha>0?Math.round(totalAsistencias/sesionesConFecha):0;
+
+  const TABS_P=[
+    {id:"sesiones",label:"📅 Sesiones"},
+    {id:"alumnos",label:"👤 Alumnos"},
+    {id:"resumen",label:"📊 Resumen"},
+    {id:"programacion",label:"📋 Programación"},
+  ];
+
+  return <div>
+    {/* Header */}
+    <div style={{background:`linear-gradient(135deg,${trimestre.color},${trimestre.color}cc)`,
+      borderRadius:14,padding:"16px 20px",marginBottom:16,color:"#fff"}}>
+      <button onClick={onBack} style={{background:"rgba(255,255,255,.2)",border:"none",
+        color:"#fff",borderRadius:8,padding:"5px 12px",fontSize:12,cursor:"pointer",marginBottom:10}}>
+        ← Volver a programas
+      </button>
+      <div style={{fontWeight:800,fontSize:18,marginBottom:2}}>{prog.nombre}</div>
+      <div style={{fontSize:13,opacity:.85}}>{trimestre.label} · {trimestre.meses}</div>
+      <div style={{fontSize:12,opacity:.75,marginTop:4}}>
+        👥 {alumnosPrograma.length} alumnos · 📅 {totalSesiones} sesiones
+        {pctAsistencia>0&&` · ✋ ${pctAsistencia}% asistencia`}
+      </div>
+    </div>
+
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:10,marginBottom:16}}>
+      {[
+        [totalSesiones,"Sesiones","📅",trimestre.color],
+        [alumnosPrograma.length,"Alumnos","👥",G.fairway],
+        [sesionesConFecha,"Realizadas","✅",G.grass],
+        [pctAsistencia+"%","Asistencia","✋","#c8a84b"],
+      ].map(([v,l,i,c])=>(
+        <Card key={l} style={{textAlign:"center",padding:12}}>
+          <div style={{fontSize:18}}>{i}</div>
+          <div style={{fontWeight:800,color:c,fontSize:18}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Subtabs */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+      {TABS_P.map(t=><button key={t.id} onClick={()=>setTabP(t.id)}
+        style={{background:tabP===t.id?trimestre.color:G.mist,
+          color:tabP===t.id?"#fff":G.fairway,border:"none",borderRadius:8,
+          padding:"8px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+        {t.label}
+      </button>)}
+    </div>
+
+    {/* ── SESIONES ── */}
+    {tabP==="sesiones"&&<div>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+        <Btn onClick={addSesion}>+ Nueva sesión</Btn>
+      </div>
+      {sesiones.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,
+        background:G.mist,borderRadius:10}}>
+        Sin sesiones. Pulsa "+ Nueva sesión" para empezar.
+      </div>}
+      {[...sesiones].sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map(s=>(
+        <SesionRow key={s.id} sesion={s} alumnos={alumnos}
+          onUpdate={u=>updateSesion(s.id,u)}
+          onDelete={()=>deleteSesion(s.id)}/>
+      ))}
+    </div>}
+
+    {/* ── ALUMNOS ── */}
+    {tabP==="alumnos"&&<div>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 12px",color:G.fairway}}>Alumnos inscritos en este programa</h4>
+        <div style={{display:"grid",gap:8}}>
+          {alumnos.filter(a=>a.activo).map(a=>{
+            const inscrito=(prog.alumnoIds||[]).includes(a.id);
+            const grupo = GRUPOS_EDAD.find(g=>g.id===a.nivel)||{emoji:"👤",color:G.fairway};
+            return <div key={a.id} style={{display:"flex",alignItems:"center",gap:10,
+              background:inscrito?G.mist:"#f9f9f9",borderRadius:10,padding:"10px 14px",
+              border:`2px solid ${inscrito?G.grass:"#eee"}`}}>
+              <span style={{fontSize:20}}>{grupo.emoji}</span>
+              <span style={{flex:1,fontWeight:inscrito?700:400,color:G.ink}}>{a.nombre}</span>
+              <span style={{fontSize:12,color:grupo.color,fontWeight:600}}>{a.nivel||"Sin grupo"}</span>
+              <button onClick={()=>toggleAlumno(a.id)}
+                style={{background:inscrito?G.danger:G.grass,color:"#fff",border:"none",
+                  borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                {inscrito?"Quitar":"Añadir"}
+              </button>
+            </div>;
+          })}
+        </div>
+      </Card>
+    </div>}
+
+    {/* ── RESUMEN DE ASISTENCIA ── */}
+    {tabP==="resumen"&&<div>
+      <Card>
+        <h4 style={{margin:"0 0 14px",color:G.fairway}}>📊 Resumen de asistencia por alumno</h4>
+        {alumnosPrograma.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20}}>
+          No hay alumnos inscritos.
+        </div>}
+        {alumnosPrograma.map(a=>{
+          const sesionesConAl = sesiones.filter(s=>(s.asistencia||[]).some(x=>x.alumnoId===a.id));
+          const presentes = sesiones.reduce((acc,s)=>{
+            const r=(s.asistencia||[]).find(x=>x.alumnoId===a.id);
+            return acc+(r?.presente?1:0);
+          },0);
+          const pct = sesionesConAl.length>0?Math.round(presentes/sesionesConAl.length*100):0;
+          const barColor = pct>=80?G.grass:pct>=60?"#c8a84b":G.danger;
+          return <div key={a.id} style={{marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+              <span style={{fontWeight:700,fontSize:14}}>{a.nombre}</span>
+              <span style={{fontWeight:700,color:barColor}}>{presentes}/{sesionesConAl.length} ({pct}%)</span>
+            </div>
+            <div style={{background:"#eee",borderRadius:20,height:8}}>
+              <div style={{background:barColor,borderRadius:20,height:8,
+                width:pct+"%",transition:"width .3s"}}/>
+            </div>
+            {/* Detalle por sesión */}
+            <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+              {sesiones.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map(s=>{
+                const r=(s.asistencia||[]).find(x=>x.alumnoId===a.id);
+                return <div key={s.id} title={`${s.fecha||"?"}: ${r?.presente?"Presente":"Ausente"}`}
+                  style={{width:20,height:20,borderRadius:4,
+                    background:r?.presente?G.grass:"#fdecea",
+                    border:`1px solid ${r?.presente?"#2e7d3c":"#c0392b"}`,
+                    fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",
+                    color:r?.presente?"#fff":"#c0392b"}}>
+                  {r?.presente?"✓":"✗"}
+                </div>;
+              })}
+            </div>
+          </div>;
+        })}
+      </Card>
+
+      {/* Resumen por tipo de clase */}
+      <Card style={{marginTop:12}}>
+        <h4 style={{margin:"0 0 12px",color:G.fairway}}>🏌️ Sesiones por tipo</h4>
+        {TIPOS_CLASE.map(tipo=>{
+          const n = sesiones.filter(s=>s.tipo===tipo.id).length;
+          if(n===0) return null;
+          return <div key={tipo.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <span style={{background:tipo.color,color:"#fff",borderRadius:8,padding:"3px 10px",
+              fontSize:12,fontWeight:700,minWidth:140}}>{tipo.label}</span>
+            <div style={{flex:1,background:"#eee",borderRadius:20,height:8}}>
+              <div style={{background:tipo.color,borderRadius:20,height:8,
+                width:(n/Math.max(totalSesiones,1)*100)+"%"}}/>
+            </div>
+            <span style={{fontWeight:700,color:tipo.color,minWidth:24}}>{n}</span>
+          </div>;
+        })}
+      </Card>
+    </div>}
+
+    {/* ── PROGRAMACIÓN ── */}
+    {tabP==="programacion"&&<div>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>📋 Descripción del programa</h4>
+        <Textarea value={prog.descripcion||""} rows={3}
+          onChange={v=>updateProg({...prog,descripcion:v})}
+          placeholder="Objetivos generales del trimestre, metodología, materiales..."/>
+      </Card>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>🎯 Objetivos del trimestre</h4>
+        <Textarea value={prog.objetivos||""} rows={3}
+          onChange={v=>updateProg({...prog,objetivos:v})}
+          placeholder="Objetivos técnicos, físicos y mentales del grupo para este trimestre..."/>
+      </Card>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>📅 Horario del programa</h4>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Field label="Día(s) de la semana">
+            <Input value={prog.horarioDia||""} onChange={v=>updateProg({...prog,horarioDia:v})}
+              placeholder="Ej: Martes y Jueves"/>
+          </Field>
+          <Field label="Hora">
+            <Input value={prog.horarioHora||""} onChange={v=>updateProg({...prog,horarioHora:v})}
+              placeholder="Ej: 17:00 - 18:30"/>
+          </Field>
+          <Field label="Lugar">
+            <Input value={prog.lugar||""} onChange={v=>updateProg({...prog,lugar:v})}
+              placeholder="Ej: Zona Putting Green"/>
+          </Field>
+          <Field label="Duración por sesión">
+            <Input value={prog.duracion||""} onChange={v=>updateProg({...prog,duracion:v})}
+              placeholder="Ej: 90 minutos"/>
+          </Field>
+        </div>
+      </Card>
+      <Card>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>🏋️ Ejercicios del programa</h4>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 10px"}}>
+          Lista de ejercicios base para todo el programa (puedes añadir más en cada sesión).
+        </p>
+        {(prog.ejerciciosBase||[]).map((ej,i)=>(
+          <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:6}}>
+            <div style={{flex:1,background:G.mist,borderRadius:8,padding:"7px 12px",fontSize:13}}>{ej}</div>
+            <button onClick={()=>updateProg({...prog,ejerciciosBase:(prog.ejerciciosBase||[]).filter((_,j)=>j!==i)})}
+              style={{background:"none",border:"none",color:G.danger,cursor:"pointer",fontSize:18}}>✕</button>
+          </div>
+        ))}
+        <button onClick={()=>{
+          const t=window.prompt("Añadir ejercicio al programa:");
+          if(t?.trim())updateProg({...prog,ejerciciosBase:[...(prog.ejerciciosBase||[]),t.trim()]});
+        }} style={{background:G.mist,color:G.fairway,border:"none",borderRadius:8,
+          padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer",marginTop:4}}>
+          + Añadir ejercicio
+        </button>
+      </Card>
+    </div>}
+  </div>;
+}
+
+// ── Módulo principal: Programas ───────────────────────────────────
+function ModProgramas({data, setData}){
+  const [verProg, setVerProg] = useState(null);
+  const [modal, setModal]     = useState(false);
+  const [form, setForm]       = useState({});
+  const [filtroTrim, setFiltroTrim] = useState("todos");
+
+  const programas = data.programas||[];
+
+  // Si estamos viendo un programa en detalle
+  if(verProg){
+    const prog = programas.find(p=>p.id===verProg);
+    if(!prog){ setVerProg(null); return null; }
+    return <ProgramaDetalle prog={prog} data={data} setData={setData} onBack={()=>setVerProg(null)}/>;
+  }
+
+  function openNew(){
+    setForm({nombre:"",trimestre:"t1",grupo:"",descripcion:"",alumnoIds:[]});
+    setModal(true);
+  }
+
+  function guardar(){
+    if(!form.nombre?.trim()) return;
+    const nuevo={...form, id:uid(), sesiones:[], ejerciciosBase:[],
+      fechaCreacion:today()};
+    setData({...data, programas:[...programas, nuevo]});
+    setModal(false);
+  }
+
+  const filtrados = filtroTrim==="todos"
+    ? programas
+    : programas.filter(p=>p.trimestre===filtroTrim);
+
+  return <div>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:20}}>
+      {[
+        [programas.length,"Programas","📋",G.fairway],
+        [programas.reduce((a,p)=>(p.sesiones||[]).length+a,0),"Sesiones total","📅",G.sky],
+        [programas.reduce((a,p)=>new Set([...a,...(p.alumnoIds||[])]).size,new Set()).size,"Alumnos activos","👥",G.grass],
+      ].map(([v,l,i,c])=>(
+        <Card key={l} style={{textAlign:"center"}}>
+          <div style={{fontSize:20,marginBottom:4}}>{i}</div>
+          <div style={{fontWeight:800,color:c,fontSize:22}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Filtros + nuevo */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+      {[{id:"todos",label:"Todos"},...TRIMESTRES_CURSO].map(t=>(
+        <button key={t.id} onClick={()=>setFiltroTrim(t.id)}
+          style={{background:filtroTrim===t.id?(t.color||G.fairway):G.mist,
+            color:filtroTrim===t.id?"#fff":G.fairway,border:"none",borderRadius:8,
+            padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          {t.label}
+        </button>
+      ))}
+      <div style={{marginLeft:"auto"}}>
+        <Btn onClick={openNew}>+ Nuevo programa</Btn>
+      </div>
+    </div>
+
+    {/* Lista de programas */}
+    {filtrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:40,
+      background:G.mist,borderRadius:12}}>
+      Sin programas. Pulsa "+ Nuevo programa" para crear el primero.
+    </div>}
+    <div style={{display:"grid",gap:12}}>
+      {filtrados.map(prog=>{
+        const trimestre = TRIMESTRES_CURSO.find(t=>t.id===prog.trimestre)||TRIMESTRES_CURSO[0];
+        const sesiones  = prog.sesiones||[];
+        const numAlumnos= (prog.alumnoIds||[]).length;
+        const realizadas= sesiones.filter(s=>s.fecha&&s.fecha<=today()).length;
+        return <div key={prog.id} style={{background:"#fff",borderRadius:14,
+          boxShadow:"0 2px 12px rgba(0,0,0,.07)",overflow:"hidden",
+          borderLeft:`5px solid ${trimestre.color}`}}>
+          {/* Header */}
+          <div style={{background:trimestre.color+"18",padding:"12px 16px",
+            display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:800,color:G.ink,fontSize:16}}>{prog.nombre}</div>
+              <div style={{fontSize:12,color:G.soft,marginTop:2}}>
+                {trimestre.label} · {trimestre.meses}
+                {prog.horarioDia&&` · ${prog.horarioDia}`}
+                {prog.horarioHora&&` ${prog.horarioHora}`}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <span style={{background:trimestre.color,color:"#fff",borderRadius:10,
+                padding:"3px 10px",fontSize:12,fontWeight:700}}>
+                {trimestre.label}
+              </span>
+            </div>
+          </div>
+          {/* Body */}
+          <div style={{padding:"12px 16px",display:"flex",gap:16,flexWrap:"wrap",
+            alignItems:"center"}}>
+            <div style={{display:"flex",gap:16,flex:1,flexWrap:"wrap"}}>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontWeight:800,fontSize:20,color:G.fairway}}>{numAlumnos}</div>
+                <div style={{fontSize:11,color:G.soft}}>Alumnos</div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontWeight:800,fontSize:20,color:G.sky}}>{sesiones.length}</div>
+                <div style={{fontSize:11,color:G.soft}}>Sesiones</div>
+              </div>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontWeight:800,fontSize:20,color:G.grass}}>{realizadas}</div>
+                <div style={{fontSize:11,color:G.soft}}>Realizadas</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <Btn small onClick={()=>setVerProg(prog.id)}>📂 Abrir</Btn>
+              <Btn small color="danger" onClick={()=>{
+                if(golfConfirm("¿Eliminar el programa "+prog.nombre+"?"))
+                  setData({...data,programas:programas.filter(p=>p.id!==prog.id)});
+              }}>🗑</Btn>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+
+    {/* Modal nuevo programa */}
+    {modal&&<Modal title="Nuevo programa" onClose={()=>setModal(false)} wide>
+      <Field label="Nombre del programa *">
+        <Input value={form.nombre||""} onChange={v=>setForm(f=>({...f,nombre:v}))}
+          placeholder="Ej: Iniciación Pollitos T1, Técnica Eagles Primavera..."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Trimestre">
+          <select value={form.trimestre||"t1"} onChange={e=>setForm(f=>({...f,trimestre:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            {TRIMESTRES_CURSO.map(t=><option key={t.id} value={t.id}>{t.label} — {t.meses}</option>)}
+          </select>
+        </Field>
+        <Field label="Grupo de edad">
+          <select value={form.grupo||""} onChange={e=>setForm(f=>({...f,grupo:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Sin especificar</option>
+            {GRUPOS_EDAD.map(g=><option key={g.id} value={g.id}>{g.emoji} {g.nombre} ({g.rango})</option>)}
+          </select>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Día(s) de la semana">
+          <Input value={form.horarioDia||""} onChange={v=>setForm(f=>({...f,horarioDia:v}))}
+            placeholder="Ej: Martes y Jueves"/>
+        </Field>
+        <Field label="Hora">
+          <Input value={form.horarioHora||""} onChange={v=>setForm(f=>({...f,horarioHora:v}))}
+            placeholder="Ej: 17:00 - 18:30"/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Tipo de programa">
+          <Input value={form.tipoProg||""} onChange={v=>setForm(f=>({...f,tipoProg:v}))}
+            placeholder="Ej: Iniciación, Técnica, Competición, Perfeccionamiento..."/>
+        </Field>
+        <Field label="Duración de cada jornada">
+          <Input value={form.duracionJornada||""} onChange={v=>setForm(f=>({...f,duracionJornada:v}))}
+            placeholder="Ej: 60 min, 90 min, 2 horas..."/>
+        </Field>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Nº de jornadas totales">
+          <Input type="number" value={form.numJornadas||""} onChange={v=>setForm(f=>({...f,numJornadas:v}))}
+            placeholder="Ej: 12"/>
+        </Field>
+        <Field label="Nº de alumnos máximo">
+          <Input type="number" value={form.maxAlumnos||""} onChange={v=>setForm(f=>({...f,maxAlumnos:v}))}
+            placeholder="Ej: 6"/>
+        </Field>
+      </div>
+      <Field label="Descripción / Objetivos generales">
+        <Textarea value={form.descripcion||""} onChange={v=>setForm(f=>({...f,descripcion:v}))}
+          rows={3} placeholder="Describe los objetivos y contenidos generales del programa..."/>
+      </Field>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+        <Btn onClick={guardar} disabled={!form.nombre?.trim()}>Crear programa</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: INFORMES PERSONALIZADOS
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Secciones disponibles en el informe ──────────────────────────
+const INFORME_SECCIONES = [
+  { id:"portada",      label:"📋 Portada",               desc:"Título, alumno, fechas y logo" },
+  { id:"resumen",      label:"📝 Resumen ejecutivo",      desc:"Texto libre de evaluación general" },
+  { id:"hcp",          label:"📈 Evolución del hándicap", desc:"Gráfica de progresión del hándicap" },
+  { id:"estadisticas", label:"📊 Estadísticas de juego",  desc:"Golpes, fairways, GIR, putts, bunkers" },
+  { id:"tecnico",      label:"🏌️ Análisis técnico",       desc:"Evaluación técnica por áreas" },
+  { id:"imagenes",     label:"📷 Imágenes",               desc:"Fotos de entrenamientos y torneos" },
+  { id:"videos",       label:"🎬 Vídeos de análisis",     desc:"Capturas y notas de vídeo análisis" },
+  { id:"ejercicios",   label:"🏋️ Ejercicios realizados",  desc:"Lista de ejercicios del período" },
+  { id:"objetivos",    label:"🎯 Objetivos y plan",       desc:"Logros conseguidos y próximos objetivos" },
+  { id:"firma",        label:"✍️ Firma del profesor",     desc:"Cierre y firma del informe" },
+];
+
+const AREAS_TECNICAS = [
+  "Drive / Salida", "Fairway woods / Maderas", "Hierros largos (2-5)",
+  "Hierros medios (6-8)", "Hierros cortos (9-PW)", "Chip / Juego corto",
+  "Pitch", "Bunker", "Putt largo", "Putt corto", "Mental / Gestión", "Físico / Condición",
+];
+
+const VALORACIONES = [
+  { id:"5", label:"⭐⭐⭐⭐⭐ Excelente",  color:"#1a5c2a" },
+  { id:"4", label:"⭐⭐⭐⭐  Muy bien",    color:"#2e7d3c" },
+  { id:"3", label:"⭐⭐⭐   Bien",         color:"#c8a84b" },
+  { id:"2", label:"⭐⭐    En progreso",   color:"#d4651a" },
+  { id:"1", label:"⭐     A trabajar",    color:"#c0392b" },
+];
+
+// ── Mini gráfica de evolución HCP ────────────────────────────────
+function HcpChart({stats}){
+  const datos = stats
+    .filter(s=>s.handicap)
+    .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||""))
+    .slice(-12);
+  if(datos.length<2) return <div style={{color:G.soft,fontSize:13,padding:16,textAlign:"center"}}>
+    Sin datos suficientes de hándicap (mínimo 2 rondas con hándicap registrado).
+  </div>;
+  const vals = datos.map(d=>Number(d.handicap));
+  const mx=Math.max(...vals), mn=Math.min(...vals), rng=mx-mn||1;
+  const W=320, H=120, px=20, py=16;
+  const pts = vals.map((v,i)=>`${px+(i/(vals.length-1))*(W-px*2)},${py+(v-mn)/rng*(H-py*2)}`);
+  const polyline = pts.join(" ");
+  const last = pts[pts.length-1].split(",");
+  const first = pts[0].split(",");
+  return <div style={{overflowX:"auto"}}>
+    <svg width={W} height={H+30} style={{display:"block",margin:"0 auto"}}>
+      {/* Grid lines */}
+      {[0,0.25,0.5,0.75,1].map(p=>(
+        <line key={p} x1={px} y1={py+p*(H-py*2)} x2={W-px} y2={py+p*(H-py*2)}
+          stroke="#e0e0e0" strokeWidth="1"/>
+      ))}
+      {/* Area fill */}
+      <polygon points={`${pts[0].split(",")[0]},${H-py} ${polyline} ${last[0]},${H-py}`}
+        fill="#1a5c2a" opacity="0.1"/>
+      {/* Line */}
+      <polyline fill="none" stroke="#1a5c2a" strokeWidth="2.5" points={polyline}/>
+      {/* Points */}
+      {pts.map((pt,i)=>{
+        const [x,y]=pt.split(",");
+        return <g key={i}>
+          <circle cx={x} cy={y} r="5" fill="#1a5c2a" stroke="white" strokeWidth="1.5"/>
+          <text x={x} y={Number(y)-10} textAnchor="middle" fontSize="10" fill="#1a5c2a" fontWeight="bold">
+            {vals[i]}
+          </text>
+        </g>;
+      })}
+      {/* X labels */}
+      {datos.map((d,i)=>{
+        const x=px+(i/(vals.length-1))*(W-px*2);
+        return <text key={i} x={x} y={H+24} textAnchor="middle" fontSize="9" fill="#888">
+          {(d.fecha||"").slice(5)}
+        </text>;
+      })}
+      {/* Trend arrow */}
+      {vals[0]>vals[vals.length-1]
+        ? <text x={W-px} y={py} textAnchor="end" fontSize="11" fill="#2e7d3c" fontWeight="bold">▼ Bajando ✓</text>
+        : <text x={W-px} y={py} textAnchor="end" fontSize="11" fill="#c0392b" fontWeight="bold">▲ Subiendo</text>
+      }
+    </svg>
+    <div style={{display:"flex",justifyContent:"space-between",padding:"0 20px",fontSize:12,color:G.soft}}>
+      <span>Inicial: <b>{vals[0]}</b></span>
+      <span>Mejor: <b>{Math.min(...vals)}</b></span>
+      <span>Actual: <b>{vals[vals.length-1]}</b></span>
+    </div>
+  </div>;
+}
+
+// ── Estadísticas del período ──────────────────────────────────────
+function StatsResumen({stats}){
+  if(!stats.length) return <div style={{color:G.soft,textAlign:"center",padding:16,fontSize:13}}>Sin rondas en el período seleccionado.</div>;
+  const num  = v => stats.map(s=>Number(s[v])).filter(n=>n>0);
+  const avg  = arr => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length*10)/10 : "—";
+  const best = arr => arr.length ? Math.min(...arr) : "—";
+  const campos = [
+    ["⛳ Golpes medios",    avg(num("golpes")),              G.fairway],
+    ["🏆 Mejor ronda",     best(num("golpes")),             G.grass],
+    ["🎯 Fairways %",      avg(num("fairwaysPorcentaje")),  G.sky],
+    ["✅ GIR %",           avg(num("greensRegulacion")),    "#7b5ea7"],
+    ["⚪ Putts medios",    avg(num("putts")),               G.flag],
+    ["🏖️ Bunkers medios", avg(num("bunkers")),             "#c8a84b"],
+  ];
+  return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+    {campos.map(([label,val,color])=>(
+      <div key={label} style={{background:G.mist,borderRadius:10,padding:"10px 12px",textAlign:"center"}}>
+        <div style={{fontWeight:800,fontSize:20,color}}>{val}</div>
+        <div style={{fontSize:11,color:G.soft,marginTop:2}}>{label}</div>
+      </div>
+    ))}
+  </div>;
+}
+
+// ── Componente principal ModInformes ─────────────────────────────
+function ModInformes({data,setData}){
+  const alumnos = (data.alumnos||[]).filter(a=>a.activo);
+  const [vista,  setVista]  = useState("lista"); // lista | editor | preview
+  const [informe,setInforme]= useState(null);
+
+  const informes = data.informes||[];
+
+  function nuevoInforme(){
+    const nuevo = {
+      id: uid(),
+      titulo: "Informe de seguimiento",
+      alumnoId: alumnos[0]?.id||"",
+      fechaDesde: "",
+      fechaHasta: today(),
+      fechaCreacion: today(),
+      secciones: ["portada","resumen","hcp","estadisticas","tecnico","objetivos","firma"],
+      // Contenido de cada sección
+      resumenTexto: "",
+      areasEval: {},        // {area: {val:"4", notas:""}}
+      imagenesData: [],     // [{base64, caption}]
+      videosNotas: [],      // [{url, titulo, notas, captura}]
+      objetivosLogrados: "",
+      objetivosProximos: "",
+      planTrabajo: "",
+      firmaTexto: "José Manuel Caballero Fernández\nPGA España Nº 1908P\nGolf Ciudad Real C.D.",
+      publicado: false,
+    };
+    setData({...data, informes:[...informes, nuevo]});
+    setInforme(nuevo.id);
+    setVista("editor");
+  }
+
+  function guardarInforme(updated){
+    setData({...data, informes:informes.map(r=>r.id===updated.id?updated:r)});
+  }
+
+  function eliminarInforme(id){
+    setData({...data, informes:informes.filter(r=>r.id!==id)});
+    if(informe===id){ setInforme(null); setVista("lista"); }
+  }
+
+  // Vista lista
+  if(vista==="lista") return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+      <div>
+        <h2 style={{margin:0,color:G.fairway}}>📑 Informes personalizados</h2>
+        <div style={{fontSize:12,color:G.soft,marginTop:2}}>Crea informes de seguimiento para cada alumno</div>
+      </div>
+      <Btn onClick={nuevoInforme} disabled={!alumnos.length}>+ Nuevo informe</Btn>
+    </div>
+
+    {informes.length===0
+      ? <div style={{textAlign:"center",padding:50,background:G.mist,borderRadius:14,color:G.soft}}>
+          <div style={{fontSize:32,marginBottom:10}}>📑</div>
+          <div style={{fontWeight:700,fontSize:15,marginBottom:6}}>Sin informes todavía</div>
+          <div style={{fontSize:13}}>Pulsa "+ Nuevo informe" para crear el primero.</div>
+        </div>
+      : <div style={{display:"grid",gap:12}}>
+          {informes.sort((a,b)=>(b.fechaCreacion||"").localeCompare(a.fechaCreacion||"")).map(r=>{
+            const alumno = alumnos.find(a=>a.id===r.alumnoId);
+            return <Card key={r.id} style={{borderLeft:`4px solid ${r.publicado?G.grass:G.flag}`}}>
+              <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                <FotoAlumno foto={alumno?.foto} nombre={alumno?.nombre||"?"} size={44}/>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:800,fontSize:15,color:G.ink}}>{r.titulo}</div>
+                  <div style={{fontSize:13,color:G.soft,marginTop:2}}>
+                    {alumno?.nombre||"Sin alumno"} · Creado: {r.fechaCreacion}
+                    {r.fechaDesde&&r.fechaHasta&&` · ${r.fechaDesde} → ${r.fechaHasta}`}
+                  </div>
+                  <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
+                    {(r.secciones||[]).slice(0,4).map(s=>{
+                      const sec=INFORME_SECCIONES.find(x=>x.id===s);
+                      return sec?<span key={s} style={{background:G.mist,color:G.fairway,
+                        borderRadius:8,padding:"2px 8px",fontSize:11}}>{sec.label}</span>:null;
+                    })}
+                    {(r.secciones||[]).length>4&&<span style={{fontSize:11,color:G.soft}}>
+                      +{(r.secciones||[]).length-4} más
+                    </span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,flexDirection:"column",flexShrink:0}}>
+                  <Btn small onClick={()=>{setInforme(r.id);setVista("editor");}}>✎ Editar</Btn>
+                  <Btn small color="sky" onClick={()=>{setInforme(r.id);setVista("preview");}}>👁 Ver</Btn>
+                  <Btn small color="danger" onClick={()=>{if(golfConfirm("¿Eliminar este informe?"))eliminarInforme(r.id);}}>🗑</Btn>
+                </div>
+              </div>
+            </Card>;
+          })}
+        </div>
+    }
+  </div>;
+
+  // Editor / Preview
+  const rpt = informes.find(r=>r.id===informe);
+  if(!rpt) return null;
+
+  if(vista==="preview") return <InformePreview
+    rpt={rpt} alumnos={alumnos} data={data}
+    onEdit={()=>setVista("editor")}
+    onBack={()=>setVista("lista")}
+    onPublicar={()=>guardarInforme({...rpt,publicado:true})}
+  />;
+
+  return <InformeEditor
+    rpt={rpt} alumnos={alumnos} data={data}
+    onChange={guardarInforme}
+    onPreview={()=>setVista("preview")}
+    onBack={()=>setVista("lista")}
+  />;
+}
+
+// ── Editor del informe ───────────────────────────────────────────
+function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
+  const upd = (k,v) => onChange({...rpt,[k]:v});
+  const alumno = alumnos.find(a=>a.id===rpt.alumnoId);
+  const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
+    (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
+
+  const [tabE, setTabE] = useState("config");
+
+  const TABS_E=[
+    {id:"config",    label:"⚙️ Config"},
+    {id:"resumen",   label:"📝 Resumen"},
+    {id:"tecnico",   label:"🏌️ Técnico"},
+    {id:"imagenes",  label:"📷 Imágenes"},
+    {id:"videos",    label:"🎬 Vídeos"},
+    {id:"objetivos", label:"🎯 Objetivos"},
+  ];
+
+  function addImagen(e){
+    const file=e.target.files[0]; if(!file) return;
+    if(file.size>2*1024*1024){alert("La imagen no puede superar 2MB.");return;}
+    const reader=new FileReader();
+    reader.onload=ev=>upd("imagenesData",[...(rpt.imagenesData||[]),{base64:ev.target.result,caption:""}]);
+    reader.readAsDataURL(file);
+    e.target.value="";
+  }
+
+  function updCaption(i,v){
+    const imgs=[...(rpt.imagenesData||[])];
+    imgs[i]={...imgs[i],caption:v};
+    upd("imagenesData",imgs);
+  }
+
+  function delImagen(i){ upd("imagenesData",(rpt.imagenesData||[]).filter((_,j)=>j!==i)); }
+
+  function addVideo(){
+    upd("videosNotas",[...(rpt.videosNotas||[]),{url:"",titulo:"",notas:"",fecha:""}]);
+  }
+
+  function updVideo(i,k,v){
+    const vids=[...(rpt.videosNotas||[])];
+    vids[i]={...vids[i],[k]:v};
+    upd("videosNotas",vids);
+  }
+
+  function delVideo(i){ upd("videosNotas",(rpt.videosNotas||[]).filter((_,j)=>j!==i)); }
+
+  function toggleSeccion(sid){
+    const secs=rpt.secciones||[];
+    upd("secciones",secs.includes(sid)?secs.filter(s=>s!==sid):[...secs,sid]);
+  }
+
+  function updArea(area,k,v){
+    const ae={...rpt.areasEval};
+    ae[area]={...ae[area],[k]:v};
+    upd("areasEval",ae);
+  }
+
+  return <div>
+    {/* Barra superior */}
+    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+      <button onClick={onBack} style={{background:G.mist,color:G.fairway,border:"none",
+        borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+        ← Volver
+      </button>
+      <div style={{flex:1,fontWeight:700,color:G.ink,fontSize:15}}>{rpt.titulo}</div>
+      <Btn color="sky" onClick={onPreview}>👁 Vista previa</Btn>
+    </div>
+
+    {/* Subtabs */}
+    <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+      {TABS_E.map(t=><button key={t.id} onClick={()=>setTabE(t.id)}
+        style={{background:tabE===t.id?G.fairway:G.mist,color:tabE===t.id?"#fff":G.fairway,
+          border:"none",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+        {t.label}
+      </button>)}
+    </div>
+
+    {/* ── CONFIG ── */}
+    {tabE==="config"&&<div>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 12px",color:G.fairway}}>📋 Datos del informe</h4>
+        <Field label="Título del informe">
+          <Input value={rpt.titulo||""} onChange={v=>upd("titulo",v)}
+            placeholder="Ej: Informe trimestral T1 2027 · Nombre del alumno"/>
+        </Field>
+        <Field label="Alumno">
+          <select value={rpt.alumnoId||""} onChange={e=>upd("alumnoId",e.target.value)}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            <option value="">Seleccionar alumno</option>
+            {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+          </select>
+        </Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Field label="Período desde">
+            <Input type="date" value={rpt.fechaDesde||""} onChange={v=>upd("fechaDesde",v)}/>
+          </Field>
+          <Field label="Período hasta">
+            <Input type="date" value={rpt.fechaHasta||today()} onChange={v=>upd("fechaHasta",v)}/>
+          </Field>
+        </div>
+        <div style={{background:G.mist,borderRadius:8,padding:"8px 12px",fontSize:12,color:G.fairway}}>
+          📊 Rondas en este período: <b>{stats.length}</b>
+          {stats.length>0&&` · Hándicap: ${stats.filter(s=>s.handicap).map(s=>s.handicap).join(", ")}`}
+        </div>
+      </Card>
+
+      <Card>
+        <h4 style={{margin:"0 0 12px",color:G.fairway}}>📑 Secciones del informe</h4>
+        <div style={{display:"grid",gap:8}}>
+          {INFORME_SECCIONES.map(sec=>{
+            const activa=(rpt.secciones||[]).includes(sec.id);
+            return <div key={sec.id} style={{display:"flex",alignItems:"center",gap:12,
+              background:activa?G.mist:"#f9f9f9",borderRadius:10,padding:"10px 14px",
+              border:`2px solid ${activa?G.grass:"#eee"}`}}>
+              <input type="checkbox" checked={activa} onChange={()=>toggleSeccion(sec.id)}
+                style={{width:18,height:18,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:14,color:G.ink}}>{sec.label}</div>
+                <div style={{fontSize:12,color:G.soft}}>{sec.desc}</div>
+              </div>
+            </div>;
+          })}
+        </div>
+      </Card>
+    </div>}
+
+    {/* ── RESUMEN ── */}
+    {tabE==="resumen"&&<Card>
+      <h4 style={{margin:"0 0 8px",color:G.fairway}}>📝 Resumen ejecutivo y evaluación general</h4>
+      <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
+        Escribe una valoración general del período: progreso, actitud, puntos destacados.
+      </p>
+      <Textarea value={rpt.resumenTexto||""}
+        onChange={v=>upd("resumenTexto",v)}
+        rows={8}
+        placeholder={"Durante este período, el alumno ha demostrado una notable mejora en...\n\nLos aspectos más destacados han sido...\n\nLas áreas que requieren mayor atención son..."}/>
+      <div style={{marginTop:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>📈 Evolución del hándicap</h4>
+        <HcpChart stats={stats}/>
+        <div style={{marginTop:10}}>
+          <h5 style={{margin:"8px 0 4px",color:G.soft,fontWeight:600,fontSize:13}}>Estadísticas del período</h5>
+          <StatsResumen stats={stats}/>
+        </div>
+      </div>
+    </Card>}
+
+    {/* ── TÉCNICO ── */}
+    {tabE==="tecnico"&&<Card>
+      <h4 style={{margin:"0 0 8px",color:G.fairway}}>🏌️ Evaluación técnica por áreas</h4>
+      <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
+        Valora cada área técnica y añade notas específicas.
+      </p>
+      <div style={{display:"grid",gap:10}}>
+        {AREAS_TECNICAS.map(area=>{
+          const ev=rpt.areasEval?.[area]||{val:"",notas:""};
+          const valInfo=VALORACIONES.find(v=>v.id===ev.val);
+          return <div key={area} style={{background:"#f9f9f9",borderRadius:10,padding:12,
+            borderLeft:`4px solid ${valInfo?.color||"#ddd"}`}}>
+            <div style={{fontWeight:700,color:G.ink,fontSize:14,marginBottom:8}}>{area}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <div>
+                <label style={{fontSize:11,color:G.soft,fontWeight:600,display:"block",marginBottom:4}}>VALORACIÓN</label>
+                <select value={ev.val||""} onChange={e=>updArea(area,"val",e.target.value)}
+                  style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"7px 10px",
+                    fontSize:13,background:"#fff",fontFamily:"inherit",
+                    color:valInfo?.color||"#555",fontWeight:valInfo?"700":"400"}}>
+                  <option value="">Sin evaluar</option>
+                  {VALORACIONES.map(v=><option key={v.id} value={v.id}>{v.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{fontSize:11,color:G.soft,fontWeight:600,display:"block",marginBottom:4}}>NOTAS</label>
+                <Input value={ev.notas||""} onChange={v=>updArea(area,"notas",v)}
+                  placeholder="Observaciones específicas..."/>
+              </div>
+            </div>
+          </div>;
+        })}
+      </div>
+    </Card>}
+
+    {/* ── IMÁGENES ── */}
+    {tabE==="imagenes"&&<div>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>📷 Imágenes del período</h4>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
+          Añade fotos de entrenamientos, torneos o capturas de swing. Máx. 2MB por imagen.
+        </p>
+        <label style={{background:G.mist,color:G.fairway,borderRadius:8,
+          padding:"10px 16px",fontSize:13,fontWeight:600,cursor:"pointer",display:"inline-block"}}>
+          📷 Añadir imagen
+          <input type="file" accept="image/*" onChange={addImagen} style={{display:"none"}} multiple/>
+        </label>
+      </Card>
+      {(rpt.imagenesData||[]).length===0
+        ? <div style={{textAlign:"center",padding:30,background:G.mist,borderRadius:12,color:G.soft,fontSize:13}}>
+            Sin imágenes. Pulsa "Añadir imagen" para subir fotos.
+          </div>
+        : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
+            {(rpt.imagenesData||[]).map((img,i)=>(
+              <div key={i} style={{background:"#fff",borderRadius:12,overflow:"hidden",
+                boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>
+                <img src={img.base64} alt="" style={{width:"100%",height:160,objectFit:"cover"}}/>
+                <div style={{padding:10}}>
+                  <Input value={img.caption||""} onChange={v=>updCaption(i,v)}
+                    placeholder="Descripción de la foto..."/>
+                  <button onClick={()=>delImagen(i)}
+                    style={{background:"none",border:"none",color:G.danger,cursor:"pointer",
+                      fontSize:12,fontWeight:600,marginTop:4}}>
+                    ✕ Eliminar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+      }
+    </div>}
+
+    {/* ── VÍDEOS ── */}
+    {tabE==="videos"&&<div>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>🎬 Vídeos de análisis</h4>
+        <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
+          Añade URLs de YouTube, Google Drive o cualquier enlace de vídeo, con notas de análisis.
+        </p>
+        <Btn onClick={addVideo} color="sky">+ Añadir vídeo</Btn>
+      </Card>
+      {(rpt.videosNotas||[]).length===0
+        ? <div style={{textAlign:"center",padding:30,background:G.mist,borderRadius:12,color:G.soft,fontSize:13}}>
+            Sin vídeos. Pulsa "+ Añadir vídeo" para añadir el primero.
+          </div>
+        : <div style={{display:"grid",gap:12}}>
+            {(rpt.videosNotas||[]).map((vid,i)=>(
+              <Card key={i} style={{borderLeft:"4px solid #c0392b"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <Field label="Título del vídeo">
+                    <Input value={vid.titulo||""} onChange={v=>updVideo(i,"titulo",v)}
+                      placeholder="Ej: Swing driver — 15 enero"/>
+                  </Field>
+                  <Field label="Fecha">
+                    <Input type="date" value={vid.fecha||""} onChange={v=>updVideo(i,"fecha",v)}/>
+                  </Field>
+                </div>
+                <Field label="URL del vídeo (YouTube, Drive, etc.)">
+                  <Input value={vid.url||""} onChange={v=>updVideo(i,"url",v)}
+                    placeholder="https://youtube.com/watch?v=..."/>
+                </Field>
+                {vid.url&&vid.url.includes("youtube")&&<div style={{marginTop:8,borderRadius:8,overflow:"hidden"}}>
+                  <iframe
+                    src={vid.url.replace("watch?v=","embed/").replace("youtu.be/","youtube.com/embed/")}
+                    width="100%" height="180" frameBorder="0" allowFullScreen
+                    style={{borderRadius:8,display:"block"}}/>
+                </div>}
+                <Field label="Notas de análisis técnico">
+                  <Textarea value={vid.notas||""} onChange={v=>updVideo(i,"notas",v)}
+                    rows={3} placeholder="Aspectos positivos, puntos a mejorar, ejercicios recomendados..."/>
+                </Field>
+                <button onClick={()=>delVideo(i)}
+                  style={{background:"none",border:"none",color:G.danger,cursor:"pointer",
+                    fontSize:12,fontWeight:600}}>✕ Eliminar vídeo</button>
+              </Card>
+            ))}
+          </div>
+      }
+    </div>}
+
+    {/* ── OBJETIVOS ── */}
+    {tabE==="objetivos"&&<div>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>🎯 Logros conseguidos</h4>
+        <Textarea value={rpt.objetivosLogrados||""}
+          onChange={v=>upd("objetivosLogrados",v)} rows={4}
+          placeholder={"• Ha mejorado la consistencia en el putt corto (1-2m)\n• Ha reducido el hándicap en 2 puntos\n• Ha completado el primer torneo federado..."}/>
+      </Card>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>🚀 Objetivos próximo período</h4>
+        <Textarea value={rpt.objetivosProximos||""}
+          onChange={v=>upd("objetivosProximos",v)} rows={4}
+          placeholder={"• Mejorar el % de GIR desde 100-120m\n• Trabajar la salida de bunker\n• Participar en el torneo de primavera..."}/>
+      </Card>
+      <Card style={{marginBottom:12}}>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>📋 Plan de trabajo</h4>
+        <Textarea value={rpt.planTrabajo||""}
+          onChange={v=>upd("planTrabajo",v)} rows={4}
+          placeholder={"3 sesiones/semana:\n• Martes 17h: Técnica de hierros + approach\n• Jueves 17h: Short game + putting\n• Sábado 10h: Juego en campo completo..."}/>
+      </Card>
+      <Card>
+        <h4 style={{margin:"0 0 8px",color:G.fairway}}>✍️ Firma del profesor</h4>
+        <Textarea value={rpt.firmaTexto||""}
+          onChange={v=>upd("firmaTexto",v)} rows={3}
+          placeholder="José Manuel Caballero Fernández&#10;PGA España Nº 1908P&#10;Golf Ciudad Real C.D."/>
+      </Card>
+    </div>}
+  </div>;
+}
+
+// ── Vista previa del informe ──────────────────────────────────────
+function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
+  const alumno = alumnos.find(a=>a.id===rpt.alumnoId);
+  const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
+    (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
+  const secs = rpt.secciones||[];
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  const [reenviando, setRenviando] = useState(false);
+  const [reenviado, setRenviado] = useState(false);
+
+  async function handlePublicar(){
+    setEnviando(true);
+    await publicarInformeFirestore(rpt, alumno);
+    onPublicar();
+    setEnviado(true);
+    setEnviando(false);
+  }
+
+  async function handleReenviar(){
+    setRenviando(true);
+    await publicarInformeFirestore(rpt, alumno);
+    setRenviado(true);
+    setRenviando(false);
+    setTimeout(()=>setRenviado(false), 3000);
+  }
+
+  function descargarPDF(){
+    generarPDFInforme(rpt, alumno?.nombre||"alumno");
+  }
+
+  const SecTitle=({children,color=G.fairway})=><div style={{
+    background:`linear-gradient(135deg,${color},${color}dd)`,
+    color:"#fff",borderRadius:"10px 10px 0 0",padding:"10px 18px",
+    fontWeight:800,fontSize:15,marginTop:20}}>
+    {children}
+  </div>;
+
+  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #e0eee0",
+    borderTop:"none",borderRadius:"0 0 10px 10px",padding:16,marginBottom:4}}>
+    {children}
+  </div>;
+
+  return <div style={{maxWidth:680,margin:"0 auto"}}>
+    {/* Barra de acciones */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+      <button onClick={onBack} style={{background:G.mist,color:G.fairway,border:"none",
+        borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>← Volver</button>
+      <Btn color="secondary" onClick={onEdit}>✎ Editar</Btn>
+      <Btn color="sky" onClick={descargarPDF}>⬇️ Descargar PDF</Btn>
+      {!rpt.publicado&&!enviado&&<Btn color="primary" onClick={handlePublicar} disabled={enviando}>
+        {enviando?"Enviando...":"📤 Publicar y enviar al alumno"}
+      </Btn>}
+      {(rpt.publicado||enviado)&&<>
+        <span style={{background:G.mist,color:G.grass,borderRadius:8,
+          padding:"7px 14px",fontSize:13,fontWeight:600}}>✅ Publicado y enviado</span>
+        <Btn color="sky" onClick={handleReenviar} disabled={reenviando}>
+          {reenviando?"Reenviando...":reenviado?"✅ Reenviado":"🔄 Reenviar"}
+        </Btn>
+      </>}
+    </div>
+
+    {/* ── CONTENIDO DEL INFORME (para PDF) ── */}
+    <div id="informe-preview-content">
+    {/* ── PORTADA ── */}
+    {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
+      borderRadius:14,padding:"30px 24px",marginBottom:4,textAlign:"center",color:"#fff"}}>
+      <div style={{display:"flex",justifyContent:"center",gap:12,marginBottom:16}}>
+        <img src={LOGO_GCR} alt="GCR" style={{height:52,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
+        <img src={LOGO_PGA} alt="PGA" style={{height:48,objectFit:"contain"}}/>
+      </div>
+      <div style={{fontSize:22,fontWeight:800,marginBottom:6}}>{rpt.titulo}</div>
+      <div style={{fontSize:16,opacity:.85,marginBottom:4}}>
+        {alumno?.nombre}
+      </div>
+      {alumno&&<div style={{fontSize:13,opacity:.7,marginBottom:8}}>
+        {alumno.nivel&&`Grupo: ${GRUPOS_EDAD.find(g=>g.id===alumno.nivel)?.nombre||alumno.nivel} · `}
+        {alumno.tipoEscuela==="adultos"?"Escuela de Adultos":"Escuela Infantil"}
+      </div>}
+      {rpt.fechaDesde&&<div style={{fontSize:13,opacity:.7}}>
+        Período: {rpt.fechaDesde} → {rpt.fechaHasta}
+      </div>}
+      <div style={{fontSize:12,opacity:.6,marginTop:4}}>Informe generado: {rpt.fechaCreacion}</div>
+    </div>}
+
+    {/* ── RESUMEN ── */}
+    {secs.includes("resumen")&&rpt.resumenTexto&&<>
+      <SecTitle>📝 Resumen ejecutivo</SecTitle>
+      <SecBody><p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap",fontSize:14}}>{rpt.resumenTexto}</p></SecBody>
+    </>}
+
+    {/* ── HCP ── */}
+    {secs.includes("hcp")&&<>
+      <SecTitle color="#2e7d3c">📈 Evolución del hándicap</SecTitle>
+      <SecBody><HcpChart stats={stats}/></SecBody>
+    </>}
+
+    {/* ── ESTADÍSTICAS ── */}
+    {secs.includes("estadisticas")&&<>
+      <SecTitle color="#3a7abf">📊 Estadísticas del período</SecTitle>
+      <SecBody>
+        <StatsResumen stats={stats}/>
+        {stats.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+            <thead>
+              <tr style={{background:G.fairway,color:"#fff"}}>
+                {["Fecha","Hoyos","Golpes","FW%","GIR%","Putts","Hcp"].map(h=>(
+                  <th key={h} style={{padding:"6px 8px",textAlign:"center"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stats.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map((s,i)=>(
+                <tr key={i} style={{background:i%2?"#f9f9f9":"#fff"}}>
+                  {[s.fecha,s.hoyos,s.golpes,s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",
+                    s.greensRegulacion?s.greensRegulacion+"%":"—",s.putts,s.handicap||"—"].map((v,j)=>(
+                    <td key={j} style={{padding:"5px 8px",textAlign:"center",borderBottom:"1px solid #eee"}}>{v||"—"}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>}
+      </SecBody>
+    </>}
+
+    {/* ── TÉCNICO ── */}
+    {secs.includes("tecnico")&&Object.keys(rpt.areasEval||{}).length>0&&<>
+      <SecTitle color="#7b5ea7">🏌️ Análisis técnico</SecTitle>
+      <SecBody>
+        <div style={{display:"grid",gap:8}}>
+          {AREAS_TECNICAS.filter(a=>rpt.areasEval?.[a]?.val).map(area=>{
+            const ev=rpt.areasEval[area];
+            const vi=VALORACIONES.find(v=>v.id===ev.val);
+            return <div key={area} style={{display:"flex",gap:12,alignItems:"center",
+              background:"#f9f9f9",borderRadius:8,padding:"8px 12px",
+              borderLeft:`4px solid ${vi?.color||"#ddd"}`}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{area}</div>
+                {ev.notas&&<div style={{fontSize:12,color:"#555",marginTop:2}}>{ev.notas}</div>}
+              </div>
+              <div style={{fontWeight:700,color:vi?.color,fontSize:13,flexShrink:0}}>{vi?.label}</div>
+            </div>;
+          })}
+        </div>
+      </SecBody>
+    </>}
+
+    {/* ── IMÁGENES ── */}
+    {secs.includes("imagenes")&&(rpt.imagenesData||[]).length>0&&<>
+      <SecTitle color="#c8a84b">📷 Imágenes</SecTitle>
+      <SecBody>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+          {(rpt.imagenesData||[]).map((img,i)=>(
+            <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
+              <img src={img.base64} alt={img.caption||""} style={{width:"100%",height:140,objectFit:"cover"}}/>
+              {img.caption&&<div style={{padding:"6px 10px",fontSize:12,color:"#555",background:"#fafafa"}}>
+                {img.caption}
+              </div>}
+            </div>
+          ))}
+        </div>
+      </SecBody>
+    </>}
+
+    {/* ── VÍDEOS ── */}
+    {secs.includes("videos")&&(rpt.videosNotas||[]).length>0&&<>
+      <SecTitle color="#c0392b">🎬 Vídeos de análisis</SecTitle>
+      <SecBody>
+        {(rpt.videosNotas||[]).map((vid,i)=>(
+          <div key={i} style={{marginBottom:16,paddingBottom:16,borderBottom:"1px solid #eee"}}>
+            <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>
+              {vid.titulo||"Vídeo "+(i+1)} {vid.fecha&&`· ${vid.fecha}`}
+            </div>
+            {vid.url&&<a href={vid.url} target="_blank" rel="noopener noreferrer"
+              style={{fontSize:13,color:G.sky,display:"block",marginBottom:8,
+                wordBreak:"break-all"}}>🔗 {vid.url}</a>}
+            {vid.url&&vid.url.includes("youtube")&&<div style={{marginBottom:8,borderRadius:8,overflow:"hidden"}}>
+              <iframe src={vid.url.replace("watch?v=","embed/").replace("youtu.be/","youtube.com/embed/")}
+                width="100%" height="200" frameBorder="0" allowFullScreen style={{borderRadius:8,display:"block"}}/>
+            </div>}
+            {vid.notas&&<div style={{fontSize:13,color:"#555",lineHeight:1.6,
+              background:"#f9f9f9",borderRadius:8,padding:"8px 12px",whiteSpace:"pre-wrap"}}>
+              {vid.notas}
+            </div>}
+          </div>
+        ))}
+      </SecBody>
+    </>}
+
+    {/* ── EJERCICIOS ── */}
+    {secs.includes("ejercicios")&&<>
+      <SecTitle color="#d4651a">🏋️ Ejercicios del período</SecTitle>
+      <SecBody>
+        {(data.asignaciones||[]).filter(a=>a.alumnoId===rpt.alumnoId&&a.completado).length===0
+          ? <div style={{color:G.soft,fontSize:13}}>Sin ejercicios completados en este período.</div>
+          : <div style={{display:"grid",gap:6}}>
+              {(data.asignaciones||[])
+                .filter(a=>a.alumnoId===rpt.alumnoId&&a.completado)
+                .map((a,i)=>{
+                  const ej=(data.ejerciciosCurso||EJERCICIOS_CURSO||[]).find(e=>e.id===a.ejId)||
+                            (EJERCICIOS_BIBLIOTECA||[]).find(e=>e.id===a.ejId);
+                  return ej?<div key={i} style={{background:G.mist,borderRadius:8,
+                    padding:"6px 12px",fontSize:13}}>
+                    ✅ {ej.nombre} <span style={{color:G.soft,fontSize:11}}>— {a.fecha}</span>
+                  </div>:null;
+                }).filter(Boolean)}
+            </div>
+        }
+      </SecBody>
+    </>}
+
+    {/* ── OBJETIVOS ── */}
+    {secs.includes("objetivos")&&(rpt.objetivosLogrados||rpt.objetivosProximos||rpt.planTrabajo)&&<>
+      <SecTitle>🎯 Objetivos y plan de trabajo</SecTitle>
+      <SecBody>
+        {rpt.objetivosLogrados&&<div style={{marginBottom:14}}>
+          <div style={{fontWeight:700,color:G.grass,marginBottom:6}}>✅ Logros conseguidos</div>
+          <p style={{margin:0,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
+        </div>}
+        {rpt.objetivosProximos&&<div style={{marginBottom:14}}>
+          <div style={{fontWeight:700,color:G.sky,marginBottom:6}}>🚀 Próximos objetivos</div>
+          <p style={{margin:0,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
+        </div>}
+        {rpt.planTrabajo&&<div>
+          <div style={{fontWeight:700,color:"#7b5ea7",marginBottom:6}}>📋 Plan de trabajo</div>
+          <p style={{margin:0,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
+        </div>}
+      </SecBody>
+    </>}
+
+    {/* ── FIRMA ── */}
+    {secs.includes("firma")&&<>
+      <SecTitle>✍️ Firma del profesor</SecTitle>
+      <SecBody>
+        <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0"}}>
+          <img src={LOGO_GCR} alt="GCR" style={{height:50,objectFit:"contain"}}/>
+          <div>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:15}}>
+              {rpt.firmaTexto?.split("\n")[0]||"José Manuel Caballero Fernández"}
+            </div>
+            {rpt.firmaTexto?.split("\n").slice(1).map((l,i)=>(
+              <div key={i} style={{fontSize:13,color:"#555",marginTop:2}}>{l}</div>
+            ))}
+          </div>
+        </div>
+        <div style={{fontSize:12,color:G.soft,marginTop:8,borderTop:"1px solid #eee",paddingTop:8}}>
+          Fecha del informe: {rpt.fechaCreacion}
+        </div>
+      </SecBody>
+    </>}
+
+    </div>{/* fin informe-preview-content */}
+    <div style={{height:30}}/>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ZONAS DE TRABAJO
+// ═══════════════════════════════════════════════════════════════════
+const ZONAS_TRABAJO = [
+  { id:"putting",   nombre:"Zona Putting Green",    color:"#1a5c2a", bg:"#e8f5eb", emoji:"🏌️" },
+  { id:"corto",     nombre:"Zona Juego Corto",       color:"#c8a84b", bg:"#fdf6e3", emoji:"⛳" },
+  { id:"techada",   nombre:"Zona Cancha Techada",    color:"#3a7abf", bg:"#e8f0fb", emoji:"🏠" },
+  { id:"largo",     nombre:"Zona Juego Largo",       color:"#7b5ea7", bg:"#f0ebfa", emoji:"🎯" },
+  { id:"hoyo8",     nombre:"Zona Hoyo 8 P&P",        color:"#c0392b", bg:"#fdecea", emoji:"🚩" },
+  { id:"general",   nombre:"General / Instalaciones",color:"#555555", bg:"#f0f0f0", emoji:"🔧" },
+];
+
+const PRIORIDADES = [
+  { id:"alta",   label:"Alta",   color:"#c0392b", bg:"#fdecea" },
+  { id:"media",  label:"Media",  color:"#c8a84b", bg:"#fdf6e3" },
+  { id:"baja",   label:"Baja",   color:"#2e7d3c", bg:"#e8f5eb" },
+];
+
+const ESTADOS_TAREA = [
+  { id:"pendiente",    label:"Pendiente",    color:"#c8a84b" },
+  { id:"en_curso",     label:"En curso",     color:"#3a7abf" },
+  { id:"completada",   label:"Completada",   color:"#2e7d3c" },
+];
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: TAREAS PROGRAMADAS
+// ═══════════════════════════════════════════════════════════════════
+function ModTareas({data,setData}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const [filtroZona,setFiltroZona]=useState("todas");
+  const [filtroEstado,setFiltroEstado]=useState("todos");
+  const [vistaCalendario,setVistaCalendario]=useState(false);
+
+  const tareas=data.tareas||[];
+  const trabajadores=["Mario","Manolo","Miguel","Aleyda","Yaiza","Mecánico","José Manuel"];
+
+  function openNew(){
+    setForm({titulo:"",zona:"putting",prioridad:"media",estado:"pendiente",fecha:today(),fechaFin:"",asignado:"",descripcion:"",recurrente:false});
+    setModal("new");
+  }
+  function openEdit(t){setForm({...t});setModal(t.id);}
+
+  function save(){
+    if(!form.titulo.trim()) return;
+    const updated=modal==="new"
+      ?[...tareas,{...form,id:uid(),fechaCreacion:today()}]
+      :tareas.map(t=>t.id===modal?{...form}:t);
+    setData({...data,tareas:updated});setModal(null);
+  }
+
+  function cambiarEstado(id,nuevoEstado){
+    setData({...data,tareas:tareas.map(t=>t.id===id?{...t,estado:nuevoEstado}:t)});
+  }
+
+  function eliminar(id){
+    if(!confirm("¿Eliminar esta tarea?")) return;
+    setData({...data,tareas:tareas.filter(t=>t.id!==id)});
+  }
+
+  const filtradas=tareas.filter(t=>{
+    const mZona=filtroZona==="todas"||t.zona===filtroZona;
+    const mEst=filtroEstado==="todos"||t.estado===filtroEstado;
+    return mZona&&mEst;
+  }).sort((a,b)=>{
+    const pOrd={alta:0,media:1,baja:2};
+    if(pOrd[a.prioridad]!==pOrd[b.prioridad]) return pOrd[a.prioridad]-pOrd[b.prioridad];
+    return (a.fecha||"").localeCompare(b.fecha||"");
+  });
+
+  const pendientes=tareas.filter(t=>t.estado==="pendiente").length;
+  const enCurso=tareas.filter(t=>t.estado==="en_curso").length;
+  const completadas=tareas.filter(t=>t.estado==="completada").length;
+
+  function zonaInfo(id){return ZONAS_TRABAJO.find(z=>z.id===id)||ZONAS_TRABAJO[5];}
+  function prioInfo(id){return PRIORIDADES.find(p=>p.id===id)||PRIORIDADES[1];}
+  function estadoInfo(id){return ESTADOS_TAREA.find(e=>e.id===id)||ESTADOS_TAREA[0];}
+
+  return <div>
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:20}}>
+      {[[tareas.length,"Total",G.fairway,"📋"],[pendientes,"Pendientes","#c8a84b","⏳"],[enCurso,"En curso",G.sky,"🔄"],[completadas,"Completadas",G.grass,"✅"]].map(([v,l,c,i])=>(
+        <Card key={l} style={{textAlign:"center"}}>
+          <div style={{fontSize:20,marginBottom:4}}>{i}</div>
+          <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft,marginTop:1}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Leyenda de zonas */}
+    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+      {ZONAS_TRABAJO.map(z=>(
+        <button key={z.id} onClick={()=>setFiltroZona(filtroZona===z.id?"todas":z.id)}
+          style={{background:filtroZona===z.id?z.color:z.bg,color:filtroZona===z.id?G.white:z.color,
+            border:`2px solid ${z.color}`,borderRadius:20,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+          {z.emoji} {z.nombre}
+        </button>
+      ))}
+    </div>
+
+    {/* Filtro estado + botón nueva */}
+    <div style={{display:"flex",gap:10,marginBottom:16,alignItems:"center",flexWrap:"wrap"}}>
+      <div style={{display:"flex",gap:6}}>
+        {[{id:"todos",label:"Todas"},...ESTADOS_TAREA].map(e=>(
+          <button key={e.id} onClick={()=>setFiltroEstado(e.id)}
+            style={{background:filtroEstado===e.id?(e.color||G.fairway):"#f0f0f0",color:filtroEstado===e.id?G.white:"#555",
+              border:"none",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+            {e.label}
+          </button>
+        ))}
+      </div>
+      <div style={{marginLeft:"auto"}}>
+        <Btn onClick={openNew}>+ Nueva tarea</Btn>
+      </div>
+    </div>
+
+    {/* Lista de tareas */}
+    <div style={{display:"grid",gap:10}}>
+      {filtradas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Sin tareas. Pulsa "+ Nueva tarea" para empezar.</div>}
+      {filtradas.map(t=>{
+        const zona=zonaInfo(t.zona);
+        const prio=prioInfo(t.prioridad);
+        const est=estadoInfo(t.estado);
+        return <div key={t.id} style={{background:G.white,borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",overflow:"hidden",borderLeft:`5px solid ${zona.color}`}}>
+          {/* Cabecera de zona */}
+          <div style={{background:zona.bg,padding:"6px 16px",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:16}}>{zona.emoji}</span>
+            <span style={{fontSize:12,fontWeight:700,color:zona.color}}>{zona.nombre}</span>
+            <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+              <span style={{background:prio.bg,color:prio.color,borderRadius:12,padding:"2px 8px",fontSize:11,fontWeight:700}}>{prio.label}</span>
+              <span style={{background:est.color+"22",color:est.color,borderRadius:12,padding:"2px 8px",fontSize:11,fontWeight:700}}>{est.label}</span>
+            </div>
+          </div>
+          {/* Contenido */}
+          <div style={{padding:"12px 16px"}}>
+            <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:15,marginBottom:4}}>{t.titulo}</div>
+                {t.descripcion&&<div style={{fontSize:13,color:"#555",marginBottom:6}}>{t.descripcion}</div>}
+                <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:12,color:G.soft}}>
+                  {t.fecha&&<span>📅 {fmtDate(t.fecha)}{t.fechaFin?` → ${fmtDate(t.fechaFin)}`:""}</span>}
+                  {t.asignado&&<span>👤 {t.asignado}</span>}
+                  {t.recurrente&&<span>🔄 Recurrente</span>}
+                </div>
+              </div>
+              <div style={{display:"flex",gap:6,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                {t.estado==="pendiente"&&<Btn small color="sky" onClick={()=>cambiarEstado(t.id,"en_curso")}>▶ Iniciar</Btn>}
+                {t.estado==="en_curso"&&<Btn small color="primary" onClick={()=>cambiarEstado(t.id,"completada")}>✔ Completar</Btn>}
+                {t.estado==="completada"&&<Btn small color="secondary" onClick={()=>cambiarEstado(t.id,"pendiente")}>↩ Reabrir</Btn>}
+                <Btn small color="secondary" onClick={()=>openEdit(t)}>✎</Btn>
+                <Btn small color="danger" onClick={()=>eliminar(t.id)}>✕</Btn>
+              </div>
+            </div>
+          </div>
+        </div>;
+      })}
+    </div>
+
+    {/* Modal nueva/editar tarea */}
+    {modal&&<Modal title={modal==="new"?"Nueva tarea":"Editar tarea"} onClose={()=>setModal(null)} wide>
+      <Field label="Título *"><Input value={form.titulo||""} onChange={v=>setForm({...form,titulo:v})} placeholder="Descripción breve de la tarea"/></Field>
+
+      <Field label="Zona de trabajo *">
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {ZONAS_TRABAJO.map(z=>(
+            <button key={z.id} onClick={()=>setForm({...form,zona:z.id})}
+              style={{background:form.zona===z.id?z.color:z.bg,color:form.zona===z.id?G.white:z.color,
+                border:`2px solid ${z.color}`,borderRadius:10,padding:"7px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+              {z.emoji} {z.nombre}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+        <Field label="Prioridad">
+          <select value={form.prioridad||"media"} onChange={e=>setForm({...form,prioridad:e.target.value})}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+            {PRIORIDADES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Estado">
+          <select value={form.estado||"pendiente"} onChange={e=>setForm({...form,estado:e.target.value})}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+            {ESTADOS_TAREA.map(e=><option key={e.id} value={e.id}>{e.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Asignado a">
+          <select value={form.asignado||""} onChange={e=>setForm({...form,asignado:e.target.value})}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+            <option value="">Sin asignar</option>
+            {trabajadores.map(w=><option key={w} value={w}>{w}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Fecha inicio"><Input type="date" value={form.fecha||""} onChange={v=>setForm({...form,fecha:v})}/></Field>
+        <Field label="Fecha fin (opcional)"><Input type="date" value={form.fechaFin||""} onChange={v=>setForm({...form,fechaFin:v})}/></Field>
+      </div>
+
+      <Field label="Descripción detallada">
+        <Textarea value={form.descripcion||""} onChange={v=>setForm({...form,descripcion:v})} placeholder="Instrucciones, materiales necesarios, observaciones…" rows={3}/>
+      </Field>
+
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+        <input type="checkbox" id="recurrente" checked={!!form.recurrente} onChange={e=>setForm({...form,recurrente:e.target.checked})} style={{width:16,height:16}}/>
+        <label htmlFor="recurrente" style={{fontSize:14,color:G.ink,cursor:"pointer"}}>Tarea recurrente (se repite periódicamente)</label>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={save}>Guardar tarea</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN SHELL
+// ═══════════════════════════════════════════════════════════════════
+const ADMIN_TABS=[
+  {id:"calendario",label:"Calendario",icon:"🗓️"},
+  {id:"alumnos",label:"Alumnos",icon:"👤"},
+  {id:"pendientes",label:"Pendientes",icon:"🔔"},
+  {id:"programas",label:"Programas",icon:"📚"},
+  {id:"clases",label:"Clases",icon:"📅"},
+  {id:"estadisticas",label:"Estadísticas",icon:"📊"},
+  {id:"analisis",label:"Vídeo Análisis",icon:"🎬"},
+  {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️"},
+  {id:"informes",label:"Informes",icon:"📑"},
+  {id:"mensajes",label:"Mensajes",icon:"✉️"},
+  {id:"tareas",label:"Tareas",icon:"📋"},
+  {id:"pagos",label:"Pagos",icon:"💶"},
+  {id:"ajustes",label:"Ajustes",icon:"⚙️"},
+// ── POLLITOS ampliación (p051-p075) ──────────────────────────────
+{id:"p051",grupo:"pollitos",trimestre:1,semana:2,categoria:"Coordinación",nombre:"El Semáforo de Golf",objetivo:"Aprender señales de inicio y parada con el palo.",descripcion:"El instructor actúa de semáforo: verde = golpear, rojo = parar. Los niños practican comenzar y detener el swing según la señal. Trabaja la concentración y el autocontrol.",duracion:"12 min",material:"Palos esponja, tarjetas de colores",variantes:["Con pito en lugar de colores","Varios semáforos simultáneos","El niño hace de semáforo"],tags:["coordinación","autocontrol","señales","lúdico"]},
+{id:"p052",grupo:"pollitos",trimestre:1,semana:4,categoria:"Putting",nombre:"La Rampa Mágica",objetivo:"Entender la gravedad y la velocidad de la bola.",descripcion:"Con una tabla inclinada como rampa, los niños lanzan la bola por ella y la reciben con el putter intentando dirigirla al hoyo. Aprenden cómo la pendiente afecta la velocidad.",duracion:"15 min",material:"Tabla inclinada, putter junior, bolas foam",variantes:["Rampa más empinada","Varios hoyos al pie de la rampa","Contar los rebotes"],tags:["putt","gravedad","pendiente","lúdico"]},
+{id:"p053",grupo:"pollitos",trimestre:1,semana:6,categoria:"Swing",nombre:"El Helado de Golf",objetivo:"Aprender el agarre correcto de forma lúdica.",descripcion:"El instructor pide que sujeten el palo como si fuera un helado: suave, sin aplastarlo. Luego frotan las manos como para calentar y vuelven al agarre. Sensación de presión ideal.",duracion:"10 min",material:"Palos junior",variantes:["Con grip especial de colores","Midiendo la presión con una báscula pequeña","Comparar agarre fuerte vs suave"],tags:["agarre","presión","lúdico","helado"]},
+{id:"p054",grupo:"pollitos",trimestre:2,semana:8,categoria:"Juego",nombre:"El Tren del Golf",objetivo:"Aprender a jugar en secuencia y respetar el turno.",descripcion:"Los niños forman un tren. El primero golpea, va al final, el segundo golpea, etc. La bola va pasando de uno a otro hasta llegar al hoyo. Aprenden la secuencia de juego y el respeto al turno.",duracion:"20 min",material:"Palos junior, bola, hoyo marcado",variantes:["Tren más largo (5-6 niños)","Dos trenes en paralelo compitiendo","El conductor del tren cambia cada hoyo"],tags:["secuencia","turno","equipo","lúdico"]},
+{id:"p055",grupo:"pollitos",trimestre:2,semana:9,categoria:"Coordinación",nombre:"El Cocinero de Golf",objetivo:"Trabajar la coordinación y seguir instrucciones.",descripcion:"El instructor es el chef y los niños son cocineros. Cada instrucción es un movimiento: 'añadir sal' = swing, 'remover' = rotación de cadera, 'probar' = mirar el objetivo. Aprenden movimientos sin darse cuenta.",duracion:"15 min",material:"Palos esponja",variantes:["Con delantales de broma","Nombres de ingredientes para movimientos","Los niños inventan la receta"],tags:["coordinación","lúdico","instrucciones","cocina"]},
+{id:"p056",grupo:"pollitos",trimestre:2,semana:10,categoria:"Chip",nombre:"El Paracaidista",objetivo:"Entender la trayectoria alta y el aterrizaje suave.",descripcion:"La bola es un paracaidista que sube alto y aterriza suave. Con hierro 9, los niños intentan que la bola suba 'a las nubes' y baje despacio. Se refuerza la sensación de lanzar hacia arriba.",duracion:"15 min",material:"Hierro 9 junior, bolas foam, tee",variantes:["Con dibujo de nubes en cartón arriba","Comparar trayectoria alta vs baja","Medir dónde aterriza el paracaidista"],tags:["chip","altura","trayectoria","lúdico"]},
+{id:"p057",grupo:"pollitos",trimestre:3,semana:12,categoria:"Putting",nombre:"El Puzle de Putts",objetivo:"Precisión y concentración en distancias cortas.",descripcion:"Se colocan piezas de un puzle gigante alrededor del hoyo. Cada vez que embocan, reciben una pieza. El objetivo es completar el puzle entre todos. Trabajo cooperativo.",duracion:"20 min",material:"Putter junior, bolas, puzle de suelo de piezas grandes",variantes:["Puzle más complejo","Cada niño tiene sus piezas","Con tiempo límite"],tags:["putt","cooperación","puzle","motivación"]},
+{id:"p058",grupo:"pollitos",trimestre:3,semana:13,categoria:"Juego",nombre:"El Monstruo del Golf",objetivo:"Superar obstáculos con imaginación.",descripcion:"El instructor narra: 'Hay un monstruo en el hoyo 3 que solo deja pasar si golpeas con suavidad.' Los niños deben usar la velocidad adecuada para superar cada 'prueba del monstruo'.",duracion:"25 min",material:"Palos junior, bolas, conos como obstáculos",variantes:["Distintos monstruos en cada hoyo","El niño inventa el nombre del monstruo","El monstruo cambia de regla cada vez"],tags:["imaginación","control","velocidad","narración"]},
+{id:"p059",grupo:"pollitos",trimestre:3,semana:14,categoria:"Coordinación",nombre:"La Estatua del Golfista",objetivo:"Mantener la postura al final del swing.",descripcion:"Al terminar el swing, el instructor dice '¡Estatua!' y todos deben quedarse inmóviles en su posición de finish. El que mejor mantiene el equilibrio gana.",duracion:"12 min",material:"Palos esponja o junior",variantes:["Estátua progresiva (3, 5, 10 segundos)","Foto de la mejor estatua","Con música — parar cuando pare la música"],tags:["follow-through","equilibrio","estatua","postura"]},
+{id:"p060",grupo:"pollitos",trimestre:3,semana:16,categoria:"Swing",nombre:"El Columpio del Parque",objetivo:"Sentir el ritmo natural del swing.",descripcion:"Comparar el swing con un columpio del parque: va atrás despacio, vuelve rápido. El instructor empuja suavemente el backswing y el niño siente la aceleración natural al bajar.",duracion:"15 min",material:"Palos esponja o junior",variantes:["Canción del columpio","Con música lenta para el backswing","Contando: 1-2-3 atrás, 1 adelante"],tags:["ritmo","columpio","aceleración","swing"]},
+{id:"p061",grupo:"pollitos",trimestre:3,semana:17,categoria:"Chip",nombre:"El Buzón de Pelotas",objetivo:"Dirigir la bola hacia un objetivo pequeño.",descripcion:"Se colocan cajas de cartón como 'buzones' a distintas distancias. Los niños deben meter la bola chipeando directamente en la ranura del buzón. Premia la precisión.",duracion:"15 min",material:"Hierro 9 junior, bolas foam, cajas de cartón",variantes:["Buzones de distintos tamaños","Buzones a distintas alturas","Buzón con nombre del destinatario"],tags:["chip","precisión","buzón","puntería"]},
+{id:"p062",grupo:"pollitos",trimestre:4,semana:18,categoria:"Juego",nombre:"El Rally de Golf",objetivo:"Encadenar varios golpes seguidos con control.",descripcion:"Como en el tenis, los niños intentan encadenar el máximo número de golpes consecutivos sin perder la bola. El instructor cuenta en voz alta. Récord del grupo.",duracion:"20 min",material:"Palos junior, bolas foam",variantes:["Con diana fija","Cambiando de palo cada golpe","El récord se anota en la pizarra"],tags:["encadenar","control","récord","lúdico"]},
+{id:"p063",grupo:"pollitos",trimestre:4,semana:19,categoria:"Putting",nombre:"El Túnel del Tiempo",objetivo:"Mejorar la velocidad y dirección a la vez.",descripcion:"Dos palos en el suelo forman un túnel. La bola debe entrar en el túnel, recorrerlo y llegar al hoyo. Se va alejando el punto de partida cada vez que lo consiguen.",duracion:"15 min",material:"Putter junior, bolas, 2 palos como guía",variantes:["Túnel más corto","Túnel con curva al final","Contrarreloj"],tags:["putt","túnel","velocidad","progresivo"]},
+{id:"p064",grupo:"pollitos",trimestre:4,semana:20,categoria:"Coordinación",nombre:"El Detective de Pelotas",objetivo:"Observación, atención y reacción.",descripcion:"El instructor esconde bolas de distintos colores. Los niños deben encontrar solo las del color asignado y golpearlas al hoyo antes de que el cronómetro llegue a cero.",duracion:"15 min",material:"Palos junior, bolas de colores, conos",variantes:["Más colores mezclados","Bolas escondidas bajo conos","Dos equipos buscando colores distintos"],tags:["observación","color","reacción","lúdico"]},
+{id:"p065",grupo:"pollitos",trimestre:4,semana:21,categoria:"Swing",nombre:"El Superhéroe del Golf",objetivo:"Asociar el swing a un personaje motivador.",descripcion:"Cada niño elige su superhéroe favorito y le pone poderes de golf. El instructor guía la postura y el swing con el lenguaje del superhéroe elegido. Máxima motivación.",duracion:"15 min",material:"Palos junior",variantes:["Disfraz o capa","Cada superhéroe tiene un swing especial","Foto del superhéroe del grupo"],tags:["motivación","superhéroe","postura","lúdico"]},
+{id:"p066",grupo:"pollitos",trimestre:1,semana:3,categoria:"Putting",nombre:"El Camino de Flores",objetivo:"Rodar la bola siguiendo una trayectoria marcada.",descripcion:"Se pegan flores de papel en el suelo formando un camino hasta el hoyo. El niño debe rodar la bola pisando todas las flores con el putt. Coordinación y dirección.",duracion:"12 min",material:"Putter junior, bolas, flores de papel adhesivas",variantes:["Flores más pequeñas","Camino en zigzag","Con obstáculos entre flores"],tags:["putt","dirección","flores","coordinación"]},
+{id:"p067",grupo:"pollitos",trimestre:2,semana:9,categoria:"Chip",nombre:"El Astronauta del Golf",objetivo:"Imaginar trayectorias altas como viajes espaciales.",descripcion:"La bola es una nave espacial que sale de la Tierra (el palo), sube hasta la Luna (la cima de la trayectoria) y aterriza en Marte (el objetivo). El instructor narra el viaje.",duracion:"15 min",material:"Hierro 9 junior, bolas foam",variantes:["Distintos planetas = distintas distancias","Con música espacial","Dibujar la trayectoria espacial"],tags:["chip","imaginación","trayectoria","espacio"]},
+{id:"p068",grupo:"pollitos",trimestre:3,semana:15,categoria:"Juego",nombre:"El Cumpleaños del Golf",objetivo:"Celebrar el aprendizaje con un juego especial.",descripcion:"Se monta un 'cumpleaños de golf': hay estaciones con juegos (soplar velas golpeando bolas, globos, pastel de conos). Solo se pueden hacer los juegos si se golpea bien.",duracion:"40 min",material:"Decoración de cumpleaños, palos junior, bolas, conos",variantes:["Música de cumpleaños","Cada niño sopla sus velas (bolos)","Foto del cumpleaños"],tags:["cumpleaños","celebración","lúdico","especial"]},
+{id:"p069",grupo:"pollitos",trimestre:4,semana:22,categoria:"Coordinación",nombre:"El Robot Roto",objetivo:"Diferenciar movimientos correctos de incorrectos.",descripcion:"El instructor hace swings incorrectos (demasiado rígido, muy rápido, sin giro) y los niños deben detectar qué está mal. Luego el instructor hace el correcto y los niños aplauden.",duracion:"12 min",material:"Palos esponja",variantes:["Los niños hacen el robot roto","Tarjetas con movimientos correctos e incorrectos","El niño corrige al robot"],tags:["observación","corrección","lúdico","swing"]},
+{id:"p070",grupo:"pollitos",trimestre:1,semana:5,categoria:"Putting",nombre:"El Dominó de Golf",objetivo:"Encadenar putts consecutivos.",descripcion:"5 hoyos pequeños en línea. El niño debe meter la bola en el primero, luego en el segundo, y así hasta el quinto, sin saltarse ninguno. Como el dominó: uno lleva al otro.",duracion:"15 min",material:"Putter junior, bolas, 5 hoyos pequeños",variantes:["Hoyos en curva","Con time limit","En parejas alternando"],tags:["putt","secuencia","encadenar","motivación"]},
+{id:"p071",grupo:"pollitos",trimestre:2,semana:11,categoria:"Swing",nombre:"El Pintor de Golf",objetivo:"Trabajar el follow-through como un movimiento de pintura.",descripcion:"El palo es un pincel y el campo es un lienzo. El niño 'pinta' con el swing: backswing es cargar el pincel, el impacto es el toque al lienzo, el follow-through es extender la pincelada.",duracion:"12 min",material:"Palos esponja o junior",variantes:["Con música artística","Distintos tipos de pincelada (corta, larga, curva)","Foto del pintor de golf"],tags:["follow-through","imaginación","pintura","swing"]},
+{id:"p072",grupo:"pollitos",trimestre:3,semana:18,categoria:"Chip",nombre:"La Catapulta de Colores",objetivo:"Apuntar a dianas de distintos colores con chip.",descripcion:"Dianas de colores (aros) a diferentes distancias. El instructor dice un color y el niño debe chipear la bola directamente dentro del aro de ese color antes de que cambie.",duracion:"15 min",material:"Hierro 9 junior, bolas foam, aros de colores",variantes:["Más aros","Cambio de color rápido","Puntuación por dificultad"],tags:["chip","color","reacción","puntería"]},
+{id:"p073",grupo:"pollitos",trimestre:4,semana:24,categoria:"Juego",nombre:"El Explorador de Hoyos",objetivo:"Conocer todos los hoyos del campo con aventura.",descripcion:"Con un 'mapa del tesoro' del campo, los niños deben llegar a 6 hoyos balizados. En cada hoyo hay un sobre con una prueba divertida (un putt, un chip, una pregunta). Al final, premio.",duracion:"50 min",material:"Mapa del campo dibujado, sobres con pruebas, palos junior",variantes:["Mapa más detallado","Con cámara para fotos","En parejas"],tags:["exploración","aventura","campo real","lúdico"]},
+{id:"p074",grupo:"pollitos",trimestre:4,semana:25,categoria:"Coordinación",nombre:"El Congelado de Golf",objetivo:"Trabajar reacción, equilibrio y concentración.",descripcion:"Mientras suena la música, los niños caminan alrededor del campo. Cuando para, deben quedarse congelados en postura de golf (preparación). El que mueve es eliminado.",duracion:"15 min",material:"Música, palos junior",variantes:["Postura de backswing al congelarse","En parejas (el que se congela antes gana)","Con movimiento específico al congelarse"],tags:["congelado","música","postura","equilibrio"]},
+{id:"p075",grupo:"pollitos",trimestre:4,semana:28,categoria:"Juego",nombre:"Mi Primer Hoyo Real",objetivo:"Jugar un hoyo real completo por primera vez.",descripcion:"Cada Pollito juega un hoyo del campo real (el más corto y sencillo). Tee, salida, fairway, green y embocar. Con la tarjeta en mano y el instructor al lado. Momento histórico.",duracion:"30 min",material:"Set junior completo, tarjeta simplificada, banderín especial",variantes:["Foto en el tee","Guardar la tarjeta como recuerdo","Firma del instructor en la tarjeta"],tags:["primer hoyo","campo real","histórico","memorable"]},
+
+// ── EAGLES ampliación (e051-e075) ────────────────────────────────
+{id:"e051",grupo:"eagles",trimestre:1,semana:3,categoria:"Putting",nombre:"El Cuadrado de 2 Metros",objetivo:"Ampliar la zona de dominio del putt corto.",descripcion:"Igual que el cuadrado de 1 metro pero con 2 metros. 4 bolas en los 4 tees. Se necesita embocar al menos 3 de las 4 para superar el nivel. Registro semanal.",duracion:"20 min",material:"Putter, 4 bolas, 4 tees como esquinas",variantes:["Cuadrado de 2,5m","Con pendiente","Sin marcar las esquinas (de memoria)"],tags:["putt","cuadrado","2 metros","progresión"]},
+{id:"e052",grupo:"eagles",trimestre:1,semana:4,categoria:"Chip",nombre:"El Chip de las 3 Alturas",objetivo:"Dominar tres trayectorias distintas según la situación.",descripcion:"Alta (SW cara abierta), media (PW normal) y baja (9-hierro bola atrasada). Desde la misma posición al mismo objetivo, el alumno practica las 3 trayectorias y anota cuál para mejor.",duracion:"20 min",material:"SW, PW, 9-hierro, bolas",variantes:["Con obstáculo que obliga a elegir","Solo la trayectoria baja","Predecir dónde para cada una"],tags:["chip","trayectorias","alto","medio","bajo"]},
+{id:"e053",grupo:"eagles",trimestre:1,semana:5,categoria:"Swing",nombre:"El Swing Espejo",objetivo:"Desarrollar la simetría del swing mediante observación.",descripcion:"En parejas frente a un espejo real o grabados. Uno golpea y el otro observa solo la posición de las manos. Buscan que la posición de las manos en P4 (parallel) sea consistente.",duracion:"20 min",material:"Hierro 7, bolas, espejo o móvil de apoyo",variantes:["Video de frente","Comparar 5 swings entre sí","Con checklist de posición de manos"],tags:["simetría","swing","espejo","posición de manos"]},
+{id:"e054",grupo:"eagles",trimestre:1,semana:6,categoria:"Reglas",nombre:"Los Palos y sus Límites",objetivo:"Conocer las reglas sobre el uso de palos.",descripcion:"Máximo 14 palos en la bolsa. Tipos de palos permitidos (no palos ajustables en ronda sin permiso). Rotura de palo: cuándo se puede seguir usando. Situaciones prácticas con fotos.",duracion:"20 min",material:"Set completo, tarjetas de situaciones",variantes:["Quiz de reglas sobre palos","Situación: se rompe el driver en el hoyo 1","Con el reglamento en la mano"],tags:["reglas","14 palos","límites","material"]},
+{id:"e055",grupo:"eagles",trimestre:2,semana:9,categoria:"Juego Largo",nombre:"El Approach de las 3 Distancias",objetivo:"Dominar 3 distancias clave de approach.",descripcion:"60m, 80m y 100m al green. 5 approach shots desde cada distancia. Se cuentan los greens alcanzados en cada rango. Objetivo: al menos 3/5 en cada distancia.",duracion:"30 min",material:"PW, 9-hierro, 8-hierro, bolas, green",variantes:["Solo la distancia más difícil","Con viento","Registrar semana a semana"],tags:["approach","3 distancias","green","porcentaje"]},
+{id:"e056",grupo:"eagles",trimestre:2,semana:10,categoria:"Putting",nombre:"El Putt del Espejo de Ojos",objetivo:"Alinear los ojos correctamente sobre la línea de putt.",descripcion:"Con una regla de putting o línea en el suelo, el alumno comprueba que sus ojos están exactamente sobre la línea de putt. Muchos golpistas tienen los ojos por dentro o por fuera.",duracion:"15 min",material:"Putter, bolas, regla de putting o cinta en el suelo",variantes:["Con espejo en el suelo","Con bola con línea marcada","Video desde arriba"],tags:["putting","ojos","alineación","regla de putting"]},
+{id:"e057",grupo:"eagles",trimestre:2,semana:11,categoria:"Chip",nombre:"El Chip Zurdo",objetivo:"Mejorar la sensibilidad y el chip con la mano líder.",descripcion:"15 chips solo con la mano izquierda (diestros). Fuerza al alumno a dominar el movimiento sin la mano derecha. Mejora la postura y el chip descendente.",duracion:"15 min",material:"Wedge, bolas",variantes:["Ojos cerrados","Alternar mano sola y las dos","Desde rough"],tags:["chip","zurdo","mano líder","sensibilidad"]},
+{id:"e058",grupo:"eagles",trimestre:2,semana:12,categoria:"Mental",nombre:"Mi Palabra de Enfoque",objetivo:"Establecer una palabra que active la concentración antes del golpe.",descripcion:"Cada alumno elige una palabra personal (suave, ritmo, ahora, fácil...) que repite en voz baja justo antes de iniciar el swing. Se practica en 20 golpes seguidos.",duracion:"15 min",material:"Hierro 7, bolas",variantes:["Frase de dos palabras","Gesto físico como gatillo en vez de palabra","Sin palabra (silencio total)"],tags:["mental","palabra clave","concentración","gatillo"]},
+{id:"e059",grupo:"eagles",trimestre:2,semana:13,categoria:"Coordinación",nombre:"La Escalera de Palos",objetivo:"Mejorar la coordinación de pies y ritmo para el golf.",descripcion:"Escalera de agilidad (agility ladder) con patrón específico de golf: entrada lateral con rotación de cadera al final, imitando el paso del swing. 5 series de 3 repeticiones.",duracion:"20 min",material:"Escalera de agilidad, palo de golf",variantes:["Solo los pies","Añadir el swing al salir","Cronometrado"],tags:["coordinación","escalera","pies","ritmo"]},
+{id:"e060",grupo:"eagles",trimestre:3,semana:14,categoria:"Juego Largo",nombre:"El Fairway de los Conos",objetivo:"Mejorar la precisión del driver con objetivo visual claro.",descripcion:"Se marcan 5 pasillos de distintos anchos (25m, 20m, 15m) con conos en el campo de prácticas. El alumno elige el pasillo según su confianza ese día. Registro de éxito.",duracion:"25 min",material:"Driver, tees, bolas, conos",variantes:["Solo el pasillo de 15m","Con el 5-hierro para mayor precisión","Registrar qué pasillo consigue cada día"],tags:["driver","fairway","pasillo","precisión"]},
+{id:"e061",grupo:"eagles",trimestre:3,semana:15,categoria:"Putting",nombre:"El Putt de la Emoción",objetivo:"Practicar putts con consecuencia positiva (no solo negativa).",descripcion:"Si embocan el putt de 2m, suman +1. Si fallan, se quedan igual (no restan). El objetivo es llegar a 10 puntos. Trabaja la confianza sin miedo al fallo.",duracion:"20 min",material:"Putter, bolas, registro de puntos",variantes:["Con consecuencia (+1 o -1)","Solo suma de emboques","Competición entre 2 alumnos"],tags:["putting","emoción","confianza","puntuación positiva"]},
+{id:"e062",grupo:"eagles",trimestre:3,semana:16,categoria:"Chip",nombre:"El Chip del Rough Mojado",objetivo:"Aprender a ajustar el chip cuando la hierba está mojada.",descripcion:"Hierba mojada: la cara se cierra al impacto, la bola sale más baja y rueda más. Ajuste: abrir ligeramente la cara y acelerar más. 15 chips desde rough mojado con el ajuste.",duracion:"20 min",material:"Wedge, bolas, zona de rough (mojada o simulada)",variantes:["Rough muy mojado","Con viento además","Comparar seco vs mojado"],tags:["chip","rough","mojado","ajuste","condiciones"]},
+{id:"e063",grupo:"eagles",trimestre:3,semana:17,categoria:"Juego",nombre:"Mi Mejor Hoyo",objetivo:"Identificar y reproducir el mejor juego personal.",descripcion:"El alumno elige su hoyo favorito del campo. Juega ese hoyo 3 veces seguidas intentando mejorar el score. El instructor analiza qué hizo bien y qué puede mejorar.",duracion:"60 min",material:"Set completo, tarjeta de score",variantes:["El hoyo más difícil","El instructor elige el hoyo","Jugar el hoyo al revés (desde el green al tee)"],tags:["campo real","favorito","análisis","repetición"]},
+{id:"e064",grupo:"eagles",trimestre:3,semana:18,categoria:"Swing",nombre:"Las Manos en el Impacto",objetivo:"Conseguir manos adelantadas en el momento de impacto.",descripcion:"Con un tee extra 10cm delante de la bola, el alumno debe derribar ESE tee con las manos adelantadas. Si las manos están atrasadas, el palo golpea la bola antes que el tee extra.",duracion:"20 min",material:"Hierro 7, bolas, 2 tees",variantes:["Con hierro 9","Con PW","Video de lado para confirmar"],tags:["manos adelantadas","impacto","tee","técnica"]},
+{id:"e065",grupo:"eagles",trimestre:4,semana:20,categoria:"Reglas",nombre:"El Cuaderno de Condiciones Locales",objetivo:"Leer e interpretar las condiciones locales del campo.",descripcion:"Con las condiciones locales del propio campo, el alumno lee y explica en voz alta cada punto. El instructor hace preguntas de situaciones que podrían pasar.",duracion:"25 min",material:"Condiciones locales del campo, reglamento RFEG",variantes:["Quiz sobre las condiciones locales","Situaciones inventadas","Comparar con condiciones locales de otro campo"],tags:["condiciones locales","reglamento","lectura","comprensión"]},
+{id:"e066",grupo:"eagles",trimestre:4,semana:21,categoria:"Juego Largo",nombre:"El Approach de las 9 Posiciones",objetivo:"Dominar el approach desde cualquier parte del campo.",descripcion:"9 posiciones alrededor del green a distancias de 50-120m. Desde cada posición, 1 approach. Se cuentan los greens alcanzados. Objetivo mínimo: 5 de 9.",duracion:"30 min",material:"Set de hierros, bolas, green real",variantes:["Solo las 3 posiciones más difíciles","Con bandera en posición difícil","Registrar semana a semana"],tags:["approach","9 posiciones","GIR","campo real"]},
+{id:"e067",grupo:"eagles",trimestre:4,semana:22,categoria:"Mental",nombre:"El Diario de Mis Mejores Golpes",objetivo:"Reforzar la memoria muscular de los buenos golpes.",descripcion:"El alumno lleva una libreta donde escribe sus 3 mejores golpes de cada sesión. Antes de la siguiente sesión, lee los mejores golpes del día anterior para activarlos.",duracion:"5 min",material:"Libreta, bolígrafo",variantes:["Con foto o vídeo del mejor golpe","Compartirlo con el instructor","Leérselo en voz alta a un compañero"],tags:["mental","mejores golpes","memoria muscular","diario"]},
+{id:"e068",grupo:"eagles",trimestre:1,semana:7,categoria:"Putting",nombre:"El Putt de la Línea de Tiza",objetivo:"Practicar el recorrido exacto del putter por una línea.",descripcion:"Con tiza en el suelo o cinta adhesiva, se marca una línea de 1 metro hasta el hoyo. El alumno practica el putt intentando que la cara del putter recorra exactamente la línea.",duracion:"15 min",material:"Putter, bolas, tiza o cinta",variantes:["Línea de 1,5m","Con pendiente ligera","Video desde arriba"],tags:["putting","línea","cara","tiza"]},
+{id:"e069",grupo:"eagles",trimestre:2,semana:14,categoria:"Chip",nombre:"El Chip en Terreno Seco y Duro",objetivo:"Adaptar el chip cuando el terreno está muy seco.",descripcion:"Terreno seco y duro: la bola bota más, el divot es mínimo. Ajuste: hierro más largo, bola ligeramente adelantada, golpe más limpio. 15 chips desde fairway seco.",duracion:"20 min",material:"7-hierro, 8-hierro, bolas, terreno seco",variantes:["Comparar con terreno blando","Con el campo en verano","Ajuste de palo"],tags:["chip","terreno seco","adaptación","ajuste"]},
+{id:"e070",grupo:"eagles",trimestre:3,semana:19,categoria:"Coordinación",nombre:"El Equilibrio con Ojos Cerrados",objetivo:"Mejorar el equilibrio propioceptivo para el golf.",descripcion:"De pie en postura de golf con los ojos cerrados. 30 segundos sin perder el equilibrio. Luego hacer pequeños swings sin bola con los ojos cerrados. Desarrolla la propiocepción.",duracion:"15 min",material:"Palo junior",variantes:["Un pie solo","Con swing completo","Con música de fondo"],tags:["equilibrio","propiocepción","ojos cerrados","postura"]},
+{id:"e071",grupo:"eagles",trimestre:3,semana:20,categoria:"Juego Largo",nombre:"El Juego de las 3 Salidas",objetivo:"Dominar 3 tipos de salida según el tipo de hoyo.",descripcion:"Hoyo estrecho: 5-hierro al fairway. Hoyo largo: driver. Hoyo con dogleg: 3-madera apuntando a la curva. Se practica cada tipo 5 veces en el campo de prácticas.",duracion:"25 min",material:"Driver, 3-madera, 5-hierro, bolas, conos",variantes:["Solo la salida más difícil","Con descripción del hoyo antes","El alumno decide qué tipo es cada hoyo"],tags:["salida","tipos de hoyo","decisión","3 palos"]},
+{id:"e072",grupo:"eagles",trimestre:4,semana:23,categoria:"Swing",nombre:"El Swing Lento de 5 Minutos",objetivo:"Grabar la memoria muscular del swing correcto.",descripcion:"Durante 5 minutos, hacer el swing a velocidad muy lenta (5 segundos en cada dirección). Sin bola. Permite al cerebro registrar la posición correcta en cada punto del swing.",duracion:"10 min",material:"Hierro 7",variantes:["Con bola en tee al final","Video en cámara lenta","Con pausa en P4 y P8"],tags:["swing lento","memoria muscular","conciencia","técnica"]},
+{id:"e073",grupo:"eagles",trimestre:4,semana:24,categoria:"Putting",nombre:"El Tour de los 9 Greens",objetivo:"Practicar en todos los greens del campo conociendo sus particularidades.",descripcion:"5 putts en cada uno de los 9 greens del campo. En cada green, el alumno anota: ¿qué pendiente hay? ¿Es rápido o lento? ¿Qué break predomina? Crea su libreta personal de greens.",duracion:"90 min",material:"Putter, bolas, libreta de campo",variantes:["Solo los 4 greens más difíciles","Con compañero comparando lecturas","Repetir en distintas condiciones meteorológicas"],tags:["greens","libreta","velocidad","break","campo real"]},
+{id:"e074",grupo:"eagles",trimestre:4,semana:26,categoria:"Juego",nombre:"El Match Play Eagles — Final",objetivo:"Torneo de clausura de match play.",descripcion:"Final del torneo de match play del grupo Eagles. 9 hoyos. El ganador recibe la copa Eagles. Ceremonia en el hoyo 18 con el instructor y compañeros.",duracion:"120 min",material:"Set completo, copa o trofeo Eagles",variantes:["Con padres como espectadores","Hoyo 18 con galería","Vídeo del match point"],tags:["match play","final","torneo","clausura"]},
+{id:"e075",grupo:"eagles",trimestre:4,semana:28,categoria:"Mental",nombre:"Mi Carta de Golf",objetivo:"Reflexión profunda sobre el año de golf.",descripcion:"El alumno escribe una carta a su yo del año siguiente: qué aprendí, qué me gustó más, mi promesa de golf para el próximo curso. El instructor la guarda y la entrega en septiembre.",duracion:"20 min",material:"Papel especial, sobre, bolígrafo",variantes:["Con foto dentro del sobre","Audio grabado","Compartir la carta con los padres"],tags:["reflexión","carta","crecimiento","objetivo","cierre"]},
+
+// ── BIRDIES ampliación (b051-b075) ───────────────────────────────
+{id:"b051",grupo:"birdies",trimestre:1,semana:1,categoria:"Putting",nombre:"Strokes Gained Putting Básico",objetivo:"Medir el rendimiento en putting con datos objetivos.",descripcion:"10 putts de 2m, 10 de 4m, 10 de 6m. Registrar los emboques. Calcular el % por distancia. Comparar con la sesión anterior. El objetivo es mejorar el % semana a semana.",duracion:"25 min",material:"Putter, bolas, hoja de registro",variantes:["Solo desde 2m","Con pendiente","Comparar con benchmark del Tour Amateur"],tags:["strokes gained","putting","porcentaje","datos"]},
+{id:"b052",grupo:"birdies",trimestre:1,semana:2,categoria:"Juego Largo",nombre:"El Control de Spin",objetivo:"Entender y producir distintos tipos de spin en los hierros.",descripcion:"Con el 7-hierro: golpe normal (spin neutro), delante de la bola (backspin), detrás de la bola (topspin aproximado). Observar la diferencia de vuelo y rodado. 10 de cada tipo.",duracion:"25 min",material:"Hierro 7, bolas, zona de práctica amplia",variantes:["Con app de análisis de vuelo","Comparar en vídeo","Solo el backspin"],tags:["spin","backspin","vuelo","control","hierros"]},
+{id:"b053",grupo:"birdies",trimestre:1,semana:3,categoria:"Mental",nombre:"El Pre-Torneo de la Mente",objetivo:"Preparación mental estructurada antes de una competición.",descripcion:"La noche antes: (1) revisar el game plan hoyo a hoyo, (2) visualizar 3 hoyos clave con éxito, (3) definir 1 objetivo técnico y 1 objetivo mental para mañana. Máx. 20 minutos.",duracion:"20 min",material:"Libreta de game plan, bolígrafo",variantes:["Solo la visualización","Con audio guiado","Con el instructor la primera vez"],tags:["pre-torneo","mental","visualización","game plan","preparación"]},
+{id:"b054",grupo:"birdies",trimestre:1,semana:4,categoria:"Chip",nombre:"El Short Game a Ciegas",objetivo:"Desarrollar sensibilidad táctil en el short game.",descripcion:"10 chips con los ojos cerrados hacia un objetivo a 10m. El alumno debe sentir el impacto y estimar dónde aterrizó la bola antes de abrir los ojos. Mejora la sensibilidad táctil.",duracion:"20 min",material:"Wedge, bolas",variantes:["Con los ojos tapados de verdad","Desde distintas posiciones","Solo pitches a 20m"],tags:["chip","ojos cerrados","sensibilidad","táctil"]},
+{id:"b055",grupo:"birdies",trimestre:2,semana:9,categoria:"Swing",nombre:"El Swing en L Avanzado",objetivo:"Dominar el swing en L con distintos palos y distancias.",descripcion:"El swing en L (¾) produce una distancia controlada y consistente. Practicarlo con PW, 9-hierro, 8-hierro y 7-hierro. Medir la distancia de cada palo con swing en L. Crear la tabla.",duracion:"25 min",material:"PW, 9, 8, 7-hierro, bolas, medidor",variantes:["Solo con PW","Comparar swing en L vs swing completo","El swing en L como golpe de approachdefault"],tags:["swing en L","distancias","¾","control","tabla"]},
+{id:"b056",grupo:"birdies",trimestre:2,semana:10,categoria:"Putting",nombre:"El Putting de Presión con Testigos",objetivo:"Mantener la calidad del putt cuando hay público observando.",descripcion:"5 putts de 1,5m con 3 personas mirando y en silencio. Luego 5 más con comentarios positivos del grupo. Luego 5 más con los compañeros poniendo dificultad. Analizar diferencias.",duracion:"25 min",material:"Putter, bolas, 3-4 personas observando",variantes:["Solo silencio total","Con comentarios negativos (máxima presión)","Con árbitro evaluando la rutina"],tags:["putting","presión","testigos","público","análisis"]},
+{id:"b057",grupo:"birdies",trimestre:2,semana:11,categoria:"Juego Largo",nombre:"El Iron Play de 150m",objetivo:"Dominar el approach desde 150m con consistencia.",descripcion:"20 approach shots desde 150m. Objetivo: alcanzar el green en al menos 10 de 20. Registrar la distancia de la bola al hoyo en los greens alcanzados. Media semanal.",duracion:"30 min",material:"Hierro 6-7 según el alumno, bolas, green real, medidor",variantes:["Con bandera atrás del green","Con viento de cara","Registrar la dispersión lateral"],tags:["iron play","150m","GIR","approach","consistencia"]},
+{id:"b058",grupo:"birdies",trimestre:2,semana:12,categoria:"Reglas",nombre:"El Arbitraje en Campo Real",objetivo:"Aplicar las reglas como árbitro en una situación real.",descripcion:"Durante una ronda de 6 hoyos, el alumno actúa de árbitro de su grupo. El instructor prepara 3 situaciones reales (drop incorrecto, bola en agua, bola fuera de límites). El árbitro resuelve.",duracion:"90 min",material:"Reglamento RFEG, campo real",variantes:["Con libro de reglas siempre","Sin libro (de memoria)","Árbitro en pareja con otro alumno"],tags:["árbitro","reglas","campo real","situaciones","responsabilidad"]},
+{id:"b059",grupo:"birdies",trimestre:3,semana:14,categoria:"Chip",nombre:"El Flop Shot Controlado",objetivo:"Aprender el flop shot para situaciones de necesidad.",descripcion:"El flop requiere: cara muy abierta (60°), stance muy abierta, bola adelantada, swing de fuera a dentro largo y lento. La bola sube casi verticalmente y para en 1-2m. 15 repeticiones.",duracion:"25 min",material:"SW o LW, bolas, obstáculo delante",variantes:["Con bunker delante","Con agua como límite","Desde rough largo"],tags:["flop","cara abierta","alta trayectoria","parada","técnica avanzada"]},
+{id:"b060",grupo:"birdies",trimestre:3,semana:15,categoria:"Mental",nombre:"El Semáforo Avanzado",objetivo:"Aplicar el semáforo emocional con precisión y automatismo.",descripcion:"Durante una ronda, el alumno lleva una ficha donde registra en qué fase del semáforo estuvo tras cada golpe malo y cuánto tardó en llegar al verde. Objetivo: reducir ese tiempo cada semana.",duracion:"120 min",material:"Ficha del semáforo, bolígrafo, campo real",variantes:["Solo los últimos 6 hoyos","Con compañero que evalúa de forma externa","Comparar fichas semana a semana"],tags:["semáforo","emocional","tiempo de recuperación","autocontrol","avanzado"]},
+{id:"b061",grupo:"birdies",trimestre:3,semana:17,categoria:"Putting",nombre:"La Lectura Avanzada de Green",objetivo:"Leer putts complejos con doble pendiente.",descripcion:"Putts de doble break: la bola rompe en una dirección y luego en otra. Se aprende a leer el break del hoyo primero (el más importante) y luego el inicial. 10 putts de doble break.",duracion:"25 min",material:"Putter, bolas, green con doble pendiente",variantes:["Solo el break final","Dibujando la línea en el aire","Con compañero prediciendo también"],tags:["lectura avanzada","doble break","green","predicción","pendiente"]},
+{id:"b062",grupo:"birdies",trimestre:3,semana:18,categoria:"Swing",nombre:"El Driver al 85%",objetivo:"Encontrar la velocidad óptima del driver para mayor consistencia.",descripcion:"Driver al 85%: swing más corto, finish más controlado, menos tensión. 10 drives al 85% vs 10 drives al 100%. Comparar: % de fairways y distancia. El alumno decide su velocidad óptima.",duracion:"25 min",material:"Driver, tees, bolas, conos de fairway",variantes:["Con cronómetro del swing","Solo el 85%","Al 70% también para comparar"],tags:["driver","85%","velocidad óptima","fairway","consistencia"]},
+{id:"b063",grupo:"birdies",trimestre:4,semana:20,categoria:"Juego",nombre:"La Ronda de Estadísticas",objetivo:"Jugar una ronda completa registrando todas las estadísticas.",descripcion:"18 hoyos (o 9) registrando: fairways, GIR, número de putts, bunkers, penalizaciones y notas de cada hoyo. Al terminar, calcular las estadísticas y comparar con el objetivo.",duracion:"240 min",material:"Set completo, hoja de estadísticas, bolígrafo",variantes:["Solo los fairways y putts","Con app de estadísticas","Comparar con la ronda anterior"],tags:["estadísticas","ronda","fairways","GIR","putts","análisis"]},
+{id:"b064",grupo:"birdies",trimestre:4,semana:22,categoria:"Juego Largo",nombre:"El Juego desde el Rough Largo",objetivo:"Dominar los golpes desde rough de más de 5cm.",descripcion:"Rough largo (5-8cm): hierro más corto, swing más vertical, cara levemente abierta para evitar que cierre. 15 golpes desde rough muy largo midiendo la distancia conseguida vs rough normal.",duracion:"25 min",material:"Hierros 5-7, bolas, zona de rough largo",variantes:["Rough de 8cm+","Rough mojado y largo","Sin ver el objetivo"],tags:["rough largo","hierro","vertical","adaptar","distancia perdida"]},
+{id:"b065",grupo:"birdies",trimestre:4,semana:24,categoria:"Chip",nombre:"El Up & Down de Alta Dificultad",objetivo:"Up & down desde 9 posiciones muy difíciles.",descripcion:"9 posiciones extremas: bola pegada al rough del bunker, en bajada con agua cerca, en subida con rough largo, etc. Objetivo: 3 de 9 up & downs. Máxima dificultad.",duracion:"35 min",material:"Wedges, putter, bolas, 9 posiciones extremas",variantes:["Solo los 3 más difíciles","Con tiempo límite por posición","Competición entre 2 alumnos"],tags:["up&down","alta dificultad","posiciones extremas","superación"]},
+{id:"b066",grupo:"birdies",trimestre:1,semana:5,categoria:"Putting",nombre:"El Putting de las 4 Esquinas",objetivo:"Dominar la distancia y dirección desde cualquier punto.",descripcion:"4 pelotas en los 4 lados del hoyo a 3 metros. El alumno debe embocar las 4 sin moverse del punto de partida. Luego repetir desde 4 metros. Registro semanal.",duracion:"20 min",material:"Putter, 4 bolas, hoyo",variantes:["A 4 metros","Con pendiente en todos","Solo la esquina más difícil"],tags:["putting","4 esquinas","distancias","precisión"]},
+{id:"b067",grupo:"birdies",trimestre:2,semana:13,categoria:"Juego Largo",nombre:"El Hierro 5 desde el Suelo",objetivo:"Dominar el hierro 5 desde el suelo sin tee.",descripcion:"El hierro 5 desde el suelo es uno de los más difíciles. Posición de bola adelantada. 20 golpes prestando atención al punto de contacto. Medir la distancia conseguida.",duracion:"25 min",material:"Hierro 5, bolas",variantes:["Con tee bajo primero","Comparar con híbrido","Solo la dirección (no la distancia)"],tags:["hierro 5","suelo","difícil","posición de bola"]},
+{id:"b068",grupo:"birdies",trimestre:3,semana:16,categoria:"Swing",nombre:"El Análisis de Vídeo Birdies",objetivo:"Analizar el propio swing trimestralmente con vídeo.",descripcion:"Grabación del swing de frente y lateral. Comparación con el trimestre anterior. El alumno identifica 2 mejoras concretas y 1 punto pendiente. El instructor valida.",duracion:"30 min",material:"Hierro 7, bolas, móvil/tablet, vídeo anterior",variantes:["Comparar también con el inicio del curso","Con app de análisis","El alumno anota su propio plan de mejora"],tags:["vídeo","análisis","trimestral","comparativa","evolución"]},
+{id:"b069",grupo:"birdies",trimestre:4,semana:25,categoria:"Mental",nombre:"Mi Mejor Temporada",objetivo:"Reflexión positiva sobre el progreso del año completo.",descripcion:"El alumno hace una lista de: los 5 mejores momentos de la temporada, 3 habilidades nuevas adquiridas, 2 situaciones en las que superó sus miedos. Se comparte con el grupo.",duracion:"20 min",material:"Hoja de reflexión, bolígrafo",variantes:["En formato presentación","Solo escrita para el instructor","Con foto de cada momento"],tags:["reflexión","temporada","logros","motivación","cierre"]},
+{id:"b070",grupo:"birdies",trimestre:1,semana:6,categoria:"Chip",nombre:"El Pitch de 30m Controlado",objetivo:"Dominar el pitch de 30m con parada rápida.",descripcion:"Pitch de 30m al green: SW con swing de ¾, bola ligeramente adelantada, manos neutras. La bola debe parar en 2-3m. 15 repeticiones desde fairway y 5 desde rough.",duracion:"20 min",material:"SW, bolas, green a 30m",variantes:["Desde rough","Con bandera muy cerca del borde","Con viento en contra"],tags:["pitch","30m","parada","¾","control"]},
+{id:"b071",grupo:"birdies",trimestre:2,semana:10,categoria:"Coordinación",nombre:"El Calentamiento del Golfista",objetivo:"Establecer una rutina de calentamiento físico pre-sesión.",descripcion:"10 minutos de calentamiento específico de golf: rotación de cadera 2×15, hip hinge 2×10, shoulder rotation 2×15, wrist circles 2×20, swing lento sin bola 10 repeticiones.",duracion:"10 min",material:"Palo de golf, espacio libre",variantes:["Solo 5 minutos","Pre-ronda acortado","Con banda elástica"],tags:["calentamiento","rutina","pre-sesión","movilidad","físico"]},
+{id:"b072",grupo:"birdies",trimestre:3,semana:19,categoria:"Juego Largo",nombre:"El Approach con Viento",objetivo:"Ajustar el approach según la dirección y fuerza del viento.",descripcion:"Viento de cara: más palo, swing suave, bola más baja. Viento a favor: menos palo. Viento cruzado: apuntar compensando o curvar contra el viento. 15 approach shots con cada tipo.",duracion:"25 min",material:"Set de hierros, bolas, campo con viento",variantes:["Solo viento de cara","Comparar todos los tipos en el mismo día","Con app de medición del viento"],tags:["approach","viento","ajuste","compensación","condiciones"]},
+{id:"b073",grupo:"birdies",trimestre:3,semana:21,categoria:"Reglas",nombre:"Situaciones de Torneo Real",objetivo:"Resolver situaciones reales de torneo que se puedan dar.",descripcion:"El instructor presenta 5 situaciones reales ocurridas en torneos del club. Los alumnos resuelven en grupo con el reglamento. El instructor confirma la solución correcta.",duracion:"30 min",material:"Reglamento RFEG, tarjetas con situaciones reales",variantes:["Solo las situaciones más comunes","Con árbitro invitado","Simulando en campo real"],tags:["reglas","torneo real","situaciones","grupo","árbitro"]},
+{id:"b074",grupo:"birdies",trimestre:4,semana:27,categoria:"Juego",nombre:"18 Hoyos con Game Plan",objetivo:"Jugar 18 hoyos aplicando un game plan completo.",descripcion:"El alumno prepara el día antes un game plan hoyo a hoyo (salida, approach, green, zonas de peligro). Lo ejecuta durante la ronda y al final analiza cuánto siguió el plan.",duracion:"240 min",material:"Set completo, game plan escrito",variantes:["Solo 9 hoyos","El instructor revisa el game plan antes","Calcular % de adherencia al plan"],tags:["game plan","18 hoyos","táctica","planificación","análisis"]},
+{id:"b075",grupo:"birdies",trimestre:4,semana:28,categoria:"Juego Largo",nombre:"El Test de Velocidad de Swing Final",objetivo:"Medir la velocidad de swing conseguida a lo largo del curso.",descripcion:"Test final de velocidad de swing con hierro 7 y driver. Comparar con el test de inicio del curso. Calcular el incremento de velocidad conseguido. Objetivo mínimo: +3km/h con hierro 7.",duracion:"20 min",material:"Hierro 7, driver, radar de velocidad si disponible",variantes:["Sin radar (estimación)","Comparar inicio vs final del curso","Premio al mayor incremento"],tags:["velocidad","test final","comparativa","progresión","hierro 7"]},
+
+// ── PARS ampliación (pa051-pa075) ───────────────────────────────
+{id:"pa051",grupo:"pars",trimestre:1,semana:1,categoria:"Swing",nombre:"El Análisis Biomecánico de Inicio",objetivo:"Identificar las limitaciones físicas que afectan al swing.",descripcion:"Screening de movilidad: test de cadera, tobillo y columna torácica. Identificar qué limitación física causa el mayor problema técnico. Crear un plan de movilidad específico.",duracion:"30 min",material:"Hierro 7, esterilla, espejo o cámara",variantes:["Con fisioterapeuta deportivo","Solo el test de cadera","Repetir el screening cada trimestre"],tags:["biomecánica","screening","movilidad","limitación","plan físico"]},
+{id:"pa052",grupo:"pars",trimestre:1,semana:2,categoria:"Putting",nombre:"El Putting Gate Avanzado",objetivo:"Perfeccionar la cara del putter con margen mínimo.",descripcion:"Dos tees a 1cm a cada lado de la bola (en lugar de 2cm). El putter debe pasar sin tocar ninguno. 30 putts de 1,5m con el gate. Desarrolla una cara perfectamente cuadrada.",duracion:"20 min",material:"Putter, bolas, tees",variantes:["Gate de 0,8cm (experto)","Desde 2m con gate","Con putting mirror también"],tags:["putting gate","1cm","cara cuadrada","precisión extrema"]},
+{id:"pa053",grupo:"pars",trimestre:1,semana:3,categoria:"Juego Largo",nombre:"El Smash Factor con Marcadores",objetivo:"Mejorar el punto de impacto para maximizar la eficiencia.",descripcion:"Marcadores de impacto (Impact Tape o dry-erase) en la cara del driver y del 7-hierro. Analizar el patrón de impactos. Objetivo: concentrar los impactos en el centro en el 70% de los golpes.",duracion:"25 min",material:"Driver, 7-hierro, impact tape o spray, bolas",variantes:["Solo con el driver","Con hierro 7 para approach","Comparar antes/después de 4 semanas"],tags:["smash factor","impacto","centro","impact tape","eficiencia"]},
+{id:"pa054",grupo:"pars",trimestre:1,semana:4,categoria:"Mental",nombre:"El Perfil Competitivo Personal",objetivo:"Conocer el propio perfil psicológico como competidor.",descripcion:"Cuestionario de 20 preguntas sobre ansiedad competitiva, concentración, motivación intrínseca/extrínseca y gestión del error. Identificar las 2 fortalezas y las 2 debilidades más importantes.",duracion:"30 min",material:"Cuestionario impreso, bolígrafo",variantes:["Con psicólogo deportivo","Solo las preguntas de ansiedad","Repetir al final del curso para comparar"],tags:["perfil competitivo","psicología","ansiedad","fortalezas","debilidades"]},
+{id:"pa055",grupo:"pars",trimestre:1,semana:5,categoria:"Chip",nombre:"El Short Game Test Mensual",objetivo:"Medir objetivamente el corto game cada mes.",descripcion:"18 situaciones fijas: 6 chips desde posiciones específicas, 6 pitches desde 20-40m y 6 putts (2m, 3m, 4m). Distancia media al hoyo. Comparar mes a mes. Registro anual.",duracion:"35 min",material:"Wedges, putter, bolas, 18 posiciones marcadas permanentemente",variantes:["Solo las 6 chips","Solo los putts","Comparar con compañeros del grupo"],tags:["short game test","mensual","medición","objetiva","progresión"]},
+{id:"pa056",grupo:"pars",trimestre:2,semana:9,categoria:"Swing",nombre:"El Plano de Swing con Varillas",objetivo:"Corregir el plano de swing con ayuda de varillas visuales.",descripcion:"Dos varillas en el suelo: una para los pies, otra formando el plano de swing ideal. El alumno practica el swing asegurando que el palo sigue ese plano. 30 repeticiones con bola.",duracion:"25 min",material:"Hierro 7, 2 varillas de alineación, bolas",variantes:["Con la varilla sujetada por el instructor","Video de lado para confirmar","Sin varillas al final"],tags:["plano de swing","varillas","corrección","visual","técnica"]},
+{id:"pa057",grupo:"pars",trimestre:2,semana:10,categoria:"Putting",nombre:"La Zona de No 3-Putt",objetivo:"Eliminar los 3-putts desde cualquier distancia.",descripcion:"Desde 5m, 7m y 10m: el objetivo es siempre dejar la bola dentro de 60cm del hoyo. 15 putts desde cada distancia. Si consiguen el 80% dentro de 60cm, no harán 3-putts.",duracion:"30 min",material:"Putter, bolas, círculo de 60cm marcado",variantes:["Desde 12m","Con pendiente fuerte","Registrar % semanal"],tags:["3-putt","lag putting","zona","60cm","distancia"]},
+{id:"pa058",grupo:"pars",trimestre:2,semana:11,categoria:"Juego Largo",nombre:"El Driving con Medición de Dispersión",objetivo:"Cuantificar y mejorar la dispersión lateral del driver.",descripcion:"10 drives midiendo la distancia lateral de cada bola respecto a la línea central del fairway. Calcular la dispersión media. Objetivo: menos de 10m de dispersión media en 4 semanas.",duracion:"25 min",material:"Driver, tees, bolas, cinta métrica o app",variantes:["Con hierro 5 también","Comparar con driver al 85%","Registrar semanalmente"],tags:["driver","dispersión","lateral","medición","mejora"]},
+{id:"pa059",grupo:"pars",trimestre:2,semana:12,categoria:"Chip",nombre:"El Bunker de las 5 Distancias",objetivo:"Dominar salidas de bunker a distintas distancias.",descripcion:"5 salidas de bunker a 5m, 10m, 15m, 20m y 25m. Para cada distancia, el alumno ajusta el swing. 3 intentos por distancia. Se cuentan las bolas dentro de un círculo de 2m del objetivo.",duracion:"30 min",material:"SW, bolas, bunker, 5 conos como objetivos",variantes:["Solo las distancias largas","Con bola enterrada en cada distancia","Con viento"],tags:["bunker","5 distancias","control","ajuste","precisión"]},
+{id:"pa060",grupo:"pars",trimestre:3,semana:14,categoria:"Mental",nombre:"El Análisis Post-Torneo Completo",objetivo:"Analizar un torneo con metodología de alto rendimiento.",descripcion:"Tras un torneo: (1) Estadísticas por categoría, (2) Las 3 mejores decisiones tácticas, (3) Los 3 peores errores mentales, (4) Las 3 mejores ejecuciones técnicas, (5) Plan de mejora con 2 objetivos.",duracion:"45 min",material:"Tarjeta del torneo, hoja de análisis estructurada",variantes:["Solo con las estadísticas","Con el instructor","Comparar análisis con el anterior torneo"],tags:["post-torneo","análisis completo","estadísticas","táctica","mental","plan"]},
+{id:"pa061",grupo:"pars",trimestre:3,semana:15,categoria:"Putting",nombre:"El AimPoint Express Básico",objetivo:"Introducir el sistema AimPoint de lectura de green.",descripcion:"Sentir la pendiente con los pies. 0 dedos = plano (putt recto). 1 dedo = break pequeño. 2 dedos = break medio. 3 dedos = break grande. Practicar en 10 putts con pendiente real.",duracion:"30 min",material:"Putter, bolas, green con pendiente variada",variantes:["Solo 1 y 2 dedos","Con GPS de inclinación para comparar","Comparar AimPoint vs lectura visual"],tags:["AimPoint","lectura","pendiente","pies","sistema"]},
+{id:"pa062",grupo:"pars",trimestre:3,semana:16,categoria:"Swing",nombre:"El Trabajo de Velocidad de Swing",objetivo:"Incrementar la velocidad de swing de forma progresiva y segura.",descripcion:"Protocolo de 4 semanas: semana 1 — 20 swings rápidos sin bola. Semana 2 — con bola foam. Semana 3 — con bola real en zona amplia. Semana 4 — con objetivo. Medir velocidad cada semana.",duracion:"20 min por sesión, 4 semanas",material:"Palo ligero o speed sticks, bolas, radar si disponible",variantes:["Con speed sticks SuperSpeed","Solo con el driver","Solo el downswing rápido"],tags:["velocidad","protocolo","4 semanas","incremento","speed sticks"]},
+{id:"pa063",grupo:"pars",trimestre:4,semana:20,categoria:"Juego Largo",nombre:"El Iron Play de Precisión",objetivo:"Dominar los approach shots con dispersión mínima.",descripcion:"Desde 130m: 15 approach shots al green. Medir la distancia de cada bola al hoyo. Calcular la media y la dispersión. Objetivo: media menor de 8m del hoyo y 70% en green.",duracion:"30 min",material:"8-hierro, bolas, green real, medidor",variantes:["Desde 150m","Con bandera en borde","Desde posición de rough corto"],tags:["iron play","precision","130m","dispersión","GIR"]},
+{id:"pa064",grupo:"pars",trimestre:4,semana:22,categoria:"Chip",nombre:"El Wedge System en Competición",objetivo:"Aplicar el wedge system personal en situaciones de torneo.",descripcion:"Simulación de torneo: 9 approach shots a distancias específicas del wedge system personal (50m, 60m, 70m, 80m). El alumno debe elegir el palo y el swing correcto según su tabla personal.",duracion:"30 min",material:"Wedges, bolas, conos a distintas distancias",variantes:["Solo las distancias intermedias","Con viento","Con la tarjeta personal del wedge system en mano"],tags:["wedge system","torneo","tabla personal","distancias","decisión"]},
+{id:"pa065",grupo:"pars",trimestre:4,semana:24,categoria:"Mental",nombre:"La Visualización de Tour",objetivo:"Visualización del nivel de tour para activar el máximo rendimiento.",descripcion:"30 min de visualización guiada: (1) un hoyo perfecto en la salida de un torneo, (2) un putt de 2m que necesitas para ganar, (3) una recuperación perfecta tras un golpe malo.",duracion:"30 min",material:"Espacio tranquilo, audio guiado si disponible",variantes:["Solo la situación 1","Con psicólogo deportivo","Grabando el audio tú mismo"],tags:["visualización","tour","presión","recuperación","guiada"]},
+{id:"pa066",grupo:"pars",trimestre:1,semana:6,categoria:"Putting",nombre:"El Putt con Metrónomo Avanzado",objetivo:"Perfeccionar el tempo del putt con metrónomo.",descripcion:"Metrónomo a 72 BPM: backswing en el primer tic, impacto en el segundo, follow-through completo en el tercero. Ritmo 1-2-3 del putt. 30 putts de 2m midiendo la constancia del tempo.",duracion:"20 min",material:"Putter, bolas, app metrónomo, hoyo",variantes:["A 60 BPM (más lento)","A 80 BPM (más rápido)","Con ojos cerrados"],tags:["putting","metrónomo","tempo","72 BPM","ritmo"]},
+{id:"pa067",grupo:"pars",trimestre:2,semana:13,categoria:"Reglas",nombre:"El Comité de Competición",objetivo:"Entender el rol del comité y las decisiones de torneo.",descripcion:"El alumno actúa como miembro del comité en un torneo simulado. Debe resolver 3 reclamaciones de los jugadores usando el reglamento y las notas al reglamento.",duracion:"45 min",material:"Reglamento RFEG, notas al reglamento, casos simulados",variantes:["Con árbitro oficial invitado","Solo las reclamaciones más comunes","Examen simulado de árbitro nivel 1"],tags:["comité","competición","reclamación","árbitro","reglamento avanzado"]},
+{id:"pa068",grupo:"pars",trimestre:3,semana:18,categoria:"Juego",nombre:"La Ronda de Estadísticas Completa",objetivo:"Registrar y analizar todas las estadísticas en 18 hoyos.",descripcion:"18 hoyos registrando: fairways, GIR, putts, bunkers, penalizaciones, up&downs, Stableford y notas de cada hoyo. Al terminar: análisis completo con el instructor. Plan de mejora.",duracion:"240 min + análisis 30 min",material:"Set completo, hoja de estadísticas completa",variantes:["Solo 9 hoyos","Con app de estadísticas","Comparar con la ronda anterior del mes"],tags:["estadísticas","18 hoyos","análisis","plan de mejora","registro completo"]},
+{id:"pa069",grupo:"pars",trimestre:3,semana:20,categoria:"Swing",nombre:"El Trabajo de Fade Avanzado",objetivo:"Producir un fade controlado y repetible en situaciones difíciles.",descripcion:"Fade avanzado: el cuerpo apunta 5° a la izquierda, la cara apunta exactamente al objetivo, el path es levemente de fuera a dentro. 20 repeticiones con hierro 7 y 10 con driver.",duracion:"25 min",material:"Hierro 7, driver, bolas, conos de alineación",variantes:["Solo con hierro 7","Situaciones de dogleg que requieren fade","Comparar fade suave vs fade pronunciado"],tags:["fade","avanzado","alineación","path","repetible"]},
+{id:"pa070",grupo:"pars",trimestre:4,semana:26,categoria:"Juego Largo",nombre:"El Driver de Campeonato",objetivo:"El mejor drive bajo presión máxima.",descripcion:"Simulación del primer tee de un campeonato importante. Rutina completa, observadores, cronómetro de 40 segundos para cada golpe. 10 drives. El instructor evalúa la calidad de la rutina.",duracion:"30 min",material:"Driver, tees, bolas, cronómetro, observadores",variantes:["Solo 3 drives pero máxima calidad","Con árbitro externo","Con cámara grabando"],tags:["driver","campeonato","presión","rutina","primer tee"]},
+{id:"pa071",grupo:"pars",trimestre:2,semana:14,categoria:"Chip",nombre:"El Chip Escalonado de 5 Distancias",objetivo:"Controlar 5 distancias distintas con el mismo palo.",descripcion:"Con solo el SW: chip a 5m, 8m, 12m, 16m y 20m. Solo cambia el tamaño del swing. 3 intentos por distancia. Medir dónde aterrizan. Crear la tabla de swing-distancia personal.",duracion:"25 min",material:"SW, bolas, conos como objetivos, medidor",variantes:["Con PW también","Solo 3 distancias","Publicar la tabla en el grupo"],tags:["chip","5 distancias","control","mismo palo","tabla"]},
+{id:"pa072",grupo:"pars",trimestre:1,semana:7,categoria:"Coordinación",nombre:"La Movilidad del Golfista de Alto Nivel",objetivo:"Programa completo de movilidad específica para el golf de alto nivel.",descripcion:"Sesión de 30 min: movilidad de tobillo (2×10), hip 90/90 (2×30seg), rotación torácica con palo (3×15), shoulder CARs (2×8), hip hinge con palo en la espalda (3×10).",duracion:"30 min",material:"Esterilla, palo de golf, espacio libre",variantes:["Solo 15 minutos","Pre-ronda de 10 min","Con fisioterapeuta"],tags:["movilidad","alto nivel","tobillo","cadera","torácica","programa"]},
+{id:"pa073",grupo:"pars",trimestre:4,semana:27,categoria:"Juego",nombre:"El Torneo de Alta Presión",objetivo:"Competir bajo la máxima presión posible antes del torneo de clausura.",descripcion:"Mini-torneo de 9 hoyos con consecuencias reales: el ganador elige el formato del torneo de clausura. Árbitro externo, scoring en tiempo real, galería de padres.",duracion:"120 min",material:"Set completo, árbitro, app de scoring",variantes:["Con apuesta deportiva entre alumnos","Sin galería para comparar","Con transmisión de scores al grupo de WhatsApp"],tags:["alta presión","torneo","consecuencias reales","árbitro","galería"]},
+{id:"pa074",grupo:"pars",trimestre:3,semana:21,categoria:"Putting",nombre:"El Putting de las 5 Velocidades",objetivo:"Adaptar el stroke del putter a cualquier velocidad de green.",descripcion:"Green lento (stimp 7): backswing más largo. Green normal (stimp 9): normal. Green rápido (stimp 11): backswing más corto. Practicar las 3 velocidades estimadas con el mismo putting green.",duracion:"25 min",material:"Putter, bolas, tabla inclinada o green de distintas velocidades",variantes:["Solo estimp alto","Medir con Stimpmeter real","Comparar mañana vs tarde (cambia la velocidad)"],tags:["putting","velocidad de green","stimp","adaptación","backswing"]},
+{id:"pa075",grupo:"pars",trimestre:4,semana:28,categoria:"Mental",nombre:"El Plan de Alto Rendimiento",objetivo:"Planificar la temporada siguiente con ambición y metodología.",descripcion:"El alumno crea su plan de temporada: hándicap objetivo, torneos a disputar, aspectos técnicos prioritarios (2 máx.), trabajo físico (1 objetivo), trabajo mental (1 objetivo). Plan sellado.",duracion:"35 min",material:"Plantilla de plan de temporada, sobre sellado",variantes:["Con padres","Presentación al grupo","Audio del plan grabado por el alumno"],tags:["plan","temporada","hándicap","ambición","metodología","alto rendimiento"]},
+
+// ── BIRDIE+ ampliación (bp051-bp075) ────────────────────────────
+{id:"bp051",grupo:"birdieplus",trimestre:1,semana:1,categoria:"Swing",nombre:"El Baseline de Inicio de Temporada",objetivo:"Establecer todos los parámetros de rendimiento al inicio del año.",descripcion:"Test completo de inicio: velocidad de swing (driver y 7-hierro), distancia media con driver, 5-hierro y PW, % de fairways (10 drives), % GIR (10 approach de 150m), short game test. Base de datos personal.",duracion:"90 min",material:"Set completo, radar si disponible, medidor",variantes:["Sin radar solo estimación","Publicar el baseline del grupo","Comparar con el baseline del año anterior"],tags:["baseline","inicio de temporada","datos","velocidad","distancia","GIR"]},
+{id:"bp052",grupo:"birdieplus",trimestre:1,semana:2,categoria:"Putting",nombre:"El Putting Estadístico Avanzado",objetivo:"Analizar el putting con métricas de tour.",descripcion:"Medir el SG (Strokes Gained) putting comparando con un campo de referencia. Datos: % de emboques a 1m, 2m, 3m, 4m, 5m, 7m, 10m, putts por ronda (18 hoyos). Benchmark vs Pars Tour Español.",duracion:"45 min",material:"Putter, bolas, app de estadísticas, hoja de datos",variantes:["Solo SG básico","Con app de Arccos o similar","Comparar con la semana anterior"],tags:["SG","strokes gained","estadísticas avanzadas","benchmark","tour"]},
+{id:"bp053",grupo:"birdieplus",trimestre:1,semana:3,categoria:"Juego Largo",nombre:"El Protocolo de Velocidad Máxima",objetivo:"Maximizar la velocidad de swing con un protocolo científico.",descripcion:"Protocolo de 8 semanas: 3 sesiones/semana de 20 min. Calentamiento de velocidad (5 swings máximos sin bola), series de speed sticks (3×5), vuelta al palo normal. Medir velocidad al inicio, semana 4 y semana 8.",duracion:"20 min x 3/semana durante 8 semanas",material:"Speed sticks, driver, radar de velocidad",variantes:["Solo driver","Con hierro 7","Protocolo SuperSpeed oficial"],tags:["velocidad máxima","protocolo","8 semanas","speed sticks","incremento"]},
+{id:"bp054",grupo:"birdieplus",trimestre:1,semana:4,categoria:"Mental",nombre:"El Mindfulness en Competición",objetivo:"Aplicar técnicas de mindfulness específicamente durante la competición.",descripcion:"Técnicas de mindfulness entre golpe y golpe: body scan de 30 segundos, respiración 4-4-4 al caminar, anchoring en las sensaciones físicas. Practicar en una ronda de 9 hoyos sin marcar el score.",duracion:"120 min en campo",material:"Ficha de mindfulness, set completo",variantes:["Solo en los últimos 6 hoyos","Con psicólogo deportivo","Comparar score con mindfulness vs score sin mindfulness"],tags:["mindfulness","competición","body scan","anchoring","respiración"]},
+{id:"bp055",grupo:"birdieplus",trimestre:1,semana:5,categoria:"Chip",nombre:"El Short Game de Alta Presión Avanzado",objetivo:"Ejecutar el short game bajo la máxima presión psicológica posible.",descripcion:"Circuito de 12 situaciones de short game con consecuencias reales por fallo: chip de rough a 10m, flop sobre obstáculo, bunker a 20m, putt de 2m de presión, etc. Si fallas, vuelta a empezar.",duracion:"40 min",material:"Wedges, putter, bolas, 12 posiciones",variantes:["Sin consecuencias para comparar","Con cronómetro de 30 seg por situación","Con galería de compañeros"],tags:["short game","alta presión","consecuencias","circuito","12 posiciones"]},
+{id:"bp056",grupo:"birdieplus",trimestre:2,semana:9,categoria:"Swing",nombre:"El Trabajo de Draw y Fade Bajo Presión",objetivo:"Producir draws y fades bajo presión de torneo.",descripcion:"Simulación: 'el hoyo 18 tiene OB a la derecha — necesitas un draw garantizado'. 10 draws y 10 fades en situación de presión simulada. El instructor y 2 compañeros observan y puntúan.",duracion:"30 min",material:"Driver, hierro 7, bolas, cones de alineación",variantes:["Solo draw o solo fade","Con árbitro externo","Con cuenta atrás de tiempo"],tags:["draw","fade","presión","torneo","simulación","OB"]},
+{id:"bp057",grupo:"birdieplus",trimestre:2,semana:10,categoria:"Putting",nombre:"El Lag Putting de Campeonato",objetivo:"Dominar el lag putting para eliminar los 3-putts en torneo.",descripcion:"Desde 8m, 10m y 12m: el objetivo es dejar todas las bolas dentro de 40cm del hoyo (no embocar). 15 putts desde cada distancia. Si el 80% queda dentro de 40cm, los 3-putts desaparecen.",duracion:"35 min",material:"Putter, bolas, círculo de 40cm marcado",variantes:["Círculo de 60cm más fácil","Con pendiente fuerte","Registrar % semanal en 3 distancias"],tags:["lag putting","campeonato","3-putt","distancia","zona"]},
+{id:"bp058",grupo:"birdieplus",trimestre:2,semana:11,categoria:"Juego Largo",nombre:"El Approach con Trackman y Datos",objetivo:"Optimizar el approach con datos objetivos del vuelo.",descripcion:"Si hay Trackman: analizar carry, total, spin rate, launch angle y offline de cada approach. Identificar la desviación sistemática (¿siempre corto? ¿siempre derecha?). Plan de corrección.",duracion:"30 min",material:"Hierros, bolas, Trackman o similar",variantes:["Con FlightScope o app alternativa","Sin tecnología — solo medición física","Comparar 5-hierro vs 5-madera"],tags:["Trackman","approach","carry","spin","offline","datos"]},
+{id:"bp059",grupo:"birdieplus",trimestre:2,semana:12,categoria:"Chip",nombre:"El Wedge System en Presión Máxima",objetivo:"Aplicar el wedge system personal bajo presión extrema.",descripcion:"El instructor da la distancia en el último segundo: '73 metros, hoyo 18, necesitas par'. El alumno debe seleccionar instantáneamente el palo y el swing correcto según su tabla.",duracion:"30 min",material:"4 wedges, bolas, conos a distintas distancias",variantes:["Con cronómetro de 10 seg para la decisión","Con árbitro evaluando la decisión","Con viento añadido"],tags:["wedge system","presión máxima","decisión rápida","instantáneo","torneo"]},
+{id:"bp060",grupo:"birdieplus",trimestre:3,semana:14,categoria:"Mental",nombre:"El Protocolo de Recuperación de Nivel Tour",objetivo:"Recuperarse en menos de 30 segundos de cualquier mal golpe.",descripcion:"Protocolo de 3 pasos: (1) Exhalar lentamente (5 seg), (2) Frase de reset personal en voz baja, (3) Mirar al horizonte y sonreír (aunque no tengas ganas). Practicar en campo durante 9 hoyos.",duracion:"120 min en campo",material:"Ficha de registro, set completo",variantes:["Solo los 3 primeros hoyos","Con compañero que evalúa el tiempo","Comparar tiempo de recuperación antes/después del protocolo"],tags:["recuperación","30 segundos","tour","protocolo","reset","resiliencia"]},
+{id:"bp061",grupo:"birdieplus",trimestre:3,semana:15,categoria:"Swing",nombre:"La Sesión de Corrección Técnica 200 Repeticiones",objetivo:"Fijar un cambio técnico complejo mediante repetición masiva.",descripcion:"Los cambios técnicos de alto nivel requieren 2000-5000 repeticiones. Sesión de 200 repeticiones del cambio técnico prioritario del alumno. Sin bola las primeras 50. Con bola foam las siguientes 50. Con bola real las últimas 100.",duracion:"60 min",material:"El palo específico del cambio, bolas foam, bolas reales",variantes:["Solo 100 repeticiones","Video cada 50 para confirmar","Con espejo delante"],tags:["corrección técnica","200 repeticiones","cambio","largo plazo","video"]},
+{id:"bp062",grupo:"birdieplus",trimestre:3,semana:16,categoria:"Putting",nombre:"El Green Reading con Sistema Avanzado",objetivo:"Leer greens complejos con un sistema profesional.",descripcion:"AimPoint Express avanzado: doble break con los pies, leer la transición entre pendientes, ajustar por velocidad del green. 15 putts de doble break con el sistema aplicado.",duracion:"35 min",material:"Putter, bolas, green con doble break",variantes:["Solo el break final","Con GPS de inclinación para validar","Comparar AimPoint vs método visual"],tags:["AimPoint avanzado","doble break","pies","velocidad","transición"]},
+{id:"bp063",grupo:"birdieplus",trimestre:3,semana:17,categoria:"Juego Largo",nombre:"El Iron Play en Condiciones de Torneo",objetivo:"Reproducir el iron play de torneo bajo presión real.",descripcion:"20 approach shots desde 140m en condiciones de torneo simuladas: árbitro presente, 40 segundos por golpe, scoring en tiempo real. El % de GIR se registra y compara con el rendimiento en entrenamiento.",duracion:"40 min",material:"Hierros, bolas, árbitro, cronómetro, green real",variantes:["Solo 10 approach shots","Con viento real","Con el grupo viendo"],tags:["iron play","torneo","presión","GIR","condiciones reales","árbitro"]},
+{id:"bp064",grupo:"birdieplus",trimestre:4,semana:20,categoria:"Chip",nombre:"El Bunker de Competición de Alto Nivel",objetivo:"Dominar el bunker en las situaciones más difíciles posibles.",descripcion:"Circuito de 6 situaciones de bunker: bola en el labio, arena muy suelta, arena mojada, bola enterrada, cuesta abajo a hoyo cerca, bunker de 30m. 3 intentos de cada. Objetivo: 2/3 en green.",duracion:"45 min",material:"SW y LW, bolas, bunker con distintas condiciones",variantes:["Solo la bola enterrada","Solo el bunker de 30m","Con contador de golpes"],tags:["bunker","alto nivel","6 situaciones","labio","enterrada","30m"]},
+{id:"bp065",grupo:"birdieplus",trimestre:4,semana:22,categoria:"Mental",nombre:"La Fortaleza Mental en el Último Hoyo",objetivo:"Gestionar la presión extrema del último hoyo de un torneo.",descripcion:"Simulación: 'estás empatado, último hoyo, necesitas par para ganar'. El alumno ejecuta el hoyo completo con árbitro, galería y consecuencias reales. Se evalúa la rutina, la gestión emocional y la ejecución.",duracion:"30 min",material:"Set completo, árbitro, galería de compañeros",variantes:["El hoyo más difícil del campo","Con defensa del lead (necesitas bogey para ganar también)","Sin galería para comparar"],tags:["último hoyo","fortaleza mental","par para ganar","árbitro","galería","presión extrema"]},
+{id:"bp066",grupo:"birdieplus",trimestre:1,semana:6,categoria:"Juego",nombre:"El Reconocimiento Estratégico del Campo",objetivo:"Preparar el campo para maximizar el rendimiento en torneo.",descripcion:"9 hoyos de reconocimiento con libreta: para cada hoyo anotar zona A de salida, zona B (fallback), peligro principal, posición de bandera más difícil, break del green cerca del hoyo.",duracion:"150 min",material:"Libreta de campo especial, bolígrafo, set completo",variantes:["18 hoyos si hay tiempo","Con mapa del campo","Comparar notas con las del compañero"],tags:["reconocimiento","estratégico","zona A","fallback","peligro","libreta"]},
+{id:"bp067",grupo:"birdieplus",trimestre:2,semana:13,categoria:"Putting",nombre:"El Putting en Green Rápido",objetivo:"Adaptarse a greens rápidos (stimp 10+) con eficiencia.",descripcion:"Green rápido: backswing más corto, mucho más break del esperado, cuesta abajo es muy peligroso. 20 putts en green rápido real o simulado. Calcular el ajuste necesario respecto al green normal.",duracion:"30 min",material:"Putter, bolas, Stimpmeter si disponible, green rápido",variantes:["Solo los cuesta abajo","Medir velocidad real con Stimpmeter","Comparar green 9 vs green 11"],tags:["putting","green rápido","stimp 10","ajuste","backswing corto"]},
+{id:"bp068",grupo:"birdieplus",trimestre:3,semana:19,categoria:"Juego Largo",nombre:"El Driving en Condiciones Adversas Avanzado",objetivo:"Mantener el rendimiento con el driver en cualquier condición.",descripcion:"Protocolo de condiciones adversas: (1) viento de cara — más palo y 85%, (2) viento a favor — menos palo y 90%, (3) viento cruzado derecho — draw o apuntar derecha, (4) lluvia — grip seco y 80%.",duracion:"35 min",material:"Driver, bolas, condiciones reales o simuladas",variantes:["Solo viento de cara","Con lluvia real","Con ventilador industrial"],tags:["driver","condiciones adversas","viento","lluvia","protocolo","avanzado"]},
+{id:"bp069",grupo:"birdieplus",trimestre:4,semana:23,categoria:"Mental",nombre:"El Diario Competitivo del Alto Rendimiento",objetivo:"Sistema de análisis post-ronda de máximo nivel.",descripcion:"Después de cada torneo o ronda importante: (1) Estadísticas completas en Excel, (2) Las 3 mejores decisiones, (3) Los 3 peores errores (técnico/táctico/mental), (4) SG por categoría, (5) Plan de 2 objetivos para el próximo torneo.",duracion:"45 min",material:"Hoja de análisis detallada, Excel o app",variantes:["Con el instructor revisando","Comparar con los últimos 5 torneos","Identificar patrones de errores repetidos"],tags:["diario competitivo","alto rendimiento","estadísticas","SG","errores","patrones"]},
+{id:"bp070",grupo:"birdieplus",trimestre:4,semana:25,categoria:"Chip",nombre:"El Short Game Test de Fin de Temporada",objetivo:"Medir el progreso en short game al final del año completo.",descripcion:"Test idéntico al del inicio de temporada: 18 situaciones fijas. Comparar distancia media al hoyo con el resultado de principios de año. Calcular el porcentaje de mejora.",duracion:"45 min",material:"Wedges, putter, bolas, 18 posiciones idénticas al test inicial",variantes:["Publicar los resultados del grupo","Premio al más mejorado","Comparar con el short game test mensual más bajo del año"],tags:["short game test","fin de temporada","comparativa","mejora anual","porcentaje"]},
+{id:"bp071",grupo:"birdieplus",trimestre:2,semana:14,categoria:"Juego",nombre:"El Torneo Simulado Nacional",objetivo:"Simular un torneo de nivel nacional con todas las condiciones.",descripcion:"18 hoyos en condiciones de torneo nacional: salida en hora exacta, árbitro oficial, grupo de 3, scoring en tiempo real en app, reglas federadas estrictas, caddie permitido, galería.",duracion:"300 min",material:"Set completo, árbitro externo, app de scoring, caddie",variantes:["Con jugadores invitados de otros clubes","Con transmisión por redes sociales","Con entrevista post-ronda grabada"],tags:["torneo nacional","simulado","árbitro oficial","condiciones reales","caddie"]},
+{id:"bp072",grupo:"birdieplus",trimestre:3,semana:20,categoria:"Swing",nombre:"El Análisis de Swing vs Pro de Tour",objetivo:"Comparar el propio swing con el de un profesional de nivel Tour.",descripcion:"Se graba el swing en las mismas posiciones que las referencias del instructor (P1-P9). Se comparan fotograma a fotograma. Se identifican 2 diferencias clave y se crea un plan de trabajo de 6 semanas.",duracion:"45 min",material:"Video del swing del alumno, referencias de pro de tour, app de análisis",variantes:["Con Coach's Eye o V1","Comparar con el mismo pro que en el trimestre anterior","El alumno elige el pro de referencia"],tags:["análisis vs pro","tour","comparativa","P1-P9","fotograma","plan 6 semanas"]},
+{id:"bp073",grupo:"birdieplus",trimestre:1,semana:7,categoria:"Coordinación",nombre:"El Programa Físico de Alto Rendimiento",objetivo:"Programa de fuerza y velocidad específico para el golf de élite.",descripcion:"Programa de 4 sesiones/semana: (1) Fuerza máxima (sentadillas, peso muerto, press banca), (2) Potencia rotacional (medicine ball, cable), (3) Velocidad (speed sticks, sprints cortos), (4) Movilidad y recuperación.",duracion:"60 min x 4/semana",material:"Gimnasio, bandas, medicine ball, speed sticks",variantes:["Con preparador físico","Versión de 2 sesiones/semana","Solo la parte de potencia rotacional"],tags:["físico","alto rendimiento","fuerza","potencia","velocidad","programa semanal"]},
+{id:"bp074",grupo:"birdieplus",trimestre:4,semana:27,categoria:"Juego",nombre:"El Gran Premio Final de la Academia",objetivo:"Torneo de clausura de máximo nivel con toda la academia.",descripcion:"Torneo final donde compiten todos los grupos (Pollitos, Pares, Birdies, Eagles, Albatros y Birdie+) en formato adaptado. Los Birdie+ actúan como capitanes de equipos mixtos.",duracion:"300 min + ceremonia de gala",material:"Set completo adaptado por grupos, trofeos, diplomas, galería de padres",variantes:["Formato scramble por equipos mixtos","Con foto de grupo por categorías","Video del año para proyectar en la clausura"],tags:["gran premio","clausura","mixto","equipos","todas las categorías","gala"]},
+{id:"bp075",grupo:"birdieplus",trimestre:4,semana:28,categoria:"Mental",nombre:"El Legado y el Futuro del Golf",objetivo:"Reflexión final sobre el camino recorrido y los sueños futuros.",descripcion:"Sesión de cierre del año: (1) Presentación de 3 min sobre lo aprendido al resto de la academia, (2) Carta sellada para dentro de 5 años con los objetivos soñados, (3) Compromiso público de mentor de los grupos menores el próximo año.",duracion:"60 min",material:"Presentación, papel, sobre sellado",variantes:["Video-mensaje grabado","Con padres presentes","Publicación del compromiso en redes sociales del club"],tags:["legado","futuro","presentación","carta 5 años","mentor","compromiso","cierre"]}
+
+];
+
+
+// ═══════════════════════════════════════════════════════════════════
+// COMPONENTE: CAMPANA DE NOTIFICACIONES
+// ═══════════════════════════════════════════════════════════════════
+function NotifBell({notifs, pendientesCount=0}){
+  const [open, setOpen] = useState(false);
+  const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount);
+
+  async function marcarLeida(id){
+    try {
+      await updateDoc(doc(db,"notificaciones",id),{leida:true});
+    } catch(e){ console.warn(e); }
+  }
+
+  async function marcarTodasLeidas(){
+    for(const n of (notifs||[]).filter(x=>!x.leida)){
+      try { await updateDoc(doc(db,"notificaciones",n.id),{leida:true}); } catch(e){}
+    }
+  }
+
+  async function eliminarNotif(id){
+    try { await deleteDoc(doc(db,"notificaciones",id)); } catch(e){}
+  }
+
+  return <div style={{position:"relative"}}>
+    <button onClick={()=>setOpen(o=>!o)}
+      style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:10,
+        padding:"6px 12px",cursor:"pointer",color:"white",fontSize:20,position:"relative"}}>
+      🔔
+      {noLeidas>0&&<span style={{position:"absolute",top:-4,right:-4,
+        background:"#c0392b",color:"white",borderRadius:"50%",
+        width:18,height:18,fontSize:11,fontWeight:800,
+        display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {noLeidas}
+      </span>}
+    </button>
+
+    {open&&<div style={{position:"absolute",right:0,top:48,width:340,maxHeight:480,
+      overflowY:"auto",background:"white",borderRadius:14,
+      boxShadow:"0 8px 32px rgba(0,0,0,.25)",zIndex:9999}}>
+      {/* Header */}
+      <div style={{background:G.fairway,color:"white",padding:"12px 16px",
+        borderRadius:"14px 14px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontWeight:700,fontSize:14}}>🔔 Notificaciones</span>
+        {noLeidas>0&&<button onClick={marcarTodasLeidas}
+          style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",
+            borderRadius:6,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>
+          ✓ Marcar todas leídas
+        </button>}
+      </div>
+
+      {(notifs||[]).length===0
+        ? <div style={{padding:24,textAlign:"center",color:G.soft,fontSize:13}}>
+            Sin notificaciones
+          </div>
+        : (notifs||[]).map(n=>(
+          <div key={n.id} onClick={()=>marcarLeida(n.id)}
+            style={{padding:"12px 16px",borderBottom:"1px solid #f0f0f0",cursor:"pointer",
+              background:n.leida?"white":"#e8f5fb",
+              display:"flex",gap:10,alignItems:"flex-start"}}>
+            <div style={{fontSize:22,flexShrink:0}}>
+              {n.tipo==="nuevo_registro"?"🧒":n.tipo==="nuevo_alumno_adulto"?"🏌️":"📢"}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:n.leida?400:700,fontSize:13,color:G.ink}}>
+                {n.tipo==="nuevo_registro"||n.tipo==="nuevo_alumno_adulto"
+                  ? `Nuevo registro: ${n.nombre}`
+                  : n.mensaje||"Nueva notificación"}
+              </div>
+              {n.tipoEscuela&&<div style={{fontSize:11,color:G.soft}}>
+                {n.tipoEscuela==="infantil"?"🧒 Escuela Infantil":"🏌️ Escuela Adultos"}
+              </div>}
+              {n.telefono&&<div style={{fontSize:11,color:G.soft}}>📞 {n.telefono}</div>}
+              {n.email&&<div style={{fontSize:11,color:G.soft}}>✉️ {n.email}</div>}
+              {!n.leida&&<span style={{fontSize:10,background:G.sky,color:"white",
+                borderRadius:6,padding:"1px 6px",marginTop:4,display:"inline-block"}}>NUEVO</span>}
+            </div>
+            <button onClick={e=>{e.stopPropagation();eliminarNotif(n.id);}}
+              style={{background:"none",border:"none",color:G.soft,cursor:"pointer",
+                fontSize:16,flexShrink:0}}>✕</button>
+          </div>
+        ))
+      }
+    </div>}
+  </div>;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: REGISTROS PENDIENTES DE ACTIVACIÓN
+// ═══════════════════════════════════════════════════════════════════
+function ModRegistrosPendientes({data, setData, notifs}){
+  const [pendientes, setPendientes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    const unsub = onSnapshot(
+      query(collection(db,"registros_pendientes"), orderBy("timestamp","desc")),
+      snap => {
+        setPendientes(snap.docs.map(d=>({_docId:d.id,...d.data()})));
+        setLoading(false);
+      },
+      err => { console.warn(err); setLoading(false); }
+    );
+    return ()=>unsub();
+  },[]);
+
+  async function activar(reg){
+    const {_docId,...alumno} = reg;
+    // Add to alumnos list as active
+    const nuevoAlumno = {...alumno, activo:true, pendienteActivacion:false};
+    const nuevosAlumnos = [...(data.alumnos||[]), nuevoAlumno];
+    setData({...data, alumnos:nuevosAlumnos});
+    // Delete from pending
+    try { await deleteDoc(doc(db,"registros_pendientes",_docId)); } catch(e){}
+    // Mark related notifications as read
+    for(const n of notifs.filter(n=>n.nombre===alumno.nombre&&!n.leida)){
+      try { await updateDoc(doc(db,"notificaciones",n.id),{leida:true}); } catch(e){}
+    }
+  }
+
+  async function rechazar(reg){
+    if(!golfConfirm("¿Rechazar y eliminar el registro de "+reg.nombre+"?")) return;
+    try { await deleteDoc(doc(db,"registros_pendientes",reg._docId)); } catch(e){}
+  }
+
+  if(loading) return <div style={{textAlign:"center",padding:40,color:G.soft}}>
+    <div style={{fontSize:28,marginBottom:10}}>🔄</div>Cargando...
+  </div>;
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+      <div>
+        <h2 style={{margin:0,color:G.fairway}}>🔔 Registros pendientes</h2>
+        <div style={{fontSize:13,color:G.soft,marginTop:2}}>
+          Alumnos que se han registrado online y esperan activación
+        </div>
+      </div>
+      <div style={{background:pendientes.length>0?"#c0392b":G.grass,color:"white",
+        borderRadius:20,padding:"4px 14px",fontWeight:700,fontSize:14}}>
+        {pendientes.length} pendiente{pendientes.length!==1?"s":""}
+      </div>
+    </div>
+
+    {pendientes.length===0
+      ? <div style={{textAlign:"center",padding:50,background:G.mist,borderRadius:14,color:G.soft}}>
+          <div style={{fontSize:36,marginBottom:10}}>✅</div>
+          <div style={{fontWeight:700,fontSize:15}}>Sin registros pendientes</div>
+          <div style={{fontSize:13,marginTop:4}}>Cuando un alumno se inscriba online aparecerá aquí</div>
+        </div>
+      : <div style={{display:"grid",gap:12}}>
+          {pendientes.map(reg=>(
+            <Card key={reg._docId} style={{borderLeft:"5px solid #c0392b"}}>
+              <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+                <FotoAlumno foto="" nombre={reg.nombre} size={48}/>
+                <div style={{flex:1,minWidth:200}}>
+                  <div style={{fontWeight:800,fontSize:16,color:G.ink,marginBottom:4}}>{reg.nombre}</div>
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:G.soft,marginBottom:6}}>
+                    {reg.fechaNacimiento&&<span>🎂 {reg.fechaNacimiento}</span>}
+                    {reg.telefono&&<span>📞 {reg.telefono}</span>}
+                    {reg.email&&<span>✉️ {reg.email}</span>}
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
+                    <span style={{background:reg.tipoEscuela==="infantil"?"#D6E4F7":"#D4EDDA",
+                      color:reg.tipoEscuela==="infantil"?"#2e5fa3":"#1a5c2a",
+                      borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
+                      {reg.tipoEscuela==="infantil"?"🧒 Escuela Infantil":"🏌️ Escuela Adultos"}
+                    </span>
+                    {reg.nivel&&<span style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
+                      {GRUPOS_EDAD.find(g=>g.id===reg.nivel)?.emoji} {reg.nivel}
+                    </span>}
+                    <span style={{background:"#e8f5eb",color:G.grass,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
+                      ✓ RGPD aceptado
+                    </span>
+                  </div>
+                  {(reg.alergias||reg.intolerancias||reg.lesiones)&&<div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {reg.alergias&&<span style={{background:"#FFF3E0",color:"#E65100",borderRadius:8,padding:"2px 8px",fontSize:11}}>🤧 {reg.alergias}</span>}
+                    {reg.intolerancias&&<span style={{background:"#F3E5F5",color:"#6A1B9A",borderRadius:8,padding:"2px 8px",fontSize:11}}>🥛 {reg.intolerancias}</span>}
+                    {reg.lesiones&&<span style={{background:"#FCE4EC",color:"#880E4F",borderRadius:8,padding:"2px 8px",fontSize:11}}>🩹 {reg.lesiones}</span>}
+                  </div>}
+                  {(reg.diasPreferencia?.length>0||reg.horarioPreferencia)&&<div style={{marginTop:6,fontSize:12,color:"#555",background:"#e8f5fb",borderRadius:8,padding:"4px 10px"}}>
+                    📅 {reg.diasPreferencia?.join(", ")} {reg.horarioPreferencia&&"· "+reg.horarioPreferencia}
+                  </div>}
+                  {reg.medicacion&&<div style={{marginTop:4,fontSize:12,color:"#1B5E20",background:"#E8F5E9",borderRadius:8,padding:"4px 10px"}}>
+                    💊 {reg.medicacion}
+                  </div>}
+                  {reg.tutores?.[0]&&<div style={{marginTop:6,fontSize:12,color:"#555",background:"#f0f0f0",borderRadius:8,padding:"4px 10px"}}>
+                    👨‍👩‍👦 Tutor: {reg.tutores[0].nombre} ({reg.tutores[0].relacion}) · {reg.tutores[0].telefono}
+                  </div>}
+                </div>
+                <div style={{display:"flex",gap:8,flexDirection:"column",flexShrink:0}}>
+                  <Btn color="primary" onClick={()=>activar(reg)}>✅ Activar</Btn>
+                  <Btn small color="danger" onClick={()=>rechazar(reg)}>✕ Rechazar</Btn>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+    }
+
+    {/* ── SOLICITUDES DE CLASE ── */}
+    {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length > 0 && <>
+      <div style={{marginTop:24,marginBottom:12}}>
+        <h2 style={{margin:"0 0 4px",color:G.sky}}>📩 Solicitudes de clase</h2>
+        <div style={{fontSize:13,color:G.soft}}>Alumnos que han solicitado una clase desde su portal</div>
+      </div>
+      <div style={{display:"grid",gap:10}}>
+        {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").map(s=>(
+          <Card key={s.id} style={{borderLeft:`4px solid ${G.sky}`}}>
+            <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:15,color:G.ink,marginBottom:4}}>👤 {s.alumnoNombre}</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:13,color:G.soft}}>
+                  <span>📅 {s.fecha}</span>
+                  <span>🕐 {s.hora}</span>
+                  <span>🏌️ {s.tipo}</span>
+                  <span>📍 {s.zona}</span>
+                </div>
+                {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,background:"#f0f8ff",borderRadius:8,padding:"4px 10px"}}>
+                  💬 {s.notas}
+                </div>}
+                <div style={{fontSize:11,color:G.soft,marginTop:4}}>Solicitado: {s.fechaSolicitud}</div>
+              </div>
+              <div style={{display:"flex",gap:8,flexDirection:"column",flexShrink:0}}>
+                <Btn small color="primary" onClick={()=>{
+                  setData({...data,solicitudesClase:(data.solicitudesClase||[]).map(x=>x.id===s.id?{...x,estado:"aceptada"}:x)});
+                }}>✅ Aceptar</Btn>
+                <Btn small color="danger" onClick={()=>{
+                  setData({...data,solicitudesClase:(data.solicitudesClase||[]).map(x=>x.id===s.id?{...x,estado:"rechazada"}:x)});
+                }}>✕ Rechazar</Btn>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </>}
+  </div>;
+}
+
+function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
+  const [tab,setTab]=useState("calendario");
+
+  // Filtrar datos según el profesor activo
+  // null = profesor principal (ve todo lo sin asignar + sus alumnos)
+  // id = profesor adicional (solo ve sus alumnos)
+  const dataProffesor = profesorId ? {
+    ...data,
+    alumnos: (data.alumnos||[]).filter(a=>(a.profesores||[]).includes(profesorId)||a.profesorId===profesorId),
+    clases:  (data.clases||[]).filter(c=>c.profesorId===profesorId),
+    analisis:(data.analisis||[]).filter(a=>a.profesorId===profesorId),
+    ingresos:(data.ingresos||[]).filter(i=>i.profesorId===profesorId),
+    gastos:  (data.gastos||[]).filter(g=>g.profesorId===profesorId),
+  } : data;
+
+  // setData wrapper que inyecta profesorId en nuevos registros
+  function setDataProfesor(newData){
+    if(!profesorId){ setData(newData); return; }
+    setData(newData);
+  }
+
+  const nombrePanel = profesorNombre ? profesorNombre+" · Panel Profesor" : "Panel del Profesor";
+
+  return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand,color:G.ink}}>
+    <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
+      <div style={{maxWidth:920,margin:"0 auto"}}>
+        <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:0.95}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:34,objectFit:"contain",marginLeft:4}}/>
+            <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:32,objectFit:"contain",marginLeft:4}}/>
+            <div style={{marginLeft:6}}>
+              <img src={LOGO_JCGA} alt="JCGA" style={{height:36,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.85}}/>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:1}}>{nombrePanel}</div>
+            </div>
+          </div>
+          <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
+          <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
+        </div>
+        <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
+          {ADMIN_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
+            {t.icon} {t.label}{t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
+          </button>)}
+        </div>
+      </div>
+    </div>
+    <div style={{maxWidth:920,margin:"0 auto",padding:"22px 14px 60px"}}>
+      {pendientesCount>0&&tab!=="pendientes"&&<div onClick={()=>setTab("pendientes")}
+        style={{background:"linear-gradient(135deg,#c0392b,#e74c3c)",color:"white",
+          borderRadius:14,padding:"16px 20px",marginBottom:18,cursor:"pointer",
+          display:"flex",alignItems:"center",gap:14,boxShadow:"0 4px 16px rgba(192,57,43,.3)",
+          animation:"pulse 2s infinite"}}>
+        <div style={{fontSize:32}}>🔔</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,fontSize:16}}>
+            ¡Tienes {pendientesCount} {pendientesCount===1?"nueva inscripción":"nuevas inscripciones"} pendiente{pendientesCount===1?"":"s"}!
+          </div>
+          <div style={{fontSize:13,opacity:.9,marginTop:2}}>
+            Pulsa aquí para revisar y activar {pendientesCount===1?"al nuevo alumno":"a los nuevos alumnos"}
+          </div>
+        </div>
+        <div style={{fontSize:20}}>→</div>
+        <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}`}</style>
+      </div>}
+      <h2 style={{margin:"0 0 18px",color:G.fairway,fontSize:19,fontWeight:800}}>
+        {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
+      </h2>
+      {tab==="calendario"&&<ModCalendario data={dataProffesor} setData={setDataProfesor}/>}
+      {tab==="alumnos"&&<ModAlumnos data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
+      {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
+      {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
+      {tab==="clases"&&<ModClases data={data} setData={setData}/>}
+      {tab==="estadisticas"&&<ModEstadisticas data={data} setData={setData}/>}
+      {tab==="analisis"&&<ModAnalisis data={data} setData={setData}/>}
+      {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
+      {tab==="ejercicios"&&<ModEjerciciosAdmin data={data} setData={setData}/>}
+      {tab==="informes"&&<ModInformes data={data} setData={setData}/>}
+      {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
+      {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
+      {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MOD PROFESORES (gestión de profesores desde el superadmin)
+// ═══════════════════════════════════════════════════════════════════
+function ModProfesores({data,setData}){
+  const [modal,setModal]=useState(null);
+  const [form,setForm]=useState({});
+  const profesores = data.profesores||[];
+
+  function openNew(){
+    setForm({nombre:"",pin:"",email:"",color:"#1a5c2a",activo:true,especialidad:""});
+    setModal("new");
+  }
+  function openEdit(p){setForm({...p});setModal(p.id);}
+  function save(){
+    if(!form.nombre||!form.pin||form.pin.length<4) return;
+    const updated = modal==="new"
+      ? [...profesores,{...form,id:uid(),fechaAlta:today()}]
+      : profesores.map(p=>p.id===modal?{...form}:p);
+    setData({...data,profesores:updated});
+    setModal(null);
+  }
+  function toggle(id){
+    setData({...data,profesores:profesores.map(p=>p.id===id?{...p,activo:!p.activo}:p)});
+  }
+  function eliminar(id){
+    if(!confirm("¿Eliminar este profesor? Sus alumnos no se borran.")) return;
+    setData({...data,profesores:profesores.filter(p=>p.id!==id)});
+  }
+
+  // Stats por profesor
+  function statsProfesor(pid){
+    const alumnos=(data.alumnos||[]).filter(a=>(a.profesores||[]).includes(pid)||a.profesorId===pid);
+    const clases=(data.clases||[]).filter(c=>c.profesorId===pid);
+    return {alumnos:alumnos.length,clases:clases.length};
+  }
+
+  const COLORES=["#1a5c2a","#3a7abf","#c0392b","#8e44ad","#d35400","#16a085","#2c3e50","#c8a84b"];
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div>
+        <h3 style={{margin:0,color:G.fairway}}>👨‍🏫 Profesores de la academia</h3>
+        <div style={{fontSize:13,color:G.soft,marginTop:2}}>{profesores.length} profesores registrados</div>
+      </div>
+      <Btn onClick={openNew}>+ Añadir profesor</Btn>
+    </div>
+
+    {/* Profesor principal (admin) */}
+    <Card style={{marginBottom:12,borderLeft:"4px solid "+G.fairway,background:"#f0f7f0"}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <div style={{width:44,height:44,borderRadius:"50%",background:G.fairway,
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:"#fff",flexShrink:0}}>
+          👑
+        </div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:800,color:G.ink,fontSize:15}}>Profesor Principal</div>
+          <div style={{fontSize:12,color:G.soft}}>PIN: {data.adminPin||"1234"} · Acceso completo</div>
+          <div style={{fontSize:11,color:G.fairway,marginTop:2}}>Gestiona todos los alumnos sin asignar + sus propios alumnos</div>
+        </div>
+        <div style={{textAlign:"right",fontSize:12}}>
+          <div style={{fontWeight:700,color:G.fairway}}>{(data.alumnos||[]).filter(a=>!a.profesorId&&!(a.profesores||[]).length).length} alumnos</div>
+          <div style={{color:G.soft}}>{(data.clases||[]).filter(c=>!c.profesorId).length} clases</div>
+        </div>
+      </div>
+    </Card>
+
+    {profesores.length===0&&<div style={{textAlign:"center",padding:32,color:G.soft,fontSize:14}}>
+      No hay profesores adicionales. Añade uno con el botón de arriba.
+    </div>}
+
+    {profesores.map(p=>{
+      const st=statsProfesor(p.id);
+      return <Card key={p.id} style={{marginBottom:10,borderLeft:`4px solid ${p.color||G.fairway}`,opacity:p.activo?1:0.6}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:44,height:44,borderRadius:"50%",background:p.color||G.fairway,
+            display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,color:"#fff",flexShrink:0}}>
+            👨‍🏫
+          </div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:800,color:G.ink,fontSize:15,display:"flex",alignItems:"center",gap:8}}>
+              {p.nombre}
+              {!p.activo&&<span style={{background:"#eee",color:G.soft,fontSize:11,padding:"1px 7px",borderRadius:8}}>Inactivo</span>}
+            </div>
+            <div style={{fontSize:12,color:G.soft}}>
+              PIN: <b>{p.pin}</b>
+              {p.email&&<> · {p.email}</>}
+              {p.especialidad&&<> · {p.especialidad}</>}
+            </div>
+          </div>
+          <div style={{textAlign:"right",fontSize:12,marginRight:8}}>
+            <div style={{fontWeight:700,color:p.color||G.fairway}}>{st.alumnos} alumnos</div>
+            <div style={{color:G.soft}}>{st.clases} clases</div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <Btn small color="secondary" onClick={()=>openEdit(p)}>✎</Btn>
+            <Btn small color={p.activo?"secondary":"sky"} onClick={()=>toggle(p.id)}>
+              {p.activo?"⏸":"▶"}
+            </Btn>
+            <Btn small color="danger" onClick={()=>eliminar(p.id)}>✕</Btn>
+          </div>
+        </div>
+      </Card>;
+    })}
+
+    {/* Resumen global */}
+    {profesores.length>0&&<Card style={{marginTop:16,background:"#f9f9f9"}}>
+      <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>📊 Resumen global de la academia</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
+        {[
+          [(data.alumnos||[]).length,"Alumnos totales","👤"],
+          [(data.clases||[]).length,"Clases totales","📅"],
+          [profesores.filter(p=>p.activo).length,"Profesores activos","👨‍🏫"],
+          [(data.ingresos||[]).reduce((s,i)=>s+Number(i.importeBase||0),0).toFixed(0)+"€","Ingresos totales","💶"],
+        ].map(([v,l,ico])=><div key={l} style={{textAlign:"center",background:"#fff",borderRadius:10,padding:"10px 6px"}}>
+          <div style={{fontSize:20}}>{ico}</div>
+          <div style={{fontWeight:800,fontSize:16,color:G.fairway}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft}}>{l}</div>
+        </div>)}
+      </div>
+    </Card>}
+
+    {modal&&<Modal title={modal==="new"?"Nuevo profesor":"Editar profesor"} onClose={()=>setModal(null)}>
+      <Field label="Nombre completo *">
+        <Input value={form.nombre||""} onChange={v=>setForm({...form,nombre:v})} placeholder="Nombre del profesor"/>
+      </Field>
+      <Field label="Especialidad / Rol">
+        <Input value={form.especialidad||""} onChange={v=>setForm({...form,especialidad:v})} placeholder="Ej: Profesor PGA, Monitor júnior..."/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="PIN de acceso (4 dígitos) *">
+          <Input value={form.pin||""} onChange={v=>setForm({...form,pin:v.slice(0,6)})} placeholder="0000"/>
+        </Field>
+        <Field label="Email (opcional)">
+          <Input value={form.email||""} onChange={v=>setForm({...form,email:v})} placeholder="profesor@email.com"/>
+        </Field>
+      </div>
+      <Field label="Color identificativo">
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:4}}>
+          {COLORES.map(c=><div key={c} onClick={()=>setForm({...form,color:c})}
+            style={{width:32,height:32,borderRadius:"50%",background:c,cursor:"pointer",
+              border:form.color===c?"3px solid #333":"3px solid transparent",flexShrink:0}}/>)}
+        </div>
+      </Field>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+        <input type="checkbox" id="profesorActivoChk" checked={!!form.activo} onChange={e=>setForm({...form,activo:e.target.checked})}
+          style={{width:16,height:16}}/>
+        <label htmlFor="profesorActivoChk" style={{fontSize:13,cursor:"pointer"}}>Profesor activo (puede acceder al sistema)</label>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:14}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={save} disabled={!form.nombre||form.pin?.length<4}>Guardar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SUPERADMIN SHELL
+// ═══════════════════════════════════════════════════════════════════
+function SuperAdminShell({data,setData,onLogout}){
+  const [tab,setTab]=useState("profesores");
+  const [verComo,setVerComo]=useState(null); // {profesorId, profesorNombre} o null
+
+  // Si está "viendo como" un profesor, mostrar su panel
+  if(verComo!==null){
+    return <div>
+      <div style={{background:"#2c3e50",color:"#fff",padding:"8px 16px",
+        display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:13}}>
+        <span>👁️ Viendo como: <b>{verComo.profesorId?"Prof. "+verComo.profesorNombre:"Profesor Principal"}</b></span>
+        <button onClick={()=>setVerComo(null)}
+          style={{background:"rgba(255,255,255,.2)",border:"none",color:"#fff",
+            borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:12}}>
+          ← Volver al panel Admin
+        </button>
+      </div>
+      <AdminShell data={data} setData={setData} onLogout={onLogout}
+        profesorId={verComo.profesorId} profesorNombre={verComo.profesorNombre}
+        esSuperAdmin={true}/>
+    </div>;
+  }
+
+  const SA_TABS=[
+    {id:"profesores",label:"Profesores",icon:"👨‍🏫"},
+    {id:"alumnos",   label:"Todos los alumnos",icon:"👤"},
+    {id:"clases",    label:"Todas las clases",icon:"📅"},
+    {id:"pagos",     label:"Contabilidad global",icon:"💶"},
+    {id:"ajustes",   label:"Ajustes",icon:"⚙️"},
+  ];
+
+  return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
+    {/* Cabecera */}
+    <div style={{background:"linear-gradient(135deg,#2c3e50,#1a252f)",color:"#fff",padding:"0 16px"}}>
+      <div style={{maxWidth:980,margin:"0 auto"}}>
+        <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",filter:"brightness(0) invert(1)",opacity:.9}}/>
+            <div>
+              <div style={{fontWeight:800,fontSize:16}}>José Caballero Golf Academy</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>👑 Panel Administrador</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            {/* Accesos rápidos "Ver como" */}
+            <div style={{fontSize:12,color:"rgba(255,255,255,.7)"}}>Ver como:</div>
+            <button onClick={()=>setVerComo({profesorId:null,profesorNombre:"Principal"})}
+              style={{background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.3)",
+                color:"#fff",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
+              👨‍🏫 Principal
+            </button>
+            {(data.profesores||[]).filter(p=>p.activo).map(p=>
+              <button key={p.id} onClick={()=>setVerComo({profesorId:p.id,profesorNombre:p.nombre})}
+                style={{background:p.color+"33",border:`1px solid ${p.color}`,
+                  color:"#fff",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer"}}>
+                👨‍🏫 {p.nombre.split(" ")[0]}
+              </button>
+            )}
+            <button onClick={onLogout}
+              style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",
+                borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:4}}>
+              Salir
+            </button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
+          {SA_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:tab===t.id?G.white:"transparent",
+              color:tab===t.id?"#2c3e50":"rgba(255,255,255,.8)",border:"none",
+              borderRadius:"8px 8px 0 0",padding:"8px 12px",fontSize:12,fontWeight:600,
+              cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {t.icon} {t.label}
+          </button>)}
+        </div>
+      </div>
+    </div>
+
+    <div style={{maxWidth:980,margin:"0 auto",padding:"22px 14px 60px"}}>
+      <h2 style={{margin:"0 0 18px",color:"#2c3e50",fontSize:19,fontWeight:800}}>
+        {SA_TABS.find(t=>t.id===tab)?.icon} {SA_TABS.find(t=>t.id===tab)?.label}
+      </h2>
+      {tab==="profesores"&&<ModProfesores data={data} setData={setData}/>}
+      {tab==="alumnos"&&<ModAlumnos data={data} setData={setData} modoAdmin={true}/>}
+      {tab==="clases"&&<ModClases data={data} setData={setData} modoAdmin={true}/>}
+      {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
+      {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
+    </div>
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ROOT
+// ═══════════════════════════════════════════════════════════════════
+export default function App(){
+  const [data,setDataRaw]   = useState(loadData);
+  const [session,setSession]= useState(null);
+  const [savedFlash,setSavedFlash] = useState(false);
+  const [fbReady,setFbReady]= useState(false);
+  const [notifs,setNotifs]  = useState([]);
+  const [pendientesCount,setPendientesCount] = useState(0);
+
+  // ── Conectar Firebase al arrancar ──
+  useEffect(()=>{
+    signInAnonymously(auth)
+      .then(()=>{
+        cargarDatosFirebase().then(fbData=>{
+          if(fbData){ setDataRaw(fbData); saveData(fbData); }
+          setFbReady(true);
+        });
+        // Escuchar cambios en tiempo real
+        const unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
+          if(snap.exists()){
+            const fbData = { ...makeDefaultData(), ...snap.data() };
+            setDataRaw(prev=>{
+              // Merge fotos locales (no se guardan en Firebase por tamaño)
+              const alumnos = (fbData.alumnos||[]).map(a=>{
+                const local = (prev.alumnos||[]).find(x=>x.id===a.id);
+                return {...a, foto: local?.foto||a.foto||""};
+              });
+              return {...fbData, alumnos};
+            });
+          }
+        }, err=>{ console.warn("Snapshot error:", err); setFbReady(true); });
+        // Escuchar notificaciones
+        const unsubN = onSnapshot(
+          query(collection(db,"notificaciones"), orderBy("timestamp","desc")),
+          snap=>setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))),
+          err=>console.warn("Notif error:", err)
+        );
+        // Escuchar registros pendientes para el contador
+        const unsubP = onSnapshot(
+          collection(db,"registros_pendientes"),
+          snap=>setPendientesCount(snap.docs.length),
+          err=>console.warn("Pendientes error:", err)
+        );
+        return ()=>{ unsub(); unsubN(); unsubP(); };
+      })
+      .catch(err=>{ console.warn("Firebase error:", err); setFbReady(true); });
+  },[]);
+
+  function setData(d){
+    setDataRaw(d);
+    saveData(d);
+    setSavedFlash(true);
+    setTimeout(()=>setSavedFlash(false),1500);
+    guardarDatosFirebase(d);
+  }
+  function onLogin(s){setSession(s);}
+  function onLogout(){
+    // Siempre limpiar PIN guardado al cerrar sesión manualmente
+    // para evitar que el auto-login entre de nuevo inmediatamente
+    localStorage.removeItem("gcr_pin_saved");
+    setSession(null);
+  }
+
+  // Pantalla de carga
+  if(!fbReady) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
+      display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
+      <img src={LOGO_JCGA} alt="José Caballero Golf Academy" style={{width:200,objectFit:"contain",borderRadius:10,marginBottom:8}}/>
+      <div style={{color:"rgba(255,255,255,.7)",fontSize:14}}>Conectando con el servidor...</div>
+      <div style={{width:44,height:44,border:"4px solid rgba(255,255,255,.25)",
+        borderTop:"4px solid white",borderRadius:"50%",
+        animation:"spin 1s linear infinite"}}/>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+
+  if(!session) return <LoginScreen data={data} onLogin={onLogin}/>;
+  if(session.role==="alumno"||session.role==="tutor")
+    return <PortalAlumno data={data} setData={setData} alumnoId={session.alumnoId} onLogout={onLogout} tutorNombre={session.tutorNombre||null}/>;
+  if(session.role==="superadmin")
+    return <SuperAdminShell data={data} setData={setData} onLogout={onLogout}/>;
+  // admin (profesor principal) y profesor adicional: mismo panel, filtrado por profesorId
+  return <AdminShell data={data} setData={setData} onLogout={onLogout}
+    profesorId={session.profesorId||null}
+    profesorNombre={session.profesorNombre||null}
+    esSuperAdmin={false}/>;
+}
+
+const LOGO_JCGA = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNCIgdmlld0JveD0iMCAwIDY4MCAzODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjY4MCIgaGVpZ2h0PSIzODAiIGZpbGw9IiMwODA4MDgiLz4KICA8cGF0aCBkPSJNIDI1NSAxOTUgQyAyNjggMTMwIDMxMCA3OCAzNjAgODggQyA0MDAgOTYgNDE4IDEyOCA0MDggMTY4IiBmaWxsPSJub25lIiBzdHJva2U9IiMxYTVjMmEiIHN0cm9rZS13aWR0aD0iMzIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0gMjU1IDE5NSBDIDI2OCAxMzAgMzEwIDc4IDM2MCA4OCBDIDQwMCA5NiA0MTggMTI4IDQwOCAxNjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjQwOCIgY3k9IjE2OCIgcj0iMjQiIGZpbGw9IiMwODA4MDgiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8Y2lyY2xlIGN4PSI0MDgiIGN5PSIxNjgiIHI9IjE1IiBmaWxsPSIjMWE1YzJhIi8+CiAgPGNpcmNsZSBjeD0iNDA4IiBjeT0iMTY4IiByPSI3IiBmaWxsPSIjYzhhODRiIi8+CiAgPHBhdGggZD0iTSA0MDggMTY4IEMgNDQ1IDEzOCA0NzIgMTQ4IDQ2OCAxODIgQyA0NjQgMjA4IDQ0OCAyMTggNDQwIDIyNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzhhODRiIiBzdHJva2Utd2lkdGg9IjAuOCIgc3Ryb2tlLWRhc2hhcnJheT0iMyA3IiBvcGFjaXR5PSIwLjQ1Ii8+CiAgPGxpbmUgeDE9IjE3MiIgeTE9IjIyNiIgeDI9IjUwOCIgeTI9IjIyNiIgc3Ryb2tlPSIjMWE1YzJhIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8bGluZSB4MT0iMTcyIiB5MT0iMjI5IiB4Mj0iNTA4IiB5Mj0iMjI5IiBzdHJva2U9IiNjOGE4NGIiIHN0cm9rZS13aWR0aD0iMC41IiBvcGFjaXR5PSIwLjQiLz4KICA8bGluZSB4MT0iNDQwIiB5MT0iMTg2IiB4Mj0iNDQwIiB5Mj0iMjI2IiBzdHJva2U9IiNmMGViZTAiIHN0cm9rZS13aWR0aD0iMS4yIiBvcGFjaXR5PSIwLjciLz4KICA8cGF0aCBkPSJNIDQ0MCAxODYgTCA0NjAgMTk2IEwgNDQwIDIwNiBaIiBmaWxsPSIjYzhhODRiIi8+CiAgPGVsbGlwc2UgY3g9IjI3MiIgY3k9IjIzMCIgcng9IjI4IiByeT0iNCIgZmlsbD0iIzFhNWMyYSIgb3BhY2l0eT0iMC40Ii8+CiAgPGNpcmNsZSBjeD0iMjcyIiBjeT0iMTg2IiByPSIxMSIgZmlsbD0iI2YwZWJlMCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNzIiIHkxPSIxOTciIHgyPSIyNjQiIHkyPSIyMjYiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNzIiIHkxPSIxOTciIHgyPSIyODAiIHkyPSIyMjYiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNjQiIHkxPSIyMDgiIHgyPSIyOTYiIHkyPSIxOTgiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyOTYiIHkxPSIxOTgiIHgyPSIyNTYiIHkyPSIxOTYiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSIyMjAiIHkxPSIyNTQiIHgyPSI0NjAiIHkyPSIyNTQiIHN0cm9rZT0iIzFhNWMyYSIgc3Ryb2tlLXdpZHRoPSIwLjgiLz4KICA8dGV4dCB4PSIzNDAiIHk9IjI4OCIgZm9udC1mYW1pbHk9IidIZWx2ZXRpY2EgTmV1ZScsSGVsdmV0aWNhLEFyaWFsLHNhbnMtc2VyaWYiIGZpbGw9IiNmMGViZTAiIGxldHRlci1zcGFjaW5nPSI3IiBmb250LXdlaWdodD0iMjAwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5KT1PDiSBDQUJBTExFUk88L3RleHQ+CiAgPGxpbmUgeDE9IjIwNSIgeTE9IjMwNCIgeDI9IjMxOCIgeTI9IjMwNCIgc3Ryb2tlPSIjYzhhODRiIiBzdHJva2Utd2lkdGg9IjAuNSIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjMwNCIgcj0iMiIgZmlsbD0iI2M4YTg0YiIvPgogIDxsaW5lIHgxPSIzNjIiIHkxPSIzMDQiIHgyPSI0NzUiIHkyPSIzMDQiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIwLjUiLz4KICA8dGV4dCB4PSIzNDAiIHk9IjMzMiIgZm9udC1mYW1pbHk9IidIZWx2ZXRpY2EgTmV1ZScsSGVsdmV0aWNhLEFyaWFsLHNhbnMtc2VyaWYiIGZpbGw9IiNjOGE4NGIiIGxldHRlci1zcGFjaW5nPSIxNCIgZm9udC13ZWlnaHQ9IjMwMCIgZm9udC1zaXplPSIxMiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R09MRiBBQ0FERU1ZPC90ZXh0PgogIDx0ZXh0IHg9IjM0MCIgeT0iMzYwIiBmb250LWZhbWlseT0iJ0hlbHZldGljYSBOZXVlJyxIZWx2ZXRpY2EsQXJpYWwsc2Fucy1zZXJpZiIgZmlsbD0iI2YwZWJlMCIgbGV0dGVyLXNwYWNpbmc9IjMiIGZvbnQtd2VpZ2h0PSIxMDAiIGZvbnQtc2l6ZT0iOSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgb3BhY2l0eT0iMC4zNSI+Q0lVREFEIFJFQUw8L3RleHQ+Cjwvc3ZnPgo=";
+mport { useState, useEffect, useCallback, useMemo } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
+         addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
+} from "firebase/firestore";
+import { getAuth, signInAnonymously } from "firebase/auth";
+
+// ─── Firebase Config ──────────────────────────────────────────────
+// ── Google Calendar Configuración ────────────────────────────────
+const GCAL_CLIENT_ID = "532891287117-do4egt1ssit9eqmfg6ugtvfkal361d1o.apps.googleusercontent.com";
+const GCAL_SCOPES = "https://www.googleapis.com/auth/calendar";
+const GCAL_DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
+
+// ── EmailJS Configuración ─────────────────────────────────────────
+const EMAILJS_CONFIG = {
+  serviceId: "service_4vak30q",
+  templateProfesor: "template_2dwd6gs",
+  templateAlumno: "template_1npsgx8",
+  publicKey: "_ylIbA5NuK_OsByYY",
+};
+
+// ─── Cargar jsPDF dinámicamente ──────────────────────────────────
+function cargarJsPDF(){
+  if(window.jspdf) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload=()=>resolve();
+    s.onerror=()=>reject(new Error("jsPDF no cargó"));
+    document.head.appendChild(s);
+  });
+}
+
+async function generarPDFClase(clase, alumnoNombre){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  let y = 0;
+
+  // Paleta GCR + PGA
+  const VERDE = [15, 80, 30];
+  const AZUL  = [0, 48, 87];
+  const DORADO= [180, 140, 60];
+  const BLANCO= [255, 255, 255];
+  const GRIS  = [240, 242, 244];
+
+  // Cabecera azul marino
+  doc.setFillColor(...AZUL);
+  doc.rect(0, 0, W, 35, "F");
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 35, W, 3, "F");
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 38, W, 16, "F");
+
+  // Logos (GCR: proporción ~1:1.5; PGA: cuadrado)
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 2, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_PGA, "JPEG", W-30, 3, 22, 22); } catch(e){}
+
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(18); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 14, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 22, {align:"center"});
+  doc.setFontSize(8);
+  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 29, {align:"center"});
+  doc.setFontSize(12); doc.setFont("helvetica","bold");
+  doc.text("RESUMEN DE CLASE", W/2, 50, {align:"center"});
+
+  y = 62;
+
+  // Datos de la clase
+  doc.setTextColor(30,30,30);
+  doc.setFontSize(11);
+  const fmtISO2 = (iso) => { if(!iso) return ""; const p=iso.split("-"); return p.length===3?p[2]+"/"+p[1]+"/"+p[0]:iso; };
+  const filas = [
+    ["Alumno:", alumnoNombre],
+    ["Fecha:", fmtISO2(clase.fecha) || "—"],
+    ["Hora:", clase.horaInicio || clase.hora || "—"],
+    ["Duracion:", (clase.duracion||"60")+" min"],
+    ["Tipo:", clase.tipo || "—"],
+    ["Zona:", clase.zona || "—"],
+    ["Asistencia:", clase.asistio ? "Asistio" : "Pendiente"],
+  ];
+  filas.forEach(([k,v],i)=>{
+    const even = i%2===0;
+    doc.setFillColor(...(even ? [240,242,244] : [255,255,255]));
+    doc.rect(15, y-4, W-30, 7, "F");
+    doc.setFillColor(180,140,60);
+    doc.rect(15, y-4, 2, 7, "F");
+    doc.setFont("helvetica","bold"); doc.setTextColor(0,48,87);
+    doc.text(k, 20, y+0.5);
+    doc.setFont("helvetica","normal"); doc.setTextColor(30,30,30);
+    doc.text(String(v), 65, y+0.5);
+    y += 7;
+  });
+
+  if(clase.contenido){
+    y += 3;
+    doc.setFont("helvetica","bold"); doc.text("Contenido / Notas:", 15, y);
+    y += 6;
+    doc.setFont("helvetica","normal");
+    const lines = doc.splitTextToSize(clase.contenido, W-30);
+    doc.text(lines, 15, y);
+    y += lines.length * 5 + 4;
+  }
+
+  // Pie de página
+  doc.setFillColor(...DORADO);
+  doc.rect(0, H-13, W, 2, "F");
+  doc.setFillColor(...AZUL);
+  doc.rect(0, H-11, W, 11, "F");
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(7); doc.setFont("helvetica","normal");
+  doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
+
+  doc.save("clase-" + (clase.fecha||"golf") + "-" + alumnoNombre.replace(/\s+/g,"_") + ".pdf");
+}
+
+async function generarPDFInforme(rpt, alumnoNombre){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  let y = 0;
+
+  // Paleta: verde GCR + azul marino PGA + dorado PGA
+  const VERDE = [15, 80, 30];      // Verde oscuro Golf Ciudad Real
+  const AZUL  = [0, 48, 87];       // Azul marino PGA España
+  const DORADO= [180, 140, 60];    // Dorado PGA España
+  const BLANCO= [255, 255, 255];
+  const GRIS  = [240, 242, 244];
+
+  // ── CABECERA ─────────────────────────────────────────────────────
+  // Franja azul marino PGA
+  doc.setFillColor(...AZUL);
+  doc.rect(0, 0, W, 38, "F");
+
+  // Franja dorada decorativa
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 38, W, 3, "F");
+
+  // Franja verde GCR
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 41, W, 18, "F");
+
+  // Logos en cabecera (GCR: proporción ~1:1.5; PGA: cuadrado)
+  try { doc.addImage(LOGO_GCR_PDF, "JPEG", 8, 3, 15, 23); } catch(e){}
+  try { doc.addImage(LOGO_PGA, "JPEG", W-30, 4, 22, 22); } catch(e){}
+
+  // Texto cabecera
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(18); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 16, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 25, {align:"center"});
+  doc.setFontSize(8);
+  doc.text("Jugador Profesional y Técnico Deportivo de Golf  ·  PGA Nº 1908P", W/2, 33, {align:"center"});
+
+  doc.setFontSize(13); doc.setFont("helvetica","bold");
+  doc.text("INFORME DE SEGUIMIENTO", W/2, 53, {align:"center"});
+
+  y = 70;
+
+  // Caja del título del informe
+  doc.setFillColor(240, 248, 240);
+  doc.roundedRect(15, y-8, W-30, 26, 4, 4, "F");
+  doc.setDrawColor(26, 92, 42);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(15, y-8, W-30, 26, 4, 4, "S");
+
+  doc.setTextColor(26, 92, 42);
+  doc.setFontSize(14); doc.setFont("helvetica","bold");
+  const tituloLines = doc.splitTextToSize(rpt.titulo || "Informe de Seguimiento", W-40);
+  doc.text(tituloLines, W/2, y+2, {align:"center"});
+  y += 28;
+
+  // Helper para formatear fechas ISO a dd/mm/yyyy
+  const fmtISO = (iso) => {
+    if(!iso) return "";
+    const p = iso.split("-");
+    if(p.length===3) return p[2]+"/"+p[1]+"/"+p[0];
+    return iso;
+  };
+
+  // Datos del alumno en tabla compacta (sin emojis para jsPDF)
+  const datosRows = [
+    ["Alumno:", alumnoNombre],
+    ["Fecha de emision:", fmtISO(rpt.fechaCreacion)],
+  ];
+  if(rpt.fechaDesde && rpt.fechaHasta){
+    datosRows.push(["Periodo evaluado:", fmtISO(rpt.fechaDesde) + " a " + fmtISO(rpt.fechaHasta)]);
+  }
+
+  doc.setFontSize(10);
+  datosRows.forEach(([k, v]) => {
+    doc.setFillColor(245, 250, 245);
+    doc.rect(15, y-4, W-30, 8, "F");
+    doc.setFont("helvetica","bold"); doc.setTextColor(26, 92, 42);
+    doc.text(k, 18, y+1);
+    doc.setFont("helvetica","normal"); doc.setTextColor(30, 30, 30);
+    doc.text(String(v), 75, y+1);
+    y += 9;
+  });
+
+  y += 6;
+
+  // ── SECCIONES ────────────────────────────────────────────────────
+  const secciones = [
+    { titulo: "RESUMEN DEL PERIODO", texto: rpt.resumenTexto, color: VERDE },
+    { titulo: "OBJETIVOS LOGRADOS", texto: rpt.objetivosLogrados, color: [0, 100, 60] },
+    { titulo: "PROXIMOS OBJETIVOS", texto: rpt.objetivosProximos, color: AZUL },
+    { titulo: "PLAN DE TRABAJO", texto: rpt.planTrabajo, color: [80, 40, 120] },
+  ];
+
+  secciones.forEach(({titulo, texto, color}) => {
+    if(!texto) return;
+    if(y > 240){ doc.addPage(); y = 20; }
+
+    // Cabecera de sección con franja dorada izquierda
+    doc.setFillColor(...color);
+    doc.roundedRect(15, y-5, W-30, 9, 2, 2, "F");
+    doc.setFillColor(...DORADO);
+    doc.rect(15, y-5, 3, 9, "F");
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(10); doc.setFont("helvetica","bold");
+    doc.text(titulo, 22, y+1);
+    y += 13;
+
+    // Contenido con fondo gris suave
+    doc.setFillColor(...GRIS);
+    const lines = doc.splitTextToSize(texto, W-34);
+    const h = lines.length * 5.5 + 6;
+    doc.rect(15, y-4, W-30, h, "F");
+    doc.setTextColor(30,30,30);
+    doc.setFontSize(10); doc.setFont("helvetica","normal");
+    lines.forEach(line => {
+      if(y > 270){ doc.addPage(); y = 20; }
+      doc.text(line, 18, y);
+      y += 5.5;
+    });
+    y += 8;
+  });
+
+  // ── FIRMA ────────────────────────────────────────────────────────
+  if(y > 250) { doc.addPage(); y = 20; }
+  y += 4;
+
+  // Caja firma con borde dorado (ampliada para imagen de firma)
+  doc.setFillColor(...GRIS);
+  doc.rect(15, y-4, W-30, 36, "F");
+  doc.setDrawColor(...DORADO);
+  doc.setLineWidth(0.8);
+  doc.rect(15, y-4, W-30, 36, "S");
+
+  // Franja superior dorada
+  doc.setFillColor(...DORADO);
+  doc.rect(15, y-4, W-30, 3, "F");
+
+  doc.setTextColor(...AZUL);
+  doc.setFontSize(10); doc.setFont("helvetica","bold");
+  const firma0 = rpt.firmaTexto?.split("\n")[0] || "José Manuel Caballero Fernández";
+  doc.text(firma0, 20, y+5);
+  doc.setFont("helvetica","normal"); doc.setTextColor(60,60,60); doc.setFontSize(9);
+  (rpt.firmaTexto?.split("\n").slice(1)||["Jugador Profesional y Técnico Deportivo de Golf","PGA de España Nº 1908P","Golf Ciudad Real C.D."]).forEach((l,i)=>{
+    doc.text(l, 20, y+11+(i*4.5));
+  });
+
+  // Imagen de firma manuscrita a la derecha
+  try { doc.addImage(FIRMA_JOSE, "JPEG", W-68, y-2, 50, 32); } catch(e){}
+  doc.setFontSize(8); doc.setTextColor(...AZUL);
+  doc.text("Firma del Técnico Deportivo", W-43, y+32, {align:"center"});
+
+  // ── PIE DE PÁGINA ─────────────────────────────────────────────────
+  const totalPages = doc.internal.getNumberOfPages();
+  for(let i=1; i<=totalPages; i++){
+    doc.setPage(i);
+    // Franja dorada
+    doc.setFillColor(...DORADO);
+    doc.rect(0, H-13, W, 2, "F");
+    // Franja azul marino
+    doc.setFillColor(...AZUL);
+    doc.rect(0, H-11, W, 11, "F");
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text("Golf Ciudad Real C.D.  ·  PGA de España  ·  Documento confidencial", W/2, H-5, {align:"center"});
+    if(totalPages>1){
+      doc.text("Pag. "+i+" / "+totalPages, W-12, H-5, {align:"right"});
+    }
+  }
+
+  doc.save("informe-" + alumnoNombre.replace(/\s+/g,"_") + "-" + (rpt.fechaCreacion||"golf") + ".pdf");
+}
+
+// ─── Notificar clase al alumno por email (via Firestore→Make→Gmail) ──
+async function notificarClaseAlumnoEmail(clase, alumno){
+  if(!alumno?.email) return;
+  try {
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
+    await setDoc(doc(db, "academia_emails", "clase_" + clase.id), {
+      tipo: "clase",
+      id: clase.id,
+      alumnoNombre: alumno.nombre || "",
+      alumnoEmail: alumno.email || "",
+      fecha: clase.fecha || "",
+      horaInicio: clase.horaInicio || clase.hora || "",
+      duracion: clase.duracion || "60",
+      tipoClase: clase.tipo || "",
+      zona: clase.zona || "",
+      contenido: clase.contenido || "",
+      enlace,
+      enviadoAt: serverTimestamp(),
+    });
+  } catch(e){ console.warn("Notify clase email error:", e); }
+}
+
+// Cargar el SDK de EmailJS dinámicamente
+function cargarEmailJS(){
+  if(window.emailjs) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js";
+    s.onload=()=>{
+      try{ window.emailjs.init({publicKey:EMAILJS_CONFIG.publicKey}); }catch(e){console.warn("EmailJS init:",e);}
+      resolve();
+    };
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+
+// Enviar emails de un nuevo registro
+async function enviarEmailsRegistro(datos){
+  try{
+    await cargarEmailJS();
+    if(!window.emailjs) return;
+    // Email al profesor
+    await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
+      nombre_alumno: datos.nombre||"",
+      email_alumno: datos.email||"",
+      telefono_alumno: datos.telefono||"",
+      tipo_escuela: datos.tipoEscuela||"",
+      dias_preferencia: (datos.diasPreferencia||[]).join(", "),
+      horario_preferencia: datos.horarioPreferencia||"",
+    }).catch(e=>console.warn("Email profesor:",e));
+    // Email de bienvenida al alumno (solo si tiene email)
+    if(datos.email){
+      await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
+        nombre_alumno: datos.nombre||"",
+        email_alumno: datos.email,
+      }).catch(e=>console.warn("Email alumno:",e));
+    }
+  }catch(e){ console.warn("Error enviando emails:", e); }
+}
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDQMYwKTt05hfSPW-Trl7NYPGyDFKA76dQ",
+  authDomain: "golf-ciudad-real-50819.firebaseapp.com",
+  projectId: "golf-ciudad-real-50819",
+  storageBucket: "golf-ciudad-real-50819.firebasestorage.app",
+  messagingSenderId: "447720199984",
+  appId: "1:447720199984:web:312a8a1140d95554821af5"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db  = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
+
+// ─── Firestore helpers ────────────────────────────────────────────
+const DB_DOC = "academia/datos";
+
+async function cargarDatosFirebase() {
+  try {
+    const snap = await getDoc(doc(db, "academia", "datos"));
+    if (snap.exists()) return { ...makeDefaultData(), ...snap.data() };
+  } catch(e) { console.warn("Firebase load error:", e); }
+  return null;
+}
+
+async function guardarDatosFirebase(data) {
+  try {
+    // Remove foto fields from alumnos to save space (keep locally)
+    const dataToSave = {
+      ...data,
+      alumnos: (data.alumnos||[]).map(a => ({...a, foto:""})),
+      _ts: Date.now()
+    };
+    await setDoc(doc(db, "academia", "datos"), dataToSave);
+  } catch(e) { console.warn("Firebase save error:", e); }
+}
+
+async function notificarNuevoRegistro(alumno) {
+  try {
+    await addDoc(collection(db, "notificaciones"), {
+      tipo: "nuevo_registro",
+      nombre: alumno.nombre,
+      fechaNacimiento: alumno.fechaNacimiento||"",
+      tipoEscuela: alumno.tipoEscuela||"",
+      telefono: alumno.telefono||"",
+      email: alumno.email||"",
+      timestamp: serverTimestamp(),
+      leida: false,
+    });
+  } catch(e) { console.warn("Notificacion error:", e); }
+}
+
+// ─── Sincronizar clase individual en subcolección (para Make/Google Calendar) ─
+async function sincronizarClaseFirestore(clase, alumnos) {
+  try {
+    const alumno = (alumnos||[]).find(a => a.id === clase.alumnoId);
+    await setDoc(doc(db, "academia_clases", clase.id), {
+      id: clase.id,
+      fecha: clase.fecha || "",
+      horaInicio: clase.hora || clase.horaInicio || "10:00",
+      duracion: clase.duracion || "60",
+      tipo: clase.tipo || "",
+      zona: clase.zona || "",
+      contenido: clase.contenido || "",
+      asistio: clase.asistio || false,
+      alumnoId: clase.alumnoId || null,
+      alumnoNombre: alumno?.nombre || "",
+      alumnoEmail: alumno?.email || "",
+      gcalEventId: clase.gcalEventId || null,
+      gcalSyncAt: serverTimestamp(),
+    });
+  } catch(e) { console.warn("Sync clase error:", e); }
+}
+
+async function eliminarClaseFirestore(claseId) {
+  try {
+    await deleteDoc(doc(db, "academia_clases", claseId));
+  } catch(e) { console.warn("Delete clase error:", e); }
+}
+
+// u2500u2500u2500 Sincronizar informe publicado en subcoleccion (para Make/Gmail) u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+async function publicarInformeFirestore(informe, alumno) {
+  try {
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/?informe=${informe.id}`;
+    await setDoc(doc(db, "academia_emails", "informe_" + informe.id), {
+      tipo: "informe",
+      id: informe.id,
+      titulo: informe.titulo || "",
+      alumnoId: informe.alumnoId || "",
+      alumnoNombre: alumno?.nombre || "",
+      alumnoEmail: alumno?.email || "",
+      fechaCreacion: informe.fechaCreacion || "",
+      fechaDesde: informe.fechaDesde || "",
+      fechaHasta: informe.fechaHasta || "",
+      enlace,
+      publicadoAt: serverTimestamp(),
+    });
+  } catch(e) { console.warn("Publish informe error:", e); }
+}
+
+// ─── Palette ─────────────────────────────────────────────────────────────────
+const G = {
+  fairway:"#1a5c2a", grass:"#2e7d3c", mist:"#e8f5eb", sand:"#f5f0e8",
+  ink:"#1a2e1d", soft:"#6b8f6e", white:"#ffffff", flag:"#c8a84b",
+  danger:"#c0392b", sky:"#3a7abf", purple:"#7b5ea7", lavender:"#f0ebfa",
+  orange:"#d4651a",
+};
+
+const STORAGE_KEY = "gcr_academy_v3";
+function uid() { return Date.now().toString(36)+Math.random().toString(36).slice(2); }
+function today() { return new Date().toISOString().slice(0,10); }
+function fmtDate(d) {
+  if (!d) return "—";
+  const [y,m,day] = d.split("-");
+  return `${day}/${m}/${y}`;
+}
+const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+const DIAS  = ["L","M","X","J","V","S","D"];
+
+// ─── Default data ─────────────────────────────────────────────────────────────
+const DEFAULT_ADMIN_PIN = "1234";
+
+function makeDefaultData() {
+  return {
+    adminPin: DEFAULT_ADMIN_PIN,
+    alumnos: [],
+    clases: [],
+    estadisticas: [],
+    bonos: [],
+    pagos: [],
+    analisis: [],
+    slots: [],
+    reservas: [],
+    asignaciones: [],
+    resultadosTest: [],
+    tareas: [],
+    mensajes: [],
+    programas: [],
+    informes: [],
+    labels: {},
+    superAdminPin: "0000",
+    profesores: [],
+    permisosPortal: {
+      inicio: true,
+      calendario: true,
+      reservas: true,
+      analisis: true,
+      stats: true,
+      informes: true,
+      ejercicios: true,
+      mensajes: true,
+      miperfil: true,
+    },
+    ingresos: [],
+    gastos: [],
+    categoriasIngreso: [
+      {nombre:"Clase individual",precio:60},
+      {nombre:"Bono clases",precio:500},
+      {nombre:"Cuota mensual",precio:120},
+      {nombre:"Clase grupo",precio:35},
+      {nombre:"Clase empresa",precio:80},
+      {nombre:"Torneo",precio:0},
+      {nombre:"Evento",precio:0},
+      {nombre:"Otro",precio:0},
+    ],
+    categoriasGasto: [
+      {nombre:"Material deportivo",precio:0},
+      {nombre:"Desplazamiento",precio:0},
+      {nombre:"Formación/Licencias",precio:0},
+      {nombre:"Cuota autónomo",precio:0},
+      {nombre:"Asesoría/Gestoría",precio:0},
+      {nombre:"Publicidad",precio:0},
+      {nombre:"Equipamiento",precio:0},
+      {nombre:"Ropa/Uniformes",precio:0},
+      {nombre:"Seguro",precio:0},
+      {nombre:"Otro",precio:0},
+    ],
+  };
+}
+
+function loadData() {
+  try {
+    const r = localStorage.getItem(STORAGE_KEY);
+    if (r) {
+      const parsed = JSON.parse(r);
+      const def = makeDefaultData();
+      // Merge: existing data takes priority, missing keys get defaults
+      return { ...def, ...parsed };
+    }
+  } catch(e) {}
+  return makeDefaultData();
+}
+
+function saveData(d) {
+  try {
+    const json = JSON.stringify(d);
+    localStorage.setItem(STORAGE_KEY, json);
+    // Also save timestamp
+    localStorage.setItem(STORAGE_KEY + "_ts", new Date().toISOString());
+  } catch(e) {
+    console.warn("Error guardando datos:", e);
+  }
+}
+
+// ─── Base UI ─────────────────────────────────────────────────────────────────
+function Badge({color,children}){
+  const m={green:[G.mist,G.fairway],gold:["#fdf6e3","#a07c10"],blue:["#e8f0fb",G.sky],red:["#fdecea",G.danger],gray:["#f0f0f0","#555"],purple:[G.lavender,G.purple]};
+  const[bg,tc]=m[color]||m.gray;
+  return <span style={{background:bg,color:tc,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{children}</span>;
+}
+function Btn({onClick,color="primary",small,children,disabled,full}){
+  const s={primary:[G.grass,G.white],secondary:[G.mist,G.fairway],danger:[G.danger,G.white],gold:[G.flag,G.white],sky:[G.sky,G.white],purple:[G.purple,G.white]};
+  const[bg,tc]=s[color]||s.primary;
+  return <button onClick={onClick} disabled={disabled}
+    style={{background:disabled?"#ccc":bg,color:tc,border:"none",borderRadius:8,padding:small?"5px 12px":"9px 18px",fontSize:small?12:14,fontWeight:600,cursor:disabled?"not-allowed":"pointer",width:full?"100%":"auto"}}
+    onMouseEnter={e=>{if(!disabled)e.currentTarget.style.opacity=".82";}}
+    onMouseLeave={e=>{e.currentTarget.style.opacity="1";}}>{children}</button>;
+}
+function Card({children,style}){return <div style={{background:G.white,borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",padding:20,...style}}>{children}</div>;}
+function Modal({title,onClose,children,wide}){
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+    <div style={{background:G.white,borderRadius:16,width:"100%",maxWidth:wide?700:520,maxHeight:"93vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}}>
+      <div style={{background:G.fairway,color:G.white,padding:"14px 18px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:1}}>
+        <span style={{fontWeight:700,fontSize:15}}>{title}</span>
+        <button onClick={onClose} style={{background:"none",border:"none",color:G.white,fontSize:20,cursor:"pointer",lineHeight:1}}>✕</button>
+      </div>
+      <div style={{padding:20}}>{children}</div>
+    </div>
+  </div>;
+}
+function Field({label,children}){return <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:4}}>{label}</label>{children}</div>;}
+function Input({value,onChange,type="text",placeholder,maxLength}){
+  return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} maxLength={maxLength}
+    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>;
+}
+function Sel({value,onChange,options}){
+  return <select value={value} onChange={e=>onChange(e.target.value)}
+    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+    {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+  </select>;
+}
+function Textarea({value,onChange,placeholder,rows=3}){
+  return <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
+    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}/>;
+}
+function Divider({label}){
+  return <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
+    <div style={{flex:1,height:1,background:"#e5e5e5"}}/>
+    {label&&<span style={{fontSize:11,color:G.soft,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>}
+    <div style={{flex:1,height:1,background:"#e5e5e5"}}/>
+  </div>;
+}
+
+const NIVELES=["Iniciación","Intermedio","Avanzado","Competición"];
+const PALO_OPTIONS=["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","6-hierro","7-hierro","8-hierro","9-hierro","PW","SW","Putter"];
+const ASPECTOS=["Agarre","Postura","Alineación","Backswing","Impacto","Follow-through","Ritmo","Peso","Cabeza","Rotación de caderas","Posición de los pies","Extensión de brazos"];
+const ZONAS=["Campo de prácticas","Green de prácticas","Hoyo 1","Sala de teoría","Campo exterior"];
+
+// ═══════════════════════════════════════════════════════
+// LOGIN SCREEN
+// ═══════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// ETIQUETAS PERSONALIZABLES DE LA APP
+// ═══════════════════════════════════════════════════════════════════
+const DEFAULT_LABELS = {
+  // ── Navegación instructor
+  nav_calendario:"Calendario", nav_alumnos:"Alumnos", nav_clases:"Clases",
+  nav_estadisticas:"Estadísticas", nav_analisis:"Vídeo Análisis",
+  nav_ejercicios:"Ejercicios & Tests", nav_mensajes:"Mensajes",
+  nav_tareas:"Tareas", nav_pagos:"Pagos", nav_ajustes:"Ajustes",
+  // ── App general
+  app_nombre:"José Caballero Golf Academy", app_subtitulo:"Golf Ciudad Real C.D.",
+  app_profesor:"Profesor", app_alumno:"Alumno",
+  // ── Ficha de alumno
+  campo_nombre:"Nombre completo", campo_edad:"Edad", campo_nivel:"Nivel",
+  campo_telefono:"Teléfono", campo_email:"Email",
+  campo_fechaAlta:"Fecha de alta", campo_notas:"Notas",
+  campo_pin:"PIN de acceso", campo_tutores:"Padres / Tutores",
+  // ── Estadísticas de juego
+  campo_golpes:"Golpes", campo_fairways:"Fairways (%)", campo_gir:"GIR (%)",
+  campo_putts:"Putts", campo_bunkers:"Bunkers", campo_handicap:"Hándicap",
+  campo_hoyos:"Hoyos", campo_distancia:"Distancia (m)",
+  // ── Clases
+  campo_tipo_clase:"Tipo de clase", campo_zona:"Zona",
+  campo_duracion:"Duración", campo_contenido:"Contenido / Objetivo", campo_asistio:"Asistencia",
+  // ── Pagos y bonos
+  campo_importe:"Importe (€)", campo_concepto:"Concepto",
+  campo_metodo:"Método de pago", campo_bonos:"Bonos de clases",
+  campo_fechaCompra:"Fecha de compra", campo_plazas:"Plazas",
+  // ── Vídeo análisis
+  campo_tipo_golpe:"Tipo de golpe", campo_palo:"Palo", campo_videourl:"URL del vídeo",
+  campo_positivos:"Aspectos positivos", campo_mejorar:"A mejorar",
+  campo_tecnico:"Informe técnico", campo_tutores_msg:"Mensaje para padres/tutores",
+  campo_valoracion:"Valoración",
+  // ── Tareas
+  campo_tarea_titulo:"Título de tarea", campo_prioridad:"Prioridad",
+  campo_estado:"Estado", campo_asignado:"Asignado a", campo_zona_trabajo:"Zona de trabajo",
+  campo_recurrente:"Tarea recurrente", campo_fechaFin:"Fecha de fin",
+  // ── Grupos de edad
+  grupo_pollitos:"Pollitos", grupo_pares:"Pares", grupo_birdies:"Birdies",
+  grupo_eagles:"Eagles", grupo_albatros:"Albatros",
+  // ── Portal alumno
+  portal_inicio:"Inicio", portal_clases:"Clases", portal_analisis:"Análisis",
+  portal_stats:"Estadísticas", portal_ejercicios:"Ejercicios",
+  portal_mensajes:"Mensajes", portal_pin:"Mi PIN",
+};
+
+function useLabels(data){
+  const saved=data.labels||{};
+  return (key)=>saved[key]!==undefined?saved[key]:DEFAULT_LABELS[key]||key;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// LOGOS EMBEBIDOS
+// ═══════════════════════════════════════════════════════════════════
+const LOGO_GCR = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCAB4AFADASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAUDBAYCAQf/xAA6EAACAQMBBQUECQIHAAAAAAABAgMABBEFEhMhMVEGFCJBYTJxobEjM0KBkcHR4fAVUhYkNlNic5L/xAAYAQEBAQEBAAAAAAAAAAAAAAAAAQMEAv/EAB8RAQACAQMFAAAAAAAAAAAAAAABEQIDEkEhIiMxcf/aAAwDAQACEQMRAD8A+kUitLRdZR7u8d3RmIjjDYCgfnT08jSDTbxbLs/G+NuRnZUT+5smgL7TdIslG8idpG9iNXJZqrR9nnunEjoLOLyTJZj76cadp5iY3V0d5eScWY/Y9BTGgTR9m7FFwwkkPUtj5UT6LbQW8kkDzQsilhsSHyFOK5kQSRsh5MCDQVdIZ30yB5XaR2GSzHjzq7SvQpCLZ7SQ/TWzFSOozwNNKAooooPDyNZjs5G11KryD6K0BCD/AJE5z/PStOeRpR2ZjCaXtDm7sT8vyoHFKde1uHR7cFhvJ3+rjzz9T6U1r5d2iuzddobhpCTHG+7AHko4cPjUlnqZbY6HA1a5uZbd3vN6Z8o8R2oY7djyyw5nnXdrqeoW4YpPLctbNu7mRiHhVPJhjByP1qm4R4L2zF09lp5HeIEuE8Up9D0yK6OzKlrf3VqLbTp13DR2j4MhGcEj3ijK5aCGddTle606VBeweFwPYlXy+7+etXI9aiQhL2OS1l5EMpIPuNZrTbuS3v7J7iULJFJ3QWzrsyCM8mPXyrcMiuMMoYdCM1W2GVwprq9i8yRJOGdzgAA1epPrsUcNikyRqpilVgVAHnTej2DypV2dYf09o/OKRlPzprSKyk7j2gubV+EdwdtPf/M0D2vlnaa0e0126VgQrtvFPUHjX1NhtKRkjI5jmKy+t2+oRDeS2ltqtuo5tHiRB935VJZ6kXDL22qnNtcXEm/uLUhI4ZVGwUxjn1Hr6Uwks2ju7u3ktTNfyAT24tX8EWTnOPLyqj3jQbg/S2V1aN57mQOPwau47zRbNibW2vbh8YzJNu8/+ajH7Jlpcpu9YhWKfvctwiPdPJHgxFTnC9OQFbmsvolvqEq7yK0ttKt2HNY8yuPv/OtQo2VAyTgczzNWG2Hoq7RMP6esXnLIqj501HKkV5J37tBbWqcY7c7b+/8AmKfVWgpH2ls2lt0u4ciWA5JHPH7U8rxgGUggEHgQaBZpOpi6RYZ8JcgZx5OOopnWcmsora6Fpc7S28jZt5gcGJv7c1dEmp2XheMXsQ+2pw49486DKdurSODU4po0Cb5Mtgc2B5/KjsLaRz6nNNIgfcplcjOGJ5/Ope2l2l5DaOIZopEZlIkXHPH6Udi7tLOG7cwzSyOygCNc8s/rU5c9eRvaV6tqgtUaKDD3JGceSDqa4Mmp3vhSMWUR+2xy59w8qpQ2UVzdG1t8tbxsDcTE5Mrf25quhY7NWbRW73U2TLOc5PPH708rwAKAAAAOAAr2gKKKKCG6toru3aGZdpG+HqKW2t1LYTLZX7ZU8IZzyYdD604qG5torqFopkDIfhQIu3EW3oW3/tyq3zH50dh4tjQdvH1krN8h+VV9eiu7TRbq1lDXNqVzHJ9pMEEA0aDFdXei2trEGtrULmST7T5JJAozrvszurqTUJmsrBsIOE045KOg9aZWttFaW6wwrsovx9TRbW0VrCsUKBUX41NRoKKKKArzaGcZGemaTpPJqt/NCjtHZwHDFDgyHpnpV06ZZFNk20eOuOP486C5RVPT7d7WKSJmLKJCUJOTs+VU7WQ6vcTO5Pc4m2EQHAc9T+lBfv4xcafcxL4i8TLgdSKLCIwafbREYKRKpHuFQXGlW7pmBRbzD2ZI/CQfu51Fo1895FLBcgd4hOy/r60SuTWis+lrD/iR4dk7oRbYTJxnhT+ivaKQ63BGL6xIGN7Lh8EjaHDnVy70qB7dhAojl5o20RxoKPZY7tbuB+EqSZYH8Kd3BmCZgEZbo+cfCqNzpzC975ZSLFORh1b2XHrUu/vihHc028c96Nn5ZoIdOvLjUrSWRkjjXiigE5zj96rdlXHcZYjwdJDke8ftV3R7KSwszFKysxct4fuqOXTpYL1rywZQz/WRP7L+voaBnSLR12tb1KVfY2tn78/tTB3v5UKJDHAx4bbPtY9wHOpLO0Sxtt3ENo8yx5sepoF6f6rk/wCj9Kc0mFrfjV2vRHBhk2NjeHl78VZlS9uJoVkSKKBXDPhyS2OQ5daCrr4LXOnBWKEy8GAzjlVmWyujLbsbt5lSUMyMqjh14CotTtLy6urd4khCQPtDac5bl6cOVNIi7IDIgRvMBsj8aBZaNCbdO9n/ADe34wfb2s8MenwxVfEW43gwUjvCXI8lz8uVFFBLemF4LuZSpRigDg8CQeOK7aZLe4klgI3Ai44PhL58IHrRRQRrIY7S+tZz41QyLlskgj9fmKktQDNZm1PDY+m2eWNnhn1zRRQRamA17KEUM24BOD4l8XEgdQONE7wPeuwkhZDEhLOTk8eOMeeKKKCS7um7wtxGcxWzBX8XX2uH4fga7We3i1O5kZ1xukIOeZ45x8PhRRQf/9k=";
+const LOGO_GCR_PDF = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCACWAGQDASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAUDBAYCBwH/xAA/EAABAwMBBQQHBQcDBQAAAAABAgMEAAURIQYSEzFBIlFhkRQycYGhsdEVI0JSwRYzNVNz4fAHQ3IkNDZig//EABgBAQEBAQEAAAAAAAAAAAAAAAABAgME/8QAHBEBAQADAQEBAQAAAAAAAAAAAAECAxEhIjJB/9oADAMBAAIRAxEAPwD06kdyckz7qLXGeLLaUb7y08/Z8vOnlI4f/ls7+kn5JoD9loHVyQT37w+lUbja7LbwA87IU4fVbSoFR+GlNbvc1sLRDhJ4kx31R+Qd5r7a7O3EPpEg8eWvVTitcHwoM8xs9LmL4iGzFZPLiqyrypmzslGSBxpLqz/6gAfrWiooEf7Lw06tvSEHvCh9KgaalQL9FhNznnWnElSkr1wBnT4Vo6R3M+j7R26QrRCwWyfHX60DyiiigKKKKAooooCs25LTBv8Ac5K9QhlOB3nCcCtJWPnxjM2wVHOdxSklY7wEgmgcWCEpLarhK7UqT2iT+FPQU4oAwMCigKVv3+3NS0xEPF+Ss7oaZG8c+3kPOsvtntG6ZC7XAcKEJ0ecScFR/Lnu76XRmZU7Z9bcGFGT6AsrXLSrC14ydD7P0qdcstnvI2Z2nt7bjrUgPsvNKwttTZKkjv7OdPGp7pGbu9t/6ZxKljDjS0nr086xaZjTMqPKsnpUNh8BqVJfTvpyTzyc6ipYHEt85+22RtqbKSQ6iUhe72dMpUORHTn1p1Jsv9a+zXMTWeC/2JbXZcQdCcdaZ0gTHi3+K3PirVGlp0UpOhSsc0qHhXQkX6GN12K3MSPxoOCf89lV2l6e0VnpN7ujTCnTai0lPNS1EgfKnrDofYbdTyWkKHvoJKKKKApBFQFbYy1n8LQ+Saf0ijnh7YSUn/cZBHkPpQPahmvejQn3/wCU2pfkM1NUMxn0iE+x/MbUjzGKFeMB3MoPPDiZXvLz+LXJrTkRX71vyW5FqtMxGUpB3EukDrjQf531lnEKbcUhYKVJJBB6GnKJr90tyGpUxndt6d9thwY4qRzGepxpisvFjTG3tzbqxNsVsltfZ7SipK3E9pQ3sgezOtVzI4luiqt8B2K5BVuyZjPdyOo599TXB1NwlQrmqA7b7acNOvN6bwzry6dK6iht+4TbPZriI9teRvqU6M5wMEJJwf7CjZ1sq7FYu823wJPpMbcDyXDz3tAdevOtXWS2Ld9K9WO02iE1wOKj/dJOSfgPOtbWo76/yqXVActcpJ/lK+VQ7Pr37JGPckjyJFTXVYbtcpR/lK+VQbOpKbHGB6gn4mjZlRRRQFZu9r9A2ghTjohQ3VH4H4GtJSnaWGZdqWUDK2Tvp/X4UDYHIyNagmPOsMlxmOqQQdUIUArHhnn7KVbMXQS4giuq+/ZGBn8SaeUHnlzZ2dulwddVMft0lZytt5nQK/Tzqmdkn3hm3T4UwdyHMHyreXixQLw3iS1h0Dsuo0UPr7682v1mkWKaltbm+hY3m3E6Z+hqV5s8ee2G32DtM5bkwJC0NQ2zkBx1OB7xrirFyjw5DMdu8XuE2mKjdS3Ea3j06+7urIOPvOgBx1awOilE1uNn9i2g23KuxK1KAUGBoB/y7/ZUTH68kMtmpcRMZEOzQ5LkdKsrkOAJST1Oep8AK0dcttoabS22hKEJGAlIwBQ44hptTjiglCRkk9BWnpxnISbWSuFbkxkntvqAwOeBqf0ptBZ9HgsM9UIAPtxWWjuKvu0iXSD6OzqAeiRy8zWwooooooCgjIwaKKDFy7cu3XvEZwtKcO9GVnAJ/Kfl5VoLXeG5avR5I4EtGim1aZPhU91t6LjDUyrsrGqFflNKIrbF2SqFc0Fu4R9N8aKUB18aDSVjf9R2t6DDex6jik59o/tTQN3y3aNKROZHIK0WB/ntpNtdclzLIWn4L7DiHEqyodnu5++lY2TuNYyA1x58dnGd9xKfM17VXjthWlu9xHFIUsIcCt1IyTjWvRTdLpK7MG2KQD+N44x8qkc9M8tOX32o7RdfcShCeZUayt3uTlyjrWneagIOAeReV0Aph9kFeZd9ll4IG9uA4Qmo7eybvOTNcb3IMc7sdrGAfHFV3XNnLb6BACnE4ee7SvAdBTaiigKKKKAooooCld4tZlbsqIrhzGdUKGm94GmlFAstF1TNSWH08KW3o42dPeK+bTNcbZ2cjGfuiry1/Si7WkTCmRGXwZjeqHB18DVVq5mSw/bLkgMS1NqRroleRjSiWdnGQ2Ca4m0QXj920pX6frXpbjiGm1OOKCUJGSSdBXnuwbrMR2fMkqCENoSjJ5kkk4HlWiS3K2hcC3gpi3JOUo/E5UjnqnyFF3aKVup3m7a0rU8i6a0DbaGm0ttpCUJGAB0FfGmkMtJbaSEISMADpXdV1FFFFAUUUUBRXxRCQSogAcyapKu8IKKUOqdI58JCl/ECgvUVRau8F10NB/dcJwErSUnPvFXqAqpcLdGuDW5IRqPVWPWT7Klky48VIMh1KM8gTqfYOtVTeYIIC3Ftg8itpSQfeRQZrZKwsF6a5Ky4GJKmkpPI46nzragADAGAKp22OhhD621pWmQ8p4FJyNcfSpJM2NEx6Q6G88sg0ZxnJxYoqpHuUOS4G2H0rUegBq3RoUVUkXOFGcLb8hKFDoQa4+2LfjPpScd+D9KC9RVNF0guJyiSgj30UCdx1d7vSoYWRCjnKwk43yP71omm0NNhtpCUISMBKRgCstseSmZNQ5+8wPgTmtWeWlBRukBMxtCkJTx2lpUhR8DqKmnSkwoTsleobTnHeegpfNvbsF1tuRAWFOaIw4CDUe0qnV2BSnG+GrfTvJ3s4Ge/yoPuz7CpDZukvtvvE7hP4EjTTupy42h1socSFJUMEEZBqhYFpXZYxSdAnHvBNMaDMMuKsd+EQKJhyCClJPq5/vT26AG1ygRkcJXypBtWCq4wQj1zp8dK0Fy/hkr+kr5UC7ZMAWZJA1K1Zp1SbZT+Co/5qpzQJNrgDaASNQ6nHxppB/7CP/ST8hSva3+D/wD0T+tSxWLmYTJRNZALacAsctPbQQTbGt+W49FfbaQs5Kd3Pa60VcsbbzcAok5LodXvHHM550UC2fCkWy7fakJsutLP3raeYzz+tOItyhymwtp9GvNKjgj3V8RNcfStcRgOtpJAUV7u+RzxpVdZYfmoZctzSluNcXeWBkDuOnPNAs2kkMvz7e2y4lxSFkqCTnGo+laKVHRKiuR3PVcTg+FUob7YhOyWITbfDKhupIGcc9cV2Z7vGYaEYFT7ZWPvOWOfTxFAptT7ljeXAuIKWFKy09js09cnxG2uIuS0EYznfFcMSG5anWHmt1xrG+2sAjB5Ed4qG3pgSOI5HiNIU2sp9QA+B99BSjRnLpeBcn0KRHa0YSoYKvHHxpheJLLNukJddQlSmlBKSdTp0FcN3F1bTroiEoZWpK91YJ054HWrOWZMdMhttDu8nKN4DX6UCbZidFatQadfbbWlZyFqxV1+6Nuzo0SE8la1ry4pOoCRqRnxrmPLYe9GUuChCJOQhXZOviMVI3Jw4/woKAWFbiilQBOe7TxoKO1shn7O4AdSXeIDuA5I50ztUlh+CwGnUKUlpO8kHUadRRPeixQhx5lKi4sJJ3RoO8+AolvIgBtbUZCuIsN9nCdTy6UF2igZwMjBooETMxNkbMB1KnOHktKT1BOQD3HXxqRMk/bzAcHb4HDVu8t44Vp4UUUEKJPorr1pKd5x1ai2vPZAV3+zNSTZSIl2jZSpSWGik+OcY+VFFBzKcUy29NXoqYEtoCT6ie/2866S4m33gJSXFofaSFA4yCOR8tKKKCK3zSpuRHaR94+6tSCo6De76atoRbrYEaqSyjXHM0UUCSAr0WJGmpyoMktOoUc8+qe4189LjCVKecjqWtToW2c4wRyz7xRRQXHVpnvS23lOIDLJQQjGD+bn4geVVXbgXbXEDqSXG3UlRzz3daKKC6brIeJVEbbDY0+8znPuooooP//Z";
+const LOGO_PGA = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCABQAFADASIAAhEBAxEB/8QAGwAAAQUBAQAAAAAAAAAAAAAABgABBAUHAgP/xAAwEAACAQMDAwIFAwQDAAAAAAABAgMABBEFEiETMUEGYSIyUXGBFEKRM1Kh8GLB0f/EABoBAAMBAQEBAAAAAAAAAAAAAAADBAEGBQL/xAAsEQABAwMBBQcFAAAAAAAAAAABAAIDBBESMSEysdHhBRQVIkGRoRNSYXHw/9oADAMBAAIRAxEAPwDSaVKg31Hrs1w8tjpm4pH/AFpU7n6gVhNk2GF0rrBWmq+p7Wxk6EA/VXOcbUPAPuaGbzXdWuo5Xa5FssbhWji4I/PmqeeWKJHigbfG+1txHIIz2NRpZXlcu7FmPcnuaV5nK2SSlo9jtp9z0UyRonQmW4klkEmCSxOVz3/iu91vHNK1tczxqqZj7gl/ocVW5pZNH0ypvG2XtgbfsckSWWu6tbMdtytxGkYkbqnI58Z7+cUTaV6mtb4pFOptZ2Hwh/lf7Gs2DkfXng481J6xu5oxPIFUALnGMCi7mqmOSlrNjdh9j1WvUqDvT2vtDItneOz27NsguG+v9pPn70Y00OuopoXROsVQerNVOn6f0omxPcZUEftXyaAHnRYEEQaN9pWQ7vnq81y5a79Q3DrJGBbDpqsgyD3zx/NDcr75C20LnnAHApW+5WySCjpchvHieQXBOTSpYNNTlyjnFxyOqVKlTkEHBBB+hGK1YmpwSDxTUqF9NcWnIahTIepdvHD1OACFDHgDvWg+ltTN7ZNBK4ee2OwsDncPBrNEPOP8GiXQLz9Pr1qwSOJJ16ZRTng8gnApA8jl1UcnfKXI6jiOap3RZ47i5eYCTfkIeS2T3qGkrxSdSN2R15DKcEVOfEMVxA0cQZHI3MwDd/A7nt/moKKrybXkWNT3YgkD+KIvVT9tXxZbS54BHHqATtoEL26v1WeNmMYwTlOe3vVfO9qPTO3UjGb3Y20cGTdn4c4847+3en1nVNOv9HW1iuyskbIQXjYBtq48UJ8D6U5eLJIAdm1Ft/Zpo3p1XgUC5kKI0uPiyRuOD48AfmqnSLu8gnWdoJbq35DZQvjxkHwakvrUN/ov6C9LRzIF2SgZUleASBz24P4NNoGpQ6O1w0kvX6gTCQ5PZsknIA7VqwkFwINgqX9NMLhYHjZJWIG1htx7/aiufTbXUfTELaeNz24JQkfExHzqfv8AMKp45bRzf3T3gW6lZukrRlhgnnPHkcVL9N60llLMLudI4WGQqxc7h2PA/FYsZiDY+qHR3qXDcCLp4jQOjhxIPm4PavTWDZSXzTWD5ilO4xlSCh8j7V3GrvZxRAQkSSAcH4xk/Sky6he72MLNeDpcK0122a09RTIqxbbn41aQ4C5zn/vj7UOTJ05GXIODjIOQa0f1ZpR1DT+rEuZ4MsAP3L5FAUkQniDJ8UvmNEwFUe3+5zRuuT5IxWUuI3hxHMKDUm3uUht5Ymj3F2Vg3GVwD2++f8VGIwcUqeuVIcxxB1VkdSi2vts4kZscgZXgnPB9j9q5TUI4zmO3A3IEcZ4OM4YeQe3scc96r6ehGZXtcSxSpEEi6bIu1iD8wzwT714UqcDNZdABe6w1KdAS3FEPpuxjuNetzFJ1Y4x1WO3GMdgfzVVar0d0pk6Tqm+PK53+KP8A0vpr2lm9zcDFzdHewx8o8Ck7zrrqo2dzpcPU8TyV7Qb6i0Ga3kkvtMB2uMyxKMkf8h/vFGVKmObcKKGZ0TrhZJLDDMskkGI44kXPUblj7V6Pod4IUlRBJuAJVT8S+xFHmoembG9uVuFTpShtzbRw/wBxUa40eZJC8e4HJJKHOSfrUFRJNCRgLj3T6ltPVAG1j89Vn7208Zw8Min3U0kt5pDiOGRj7KTRsYrtMAycZ5BHjH/tJY7xwBvAJH7Rmp/E3aYi/wDfhQeGt+5Co0W8Fu8zoECDdtJ+I/iuYIIYejLdfFDKDjptzkY7/wA0bW+kXLuHkd/HzcD6dvevfTPTFjYzmdh1pdxK7xwn2FU08k018xYK+mbT0oJG989FV+ntBlneK81Eu0UX9CKTuR4J9vajGlSq9rbJE0zpXXK//9k=";
+const LOGO_ENG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCABUAFADASIAAhEBAxEB/8QAGwAAAgMBAQEAAAAAAAAAAAAAAAYDBAUBAgf/xAA3EAACAQMCAwYDBwIHAAAAAAABAgMABBEFIQYSMRMUMkFRYSJxgRUzQmKRocEjJDVScnOisdH/xAAXAQADAQAAAAAAAAAAAAAAAAAAAQID/8QAIhEAAgICAgICAwAAAAAAAAAAAAECERIhAzETUQRBkbHw/9oADAMBAAIRAxEAPwD6TRRRQAV4mljgiaWVwkaDLMegFEkiRjLMB6DPWk8NHr9jczzXTtcKGaO2DEKig7AjzJxSbS2wNG44sswj93huZ1UbuiYA+tUNI4qih09FuoLpuU4aXxjOfWtC6vbeTRZIbGLEUkB5Qm3UdKj0K9to7aUQQkWssrMgxjbAHT6GsX8jjVu+tF+Kb+jbsL+21G37a1kEiZwdsEH3q1SjHFZwRXeo2t33FmmYQhT/AE2A8iPQkGmHSb3v+m29yQFaRcke/nWyafRBdooopgKWtcXtY30tta26uYjyl3Jxnz2FUrPjDU55SBZRTKgLuIwwIUdT1NaWqcJLqGrNdC47KKTd1C5Ofb51t6dpdppkPZ2sQXPiY7s3zNBOysyWHEmlBtmRh8Lfijb+DSbNJccNNLZywxyMx545A3UdMkdauz6nHp2rzy6PhYZMrIrglGceaKNzj9Ky71brU7s3E8Esspwu/LGNtum5rPkjGaxkrKUnF2uyG3l1KeyYRT8kHMwIG2Nix8thXnn1GwtmVZ+WIDp1xkDptt4hUjafcxGVBbRKI0Zmy7kbHBHXr7VI2l3jRg9jA6MFO0jYwfr5ftSwj1j+guXs5aX819YrpcVsrzSDs0PMAMe+fOnbQNCi0m3DSESXRHxP5L7D2pEis57eWO4S1lVkIdWjYONvPlO+K2ZeJru7tu6yMkaucSyxoRIqeeFP8GiEYwulVjcnLsk13i+eO9aDTWjEcexkI5uY+ePar/DHE7alN3S8VVnxlHXYPjqMetcvOErC90+E6c4iYLlJM5EgO+9U9D4UvbPVYri4eIRxHm+Fslq1I3Y7VFcMVt5WHUISP0qWl7jO7kttGAjdo+1kCMy9Qvnik3RQmpcSWbMO0jjLxIpBHM4xvsB039a9s19c3ZgSG5nmOcjnwMefh8vrW1p8Gm291pYgtl7O5V5WluCC45c49hUM17bu15bz3bKZ4kAlic3BjCsSQSAAM+221So0tsVmT3DUZFybGPHbdie0ySHPrk7detee43yPEosomeSRo0Eecll69D+9bFlrAteRILW7mgluWkxKATInKMHJ8wRmvEWqFJIHe0uuWOaftCAMgSdMe4ouHsdMypJrzT7gwypdWso+LCSE/XB6/rQ95Jd9kAYpZEdSpUcjjHljoevlWnZXlvbTTW1pfTCdrcJFPcjlCtzZ5Rnwgj96sy6bp15d3AdEeRxEpkicBRIVPMFxtzHqM7HcbU69MVjJw3kaFbA5GOYb+gYitSlXgi6meG7tJXd1t3whfqB6U1U4vQwpV4+/weH/AHh/0aaqyuIdNj1PTHjdmUx/1FKjJyB0ofQCBblZrCOW7JdI+ZFZ32jAwQAPck1LLenmm7iplLEBCityKAW+Q8xt0rNlaO3ZVhiBJUMHk+I7jOw6Cq8s0sv3kjsPQnYfSsPFm7ZXkxVI1jcyKSywKjsMuJJlxkJyjA9N871F2srXHaCFW5po5SFlU+EdB/FS6TZ2kxhcmNnH3iMM5z7evuM1BrUFtDdTCFR4l2GwTbJGPes1jnhX9+S3ljkS96EaRJNC0T4YNJKmVyAQh98ZqxBMbOG4u9Ok5JVwWaI5jOAMjB2xkkj9qwY55Yvu5GQegO36VYidLiRY5IwGcgc8Xwnr5joa0fG47RC5L0xw4AdpftCVzzO7gsT5mnOl7g/TUstL7ZXZzc/H8QxgdBTDW0SQrhGRg9K7WBqmqzz3n2XpOGuT97N+GEf+1QCRrFh2OoS2sbq8kDFVAPjQ7gf6hnGKyXVkOHVlP5hivrVvoljDYd0eFZkJ5naQZLt/mJ9arPwxp7DEfeIR6JMf5zU010Jqz5vp8lvFN2txluQEogXIY4ON87b4q/ql33nS4HeJI5GbHiy3KBnPyz60warwgwjL2rd4x+BgFkHyYbH5GodJ4OkdQ9z/AG4/MoaQ/Tov7ms5cdyUvspNpOIlLucDc+1X7O3ZJkMpETuQqc+2CduY+gGa+hx8LWKeKW6kHmDLyj/iBV6HR9PgtZLeO1jEUow4IyW+ZO9abfZKVFm1hS2tYYI/BGgQfICpqWoLyXh+8SxvmL6e+1vcN1T8rUyAgjI3FUM7UEFpb2zyvBEkbStzOVHiNFFAE9FFFABRRRQAUUUUAQXdpBe27QXMYkjbqDUkaLFGsaDlRAFUDyAoooA//9k=";
+
+const FIRMA_JOSE = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsICAoIBwsKCQoNDAsNERwSEQ8PESIZGhQcKSQrKigkJyctMkA3LTA9MCcnOEw5PUNFSElIKzZPVU5GVEBHSEX/2wBDAQwNDREPESESEiFFLicuRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUX/wAARCABzAJYDASIAAhEBAxEB/8QAGwABAAMBAQEBAAAAAAAAAAAAAAMFBgQCBwH/xABAEAABBAIAAwUEBggDCQAAAAABAAIDBAURBhIhEzFBYYEyUXGRFBUiQqGxBxYjQ1JicsEzgvBTc4OSosLR0uH/xAAXAQEBAQEAAAAAAAAAAAAAAAAAAQID/8QAHhEBAQEAAgEFAAAAAAAAAAAAAAERAiFRAxIxQWH/2gAMAwEAAhEDEQA/APriIiAiIgIiICIiAq7PZIYnD2LQHNI1vLEwd7nno0D1IVis+5wznEnZa3TxLg93ufOR0/5Rv1KsFjgqMmNwtSpPIZZo4x2jz4uPU/iV3oil7BERAREQEREBERAREQEREBERAREQVfEGUGKxckrSO2eCyIH+LXf6d68cM436swkEb9maT9rK5x2S53U7VLI79YeJoW9HVYiSzXixp6n/ADO0PgFsVq9TAREWQREQEREBERAREQEREBERAREQFXZR0lgMoV3Oa+f23t+5H4n4nuHxXdNKyCF8sh5WMBc4+QVTGZo6M92RurdzTY2H7gPRjfx2fVWCLhqlHF9KtRjUb3mKH/dtOvz2r5Q1K7alWKBnsxtDfipkoIiKAiIgIiICIiAiIgIiICIiAiLjyd11KruJoksyHkhjJ9t57vTxPkggsvGRyH0Bo3DBqSwfee9rP7lSSn6Rl4oQNsrs7V39R6N/DZXvHU/q6iGyyc8p3JNKfvOPUn/XgosN+2rPuu9q28yD+nuaPkB81RYovEsscET5ZntZGwbc5x0AFnPrfISZnH2HDsMTYldBGxw+3IS0lr3e4EjoPmkmjTIiqsjxFj8bMYJHvlsgbMEDC94Hnru9VBaosRd4hyeRu1LuFxduWrSe76Rt7W9q0jRa0b6kd/xGlZVeN6FuISRV7RZvlJDAeU+II3sEe5avGwaVFw1M1QuuDIbDRIfuPBa75FdyyCIiAiIgIiICIvMsrIYnySuDGMBc5zjoADxQeLVqGnWksWJBHFGNucfBcNCCS1YOStsLZHDlgid+6Z/7Hx+SirxuzU7LlgEUWHmrwuHtnwkd/YequFfgVfEMj/qw1oXamtvbAzXhzd59Btd47KnVAJDIoWa2e4ABVpBu8SjxioRb/wCI/wD8NH4r3r63tnfWjXdrXhM8f9o/E/BB4jgfmpGWbbC2k0h0Nd33z4PePyC7Mlj48lSfWkLmbIcx7PaY4HYcPMFdaJop47Obrt7OalBacBps0UvIHeZaR09NrN3eE8xLkJsiXwSMsyiSxj43uYH6Guj+/egOnQFbxElwU1PMVKsUdWSnYocg5RE+E8rR5ObsaXFc4dxmfJyWLtfR7L+hsViC2Qjpp7e53r1WmJABJ7gs1wjbrRcNR2JZ4YxNJNOdvA0HSOPX0V/YKK3i83QOrNBt6Ifvah6/Esd/YrowPFcVe6atu22OoI3OItbY+Jw10HN3gjfTw0o85+k+lBK+rheytTjYM0kgZE31PeqDHxYHL2X3+LM4y/Y5vswRB3Zs+Q6rpOHW8ojWzceC/M6twzj5snMO+XXJE3zLitHifrE0WHLdgLRO3Ng3ytHu2e9Yt97h3EQS2MBZtVZT17KvC9zHf5CNfLS8U/0h32SsZPirNyI6BkjruiePMg9D6ELN4+Ir6IiqcVxLj8uZGQvfFNH7UNhvZvA9+j3jzCLngtkVHLgr8zXtdxBdaHf7NkbSPXlUdfhV0ZJnzeWn3/FY5dfIK5Bb5DJVMVVNm9O2GEEN53d2z3Kmhu1uIy2WaQQ0In7bDI4NdMR3OcPBvuB7/FfruB8JM3VqvJa+1zbsTvf19SpYODOH6zg6LE1gR727/NXods2bxdZwZNkKsbtbDTK0H81wWON+Hq3OJMpCSwEkM278lYRYTFwPD4sfVY4dxETd/kqDjp8NfDwUYa7O1yFhldoY0Akb2QPiBr1SSW4KvEccYsUpBLHdks3ZXSzCKBxLA7oOvk0AKzHG9OsxkNTEZJ8TGgNLa5aNequ8JiG4upp/K+zJ9qV4Hj7h5DuCs9BW3j4Rkf1xyUx5qvDlt0Z7nSHW/QBQN4g4qmcWtwzIyegJY46+ZC2qKe6eFYiSTjKZnKQ6M774mRt/MleRjOKLjA2axaYAep+lNYf+lq2lq3BSrvsWpmQwsG3PedALC5fiu5lGuGOlOOxo9q5INSSD+QH2R5nr7lqW36RnuJHsxlyWrKZsjbbHzSNF2R3I3R9rwCYL9Gd6zVq2L8dXkdGHNicXN1vr9rXUnqrzh/hn6zlbI+u6DEteJHdrvtLrh1Bdvry769e/4L6JrXctX1LJkMYeLgezD/hMxcX9MBXYOELfI0DIxxnx5K//ANWsRctqsxFwfJo9vlZnHw5I2t/sVKOD67j+1vXHN1rQkDfxAWiRNFDBwZhonF0kEth/cHTzOeQPcNnoivkTaCIigIiICjkrwzSRSSxMe+I8zHOGy061sKREBERAXHeyLamo443T2X+xCzvPmfcPNLNmR7nV6WjN4vcNtj+PvPkvdSlHUDiNvlf1kld1c8/68EGLyXDfEudzRkvS0o6bNdi0lz2s955Om3eZKu8bwdSqSssXZJMhaadh8+uVp/lYOgWiRavK0O5ERZBERAREQEREBERAREQEREBR2CWwSEHR5SiIEEbIomtY0NGtqREQEREBERAREQEREBERB//Z";
+
+
+// ═══════════════════════════════════════════════════════════════════
+// CONFIRM MODAL — Reemplaza golfConfirm() que no funciona en artifact
+// ═══════════════════════════════════════════════════════════════════
+function ConfirmModal({msg, onOk, onCancel}){
+  return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,
+    background:"rgba(0,0,0,.55)",zIndex:9999,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{background:"#fff",borderRadius:16,padding:28,maxWidth:360,width:"100%",
+      boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
+      <div style={{fontSize:22,textAlign:"center",marginBottom:12}}>⚠️</div>
+      <div style={{fontSize:15,color:"#1a2e1d",textAlign:"center",
+        lineHeight:1.6,marginBottom:24}}>{msg}</div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={onCancel}
+          style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",
+            borderRadius:10,padding:"12px 0",fontSize:15,fontWeight:600,cursor:"pointer"}}>
+          Cancelar
+        </button>
+        <button onClick={onOk}
+          style={{flex:1,background:"#c0392b",color:"#fff",border:"none",
+            borderRadius:10,padding:"12px 0",fontSize:15,fontWeight:700,cursor:"pointer"}}>
+          Eliminar
