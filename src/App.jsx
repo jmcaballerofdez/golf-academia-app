@@ -763,7 +763,8 @@ function exportarExcel(data){
       const a=alumnos.find(x=>x.id===s.alumnoId);
       return [a?.nombre||s.alumnoId, s.fecha, s.hoyos, s.golpes,
         s.fairwaysPorcentaje, s.greensRegulacion, s.putts,
-        s.bunkers, s.handicap, s.palo, s.distancia, s.notas];
+        s.bunkers, s.handicapExacto, s.handicapJuego,
+        s.paloTee, s.falloTee, s.notas];
     })
   );
 
@@ -3138,8 +3139,10 @@ function ModEstadisticas({data,setData}){
       putts:    "",
       bunkers:  "",
       handicap: "",
-      palo:     "7-hierro",
-      distancia:"",
+      handicapExacto: "",
+      handicapJuego:  "",
+      paloTee: "Driver",
+      falloTee: "",
       notas:    "",
     });
     setModal(true);
@@ -3204,10 +3207,11 @@ function ModEstadisticas({data,setData}){
     {/* Gráficas resumen */}
     {alumnoStats.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
       {[
-        ["Golpes",     últimas10.map(s=>s.golpes),     G.fairway],
-        ["Hándicap",   últimas10.map(s=>s.handicap),   G.flag],
-        ["Putts",      últimas10.map(s=>s.putts),       G.sky],
-        ["GIR %",      últimas10.map(s=>s.greensRegulacion), G.grass],
+        ["Golpes",     últimas10.map(s=>s.golpes),        G.fairway],
+        ["Hcp Exacto", últimas10.map(s=>s.handicapExacto), G.flag],
+        ["Hcp Juego",  últimas10.map(s=>s.handicapJuego),  G.danger],
+        ["Putts",      últimas10.map(s=>s.putts),           G.sky],
+        ["GIR %",      últimas10.map(s=>s.greensRegulacion),G.grass],
       ].map(([label,vals,color])=>(
         <Card key={label} style={{padding:10}}>
           <div style={{fontSize:11,color:G.soft,marginBottom:4}}>{label}</div>
@@ -3238,12 +3242,15 @@ function ModEstadisticas({data,setData}){
                   </div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
                     {[
-                      ["Golpes",    s.golpes,                          G.fairway],
-                      ["Fairways",  s.fairwaysPorcentaje ? s.fairwaysPorcentaje+"%" : "—", G.grass],
-                      ["GIR",       s.greensRegulacion   ? s.greensRegulacion+"%"   : "—", G.sky],
-                      ["Putts",     s.putts,                           G.flag],
-                      ["Bunkers",   s.bunkers,                         G.purple],
-                      ["Hcp",       s.handicap,                        G.danger],
+                      ["Golpes",     s.golpes,                                              G.fairway],
+                      ["Fairways",   s.fairwaysPorcentaje ? s.fairwaysPorcentaje+"%" : "—", G.grass],
+                      ["GIR",        s.greensRegulacion   ? s.greensRegulacion+"%"   : "—", G.sky],
+                      ["Putts",      s.putts,                                               G.flag],
+                      ["Bunkers",    s.bunkers,                                             G.purple],
+                      ["Hcp Exacto", s.handicapExacto,                                     G.danger],
+                      ["Hcp Juego",  s.handicapJuego,                                      "#e67e22"],
+                      ["Palo Tee",   s.paloTee,                                             G.sky],
+                      ["Fallo Tee",  s.falloTee ? s.falloTee+"%" : "—",                    G.flag],
                     ].map(([k,v,c])=>(
                       <div key={k} style={{textAlign:"center",minWidth:44}}>
                         <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
@@ -3287,12 +3294,13 @@ function ModEstadisticas({data,setData}){
       {/* Stats principales */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:4}}>
         {[
-          ["golpes",              "Golpes totales",   "number"],
-          ["fairwaysPorcentaje",  "Fairways %",       "number"],
-          ["greensRegulacion",    "GIR %",            "number"],
-          ["putts",               "Putts",            "number"],
-          ["bunkers",             "Bunkers",          "number"],
-          ["handicap",            "Hándicap",         "number"],
+          ["golpes",             "Golpes totales",  "number"],
+          ["fairwaysPorcentaje", "Fairways %",      "number"],
+          ["greensRegulacion",   "GIR %",           "number"],
+          ["putts",              "Putts",           "number"],
+          ["bunkers",            "Bunkers",         "number"],
+          ["handicapExacto",     "Hándicap exacto", "number"],
+          ["handicapJuego",      "Hándicap juego",  "number"],
         ].map(([key,label,type])=>(
           <Field key={key} label={label}>
             <Input type={type} value={form[key]||""}
@@ -3302,11 +3310,17 @@ function ModEstadisticas({data,setData}){
         ))}
       </div>
 
-      {/* Palo referencia y distancia */}
+      {/* Palo desde el tee y fallo */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
-        
-        <Field label="Distancia media (m)">
-          <Input type="number" value={form.distancia||""} onChange={v=>setForm(f=>({...f,distancia:v}))} placeholder="—"/>
+        <Field label="Palo usado desde el tee">
+          <select value={form.paloTee||"Driver"} onChange={e=>setForm(f=>({...f,paloTee:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>
+              <option key={p} value={p}>{p}</option>)}
+          </select>
+        </Field>
+        <Field label="Fallo desde el tee (%)">
+          <Input type="number" value={form.falloTee||""} onChange={v=>setForm(f=>({...f,falloTee:v}))} placeholder="0-100"/>
         </Field>
       </div>
 
