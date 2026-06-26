@@ -9415,8 +9415,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             <img src={LOGO_PGA} alt="PGA España" style={{height:36,objectFit:"contain"}}/>
             <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:36,objectFit:"contain",background:"white",borderRadius:4,padding:"2px"}}/>
             <div style={{marginLeft:6}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#fff"}}>Golf B</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:1}}>{nombrePanel}</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>{nombrePanel}</div>
             </div>
           </div>
           <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
