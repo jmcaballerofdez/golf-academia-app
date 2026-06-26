@@ -9797,9 +9797,9 @@ export default function App(){
   if(session.role==="alumno"||session.role==="tutor")
     return <PortalAlumno data={data} setData={setData} alumnoId={session.alumnoId} onLogout={onLogout} tutorNombre={session.tutorNombre||null}/>;
   if(session.role==="superadmin")
-    return <SuperAdminShell data={data} setData={setData} onLogout={onLogout}/>;
-  // admin (profesor principal) y profesor adicional: mismo panel, filtrado por profesorId
+    return <SuperAdminShell data={data} setData={setData} onLogout={onLogout} notifs={notifs} pendientesCount={pendientesCount}/>;
   return <AdminShell data={data} setData={setData} onLogout={onLogout}
+    notifs={notifs} pendientesCount={pendientesCount}
     profesorId={session.profesorId||null}
     profesorNombre={session.profesorNombre||null}
     esSuperAdmin={false}/>;
