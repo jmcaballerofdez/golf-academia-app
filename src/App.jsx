@@ -621,7 +621,7 @@ const ZONAS=["Campo de prácticas","Green de prácticas","Hoyo 1","Sala de teor�
 // ═══════════════════════════════════════════════════════════════════
 const DEFAULT_LABELS = {
   // ── Navegación instructor
-  nav_calendario:"Calendario Escolar 2026-2027", nav_alumnos:"Alumnos", nav_clases:"Clases",
+  nav_calendario:"Calendario Escolar ", nav_alumnos:"Alumnos", nav_clases:"Clases",
   nav_estadisticas:"Estadísticas", nav_analisis:"Vídeo Análisis",
   nav_ejercicios:"Ejercicios & Tests", nav_mensajes:"Mensajes",
   nav_tareas:"Tareas", nav_pagos:"Pagos", nav_ajustes:"Ajustes",
@@ -1391,7 +1391,9 @@ function LoginScreen({data,onLogin}){
         {/* Logo Golf B - principal y grande */}
         <div style={{display:"flex",justifyContent:"center",marginBottom:12}}>
           <img src={LOGO_GOLFB} alt="Golf B"
-            style={{width:"100%",maxWidth:240,objectFit:"contain"}}/>
+            style={{width:"100%",maxWidth:220,objectFit:"contain",
+              background:"#f5f5f5",borderRadius:10,padding:"8px 16px",
+              border:"1px solid #e0e0e0"}}/>
         </div>
 
         {/* Logos secundarios */}
@@ -2182,7 +2184,7 @@ function EstructuraInfantil({data, setData, alumnos}){
     {vista==="grupos"&&<div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div style={{fontSize:12,color:G.soft,fontWeight:600}}>
-          Curso 2026-2027 · {gruposCurso.length} grupos
+          Plataforma Gestión Clases de Golf · {gruposCurso.length} grupos
         </div>
         <Btn onClick={nuevoGrupo}>+ Nuevo grupo</Btn>
       </div>
@@ -2539,7 +2541,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,
         paddingBottom:12,borderBottom:"1px solid #e0eee0"}}>
         <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain"}}/>
-        <div style={{fontSize:12,color:G.soft}}>🏫 Escuela de Golf · Golf Ciudad Real C.D. · Curso 2026/2027</div>
+        <div style={{fontSize:12,color:G.soft}}>🏫 Escuela de Golf · Golf Ciudad Real C.D. · Plataforma Gestión Clases de Golf</div>
       </div>
 
       {/* Tipo de escuela auto-detectado */}
@@ -4181,7 +4183,7 @@ function ModAjustes({data,setData,onLogout}){
         <div style={{display:"grid",gap:10}}>
           {[
             {id:"inicio",     label:"🏠 Inicio",           desc:"Pantalla de bienvenida con resumen de próximas clases"},
-            {id:"calendario", label:"🗓️ Calendario Escolar 2026-2027",        desc:"Calendario de la academia y descarga de PDF"},
+            {id:"calendario", label:"🗓️ Calendario Escolar ",        desc:"Calendario de la academia y descarga de PDF"},
             {id:"reservas",   label:"📅 Clases",            desc:"Historial de clases y reservas del alumno"},
             {id:"analisis",   label:"🎬 Vídeo Análisis",    desc:"Vídeos de análisis de swing compartidos por el profesor"},
             {id:"stats",      label:"📊 Estadísticas",      desc:"Rondas, hándicap y evolución del juego"},
@@ -4488,7 +4490,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
   const ATABS_ALL=[
     {id:"inicio",label:"Inicio",icon:"🏠"},
-    {id:"calendario",label:"Calendario Escolar 2026-2027",icon:"🗓️"},
+    {id:"calendario",label:"Calendario Escolar ",icon:"🗓️"},
     {id:"reservas",label:"Clases",icon:"📅"},
     {id:"analisis",label:"Análisis",icon:"🎬"},
     {id:"stats",label:"Estadísticas",icon:"📊"},
@@ -5319,7 +5321,7 @@ const CAT_ICONS = {
 
 
 // ═══════════════════════════════════════════════════════════════════
-// GRUPOS DE EDAD — Escuela de Golf Ciudad Real 2026/2027
+// GRUPOS DE EDAD — Escuela de Golf Ciudad Real 
 // ═══════════════════════════════════════════════════════════════════
 const GRUPOS_EDAD = [
   // ── Categorías infantiles/juveniles (por edad) ──
@@ -5977,7 +5979,7 @@ function ModMensajeriaAlumno({data,setData,alumnoId}){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// MÓDULO CURSO 2026/2027
+// MÓDULO CURSO 
 // ═══════════════════════════════════════════════════════════════════
 function ModCurso({data,setData,alumnos}){
   const [grupoSel,setGrupoSel]=useState("prebenjamin");
@@ -6020,7 +6022,7 @@ function ModCurso({data,setData,alumnos}){
         <div style={{fontWeight:800,fontSize:16}}>{grupo.nombre} — {grupo.rango}</div>
         <div style={{fontSize:13,opacity:.9,marginTop:2}}>{grupo.descripcion}</div>
         <div style={{fontSize:12,opacity:.8,marginTop:4}}>
-          {EJERCICIOS_CURSO.filter(e=>e.grupo===grupoSel).length} ejercicios programados para el curso 2026/2027
+          {EJERCICIOS_CURSO.filter(e=>e.grupo===grupoSel).length} ejercicios programados para el curso 
         </div>
       </div>
     </div>}
@@ -6104,7 +6106,7 @@ function ModEjerciciosAdmin({ data, setData }) {
   // ── Sub-tabs ──────────────────────────────────────────────────────
   const SUB = [
     { id:"biblioteca", label:"📚 Biblioteca" },
-    { id:"curso",      label:"🏫 Curso 2026/27" },
+    { id:"curso",      label:"🏫 Curso" },
     { id:"asignados",  label:"📌 Asignados" },
     { id:"tests",      label:"🧩 Tests" },
     { id:"resultados", label:"📊 Resultados" },
@@ -6123,7 +6125,7 @@ function ModEjerciciosAdmin({ data, setData }) {
         ))}
       </div>
 
-      {/* ── CURSO 2026/2027 ── */}
+      {/* ── CURSO  ── */}
       {tabPrincipal==="curso" && <ModCurso data={data} setData={setData} alumnos={alumnos}/>}
 
       {/* ── BIBLIOTECA ── */}
@@ -8989,7 +8991,7 @@ function ModTareas({data,setData}){
 // ADMIN SHELL
 // ═══════════════════════════════════════════════════════════════════
 const ADMIN_TABS=[
-  {id:"calendario",label:"Calendario Escolar 2026-2027",icon:"🗓️"},
+  {id:"calendario",label:"Calendario Escolar ",icon:"🗓️"},
   {id:"alumnos",label:"Alumnos",icon:"👤"},
   {id:"pendientes",label:"Pendientes",icon:"🔔"},
   {id:"programas",label:"Programas",icon:"📚"},
