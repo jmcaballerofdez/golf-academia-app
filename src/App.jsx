@@ -198,7 +198,7 @@ async function generarPDFInforme(rpt, alumnoNombre){
     ["Fecha de emision:", fmtISO(rpt.fechaCreacion)],
   ];
   if(rpt.fechaDesde && rpt.fechaHasta){
-    datosRows.push(["Periodo evaluado:", fmtISO(rpt.fechaDesde) + " a " + fmtISO(rpt.fechaHasta)]);
+    datosRows.push(["Periodo evaluado:", fmtDate(rpt.fechaDesde) + " a " + fmtDate(rpt.fechaHasta)]);
   }
 
   doc.setFontSize(10);
@@ -4261,7 +4261,7 @@ function ModAjustes({data,setData,onLogout}){
   const [pinSuper,setPinSuper]=useState(data.superAdminPin||"0000");
   const [savedAdmin,setSavedAdmin]=useState(false);
   const [savedSuper,setSavedSuper]=useState(false);
-  function savePin(){setData({...data,adminPin:pinAdmin});setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  function savePin(){setData({...data,adminPin:pinAdmin});setSavedAdmin(true);setTimeout(()=>setSavedAdmin(false),2000);}
   function saveSuperPin(){setData({...data,superAdminPin:pinSuper});setSavedSuper(true);setTimeout(()=>setSavedSuper(false),2000);}
 
   function exportarDatos(){
@@ -4352,7 +4352,7 @@ function ModAjustes({data,setData,onLogout}){
         </Field>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           <Btn onClick={savePin} disabled={pinAdmin.length<6}>Guardar clave</Btn>
-          {saved&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
+          {savedAdmin&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
         </div>
       </Card>
 
@@ -8832,9 +8832,9 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
         {alumno.tipoEscuela==="adultos"?"Escuela de Adultos":"Escuela Infantil"}
       </div>}
       {rpt.fechaDesde&&<div style={{fontSize:13,opacity:.7}}>
-        Período: {rpt.fechaDesde} → {rpt.fechaHasta}
+        Período: {fmtDate(rpt.fechaDesde)} → {fmtDate(rpt.fechaHasta)}
       </div>}
-      <div style={{fontSize:12,opacity:.6,marginTop:4}}>Informe generado: {rpt.fechaCreacion}</div>
+      <div style={{fontSize:12,opacity:.6,marginTop:4}}>Informe generado: {fmtDate(rpt.fechaCreacion)}</div>
     </div>}
 
     {/* ── RESUMEN ── */}
@@ -10027,7 +10027,7 @@ export default function App(){
   if(!fbReady) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
       display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
-      <img src={LOGO_JCGA} alt="José Caballero Golf Academy" style={{width:200,objectFit:"contain",borderRadius:10,marginBottom:8}}/>
+      <img src={LOGO_GOLFB} alt="Golf B" style={{width:220,objectFit:"contain",background:"white",borderRadius:12,padding:"10px 20px",marginBottom:8}}/>
       <div style={{color:"rgba(255,255,255,.7)",fontSize:14}}>Conectando con el servidor...</div>
       <div style={{width:44,height:44,border:"4px solid rgba(255,255,255,.25)",
         borderTop:"4px solid white",borderRadius:"50%",
