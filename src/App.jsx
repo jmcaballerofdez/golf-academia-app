@@ -507,6 +507,7 @@ function makeDefaultData() {
       mensajes: true,
       miperfil: true,
     },
+    solicitudesClase: [],
     ingresos: [],
     gastos: [],
     categoriasIngreso: [
@@ -1992,6 +1993,40 @@ function ModCalendario({data,setData}){
     {/* ── PDF Calendario para alumnos ── */}
     <PanelPdfCalendario esProfesor={true}/>
 
+    {/* ── Solicitudes de clase pendientes ── */}
+    {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length>0&&<Card style={{marginBottom:16,borderLeft:"4px solid #c8a84b",background:"#fffbf0"}}>
+      <div style={{fontWeight:700,color:"#856404",fontSize:14,marginBottom:10}}>
+        📬 Solicitudes de clase pendientes — {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length}
+      </div>
+      {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").map(s=>{
+        const al=(data.alumnos||[]).find(a=>a.id===s.alumnoId);
+        return <div key={s.id} style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",
+          padding:"10px 0",borderBottom:"1px solid #f0e8c8"}}>
+          <div style={{flex:1,minWidth:160}}>
+            <div style={{fontWeight:700,color:G.ink}}>{al?.nombre||s.alumnoNombre}</div>
+            <div style={{fontSize:12,color:G.soft}}>
+              📅 {fmtDate(s.fecha)} a las {s.hora} · {s.tipo} · {s.zona}
+            </div>
+            {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:2}}>💬 {s.notas}</div>}
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <Btn small color="sky" onClick={()=>{
+              // Aceptar: crear clase automáticamente + marcar solicitud aceptada
+              const nuevaClase={id:uid(),alumnoId:s.alumnoId,fecha:s.fecha,hora:s.hora,
+                tipo:s.tipo,zona:s.zona,contenido:s.notas||"",duracion:"60",asistio:false};
+              setData({...data,
+                clases:[...(data.clases||[]),nuevaClase],
+                solicitudesClase:(data.solicitudesClase||[]).map(x=>x.id===s.id?{...x,estado:"aceptada"}:x)
+              });
+            }}>✔ Aceptar</Btn>
+            <Btn small color="danger" onClick={()=>{
+              setData({...data,solicitudesClase:(data.solicitudesClase||[]).map(x=>x.id===s.id?{...x,estado:"rechazada"}:x)});
+            }}>✕ Rechazar</Btn>
+          </div>
+        </div>;
+      })}
+    </Card>}
+
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
       {/* Calendario */}
       <Card>
@@ -2595,6 +2630,23 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       <Field label="Notas">
         <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} rows={2} placeholder="Observaciones generales..."/>
       </Field>
+
+      {/* Permiso de reserva */}
+      <div style={{background:"#f0f7f0",borderRadius:10,padding:"10px 14px",marginTop:4}}>
+        <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8}}>📅 Reserva de clases</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <input type="checkbox" id="puedeReservarChk"
+            checked={!!form.puedeReservar}
+            onChange={e=>setForm(f=>({...f,puedeReservar:e.target.checked}))}
+            style={{width:16,height:16}}/>
+          <label htmlFor="puedeReservarChk" style={{fontSize:13,cursor:"pointer",color:G.ink}}>
+            Este alumno puede reservar clases desde su portal
+          </label>
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:4}}>
+          Si está desactivado, el alumno solo puede ver los huecos pero no reservar.
+        </div>
+      </div>
 
       {/* Asignación de profesores */}
       {(data.profesores||[]).filter(p=>p.activo).length>0&&<Field label="Profesores asignados">
@@ -4439,8 +4491,13 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const reservas=data.reservas||[];
 
   const misReservas=reservas.filter(r=>r.alumnoId===alumnoId&&r.estado!=="cancelada");
+  const puedeReservar = !!(alumno?.puedeReservar);
   const slotsDisponibles=slots.filter(s=>{
     if(s.fecha<today()) return false;
+    // Regla 24h para mostrar
+    const ahora=new Date();
+    const fechaHoraSlot=new Date(s.fecha+"T"+(s.hora||"10:00")+":00");
+    if((fechaHoraSlot-ahora)/(1000*60*60)<24) return false;
     const res=reservas.filter(r=>r.slotId===s.id&&r.estado!=="cancelada");
     const yaReservado=res.some(r=>r.alumnoId===alumnoId);
     if(yaReservado) return false;
@@ -4449,6 +4506,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
   function enviarSolicitudClase(){
     if(!formSolicitud.fecha) return;
+    // Regla 24h
+    const ahora=new Date();
+    const fechaHoraSol=new Date(formSolicitud.fecha+"T"+(formSolicitud.hora||"10:00")+":00");
+    const diffH=(fechaHoraSol-ahora)/(1000*60*60);
+    if(diffH<24){
+      alert("⚠️ Las solicitudes deben hacerse con al menos 24 horas de antelación.");
+      return;
+    }
     const solicitud = {
       id: uid(),
       alumnoId,
@@ -4471,6 +4536,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   function reservar(slotId){
     const slot=slots.find(s=>s.id===slotId);
     if(!slot) return;
+    // Regla 24h
+    const ahora=new Date();
+    const fechaHoraSlot=new Date(slot.fecha+"T"+(slot.hora||"10:00")+":00");
+    const diffHoras=(fechaHoraSlot-ahora)/(1000*60*60);
+    if(diffHoras<24){
+      alert("⚠️ No se puede reservar con menos de 24 horas de antelación.");
+      return;
+    }
     if(!confirm(`¿Reservar clase el ${fmtDate(slot.fecha)} a las ${slot.hora}?`)) return;
     const nueva={id:uid(),slotId,alumnoId,fechaReserva:today(),estado:"confirmada"};
     setData({...data,reservas:[...reservas,nueva]});
@@ -4632,7 +4705,12 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
       </div>}
 
       {tab==="reservas"&&<div>
-        {slotsDisponibles.length>0&&<div style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
+        {/* Aviso si no tiene permiso de reserva */}
+        {!puedeReservar&&<div style={{background:"#fff3cd",border:"1px solid #ffc107",borderRadius:10,padding:"12px 16px",marginBottom:16,fontSize:13,color:"#856404"}}>
+          ⚠️ Tu profesor no ha activado la reserva online para tu cuenta. Contacta con él para reservar una clase.
+        </div>}
+
+        {puedeReservar&&slotsDisponibles.length>0&&<div style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
           <div style={{fontSize:24}}>🔔</div>
           <div style={{flex:1}}>
             <div style={{fontWeight:800,fontSize:14}}>¡Tienes {slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
@@ -4663,33 +4741,35 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           </Card>;
         })}
 
-        <Divider label="HUECOS DISPONIBLES"/>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <h3 style={{margin:0,color:G.fairway}}>Reservar nueva clase</h3>
-          <Btn small color="primary" onClick={()=>setModalSolicitud(true)}>+ Solicitar clase</Btn>
-        </div>
-        {solicitudEnviada&&<div style={{background:"#e8f5eb",border:"1px solid "+G.grass,borderRadius:10,padding:"10px 14px",marginBottom:12,color:G.fairway,fontWeight:600,fontSize:13}}>
-          ✅ Solicitud enviada. Tu profesor la revisará pronto.
-        </div>}
-        {slotsDisponibles.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>No hay huecos disponibles ahora mismo.<br/><span style={{fontSize:12}}>Usa el botón "Solicitar clase" para pedir una cita.</span></div>}
-        {slotsDisponibles.slice(0,12).map(s=>{
-          const res=reservas.filter(r=>r.slotId===s.id&&r.estado!=="cancelada");
-          const libre=Number(s.plazas||1)-res.length;
-          return <Card key={s.id} style={{marginBottom:10,borderLeft:`3px solid ${G.grass}`}}>
-            <div style={{display:"flex",gap:12,alignItems:"center"}}>
-              <div style={{background:G.mist,borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
-                <div style={{fontSize:11,color:G.soft}}>{fmtDate(s.fecha)}</div>
-                <div style={{fontSize:15,fontWeight:800,color:G.fairway}}>{s.hora}</div>
+        {puedeReservar&&<>
+          <Divider label="HUECOS DISPONIBLES"/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <h3 style={{margin:0,color:G.fairway}}>Reservar nueva clase</h3>
+            <Btn small color="primary" onClick={()=>setModalSolicitud(true)}>+ Solicitar clase</Btn>
+          </div>
+          {solicitudEnviada&&<div style={{background:"#e8f5eb",border:"1px solid "+G.grass,borderRadius:10,padding:"10px 14px",marginBottom:12,color:G.fairway,fontWeight:600,fontSize:13}}>
+            ✅ Solicitud enviada. Tu profesor la revisará pronto.
+          </div>}
+          {slotsDisponibles.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>No hay huecos disponibles ahora mismo.<br/><span style={{fontSize:12}}>Usa el botón "Solicitar clase" para pedir una cita.</span></div>}
+          {slotsDisponibles.slice(0,12).map(s=>{
+            const res=reservas.filter(r=>r.slotId===s.id&&r.estado!=="cancelada");
+            const libre=Number(s.plazas||1)-res.length;
+            return <Card key={s.id} style={{marginBottom:10,borderLeft:`3px solid ${G.grass}`}}>
+              <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                <div style={{background:G.mist,borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
+                  <div style={{fontSize:11,color:G.soft}}>{fmtDate(s.fecha)}</div>
+                  <div style={{fontSize:15,fontWeight:800,color:G.fairway}}>{s.hora}</div>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,color:G.ink}}>{s.tipo} · {s.zona}</div>
+                  <div style={{fontSize:12,color:G.soft}}>{s.duracion}min · {libre} plaza{libre!==1?"s":""} libre{libre!==1?"s":""}</div>
+                  {s.notas&&<div style={{fontSize:12,color:G.fairway,marginTop:3}}>ℹ️ {s.notas}</div>}
+                </div>
+                <Btn small color="primary" onClick={()=>reservar(s.id)}>Reservar</Btn>
               </div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:700,color:G.ink}}>{s.tipo} · {s.zona}</div>
-                <div style={{fontSize:12,color:G.soft}}>{s.duracion}min · {libre} plaza{libre!==1?"s":""} libre{libre!==1?"s":""}</div>
-                {s.notas&&<div style={{fontSize:12,color:G.fairway,marginTop:3}}>ℹ️ {s.notas}</div>}
-              </div>
-              <Btn small color="primary" onClick={()=>reservar(s.id)}>Reservar</Btn>
-            </div>
-          </Card>;
-        })}
+            </Card>;
+          })}
+        </>}
       </div>}
 
       {/* MODAL SOLICITAR CLASE */}
