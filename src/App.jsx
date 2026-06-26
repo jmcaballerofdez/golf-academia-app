@@ -2154,6 +2154,26 @@ function GrupoBadge({a}){
   return g?<span style={{background:g.color,color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>{g.emoji} {g.nombre}</span>:null;
 }
 
+const GRUPOS_EDAD = [
+  // ── Categorías infantiles/juveniles (por edad) ──
+  { id:"prebenjamin", nombre:"Prebenjamín", rango:"5-7 años",   color:"#f5a623", emoji:"🐣", descripcion:"Iniciación lúdica. Juego libre, coordinación básica y amor por el deporte." },
+  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#7b5ea7", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
+  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#3a7abf", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
+  { id:"infantil",    nombre:"Infantil",    rango:"13-14 años", color:"#16a085", emoji:"🦅", descripcion:"Perfeccionamiento técnico y preparación para competición." },
+  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#2e7d3c", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
+  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#c0392b", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
+  { id:"sub21",       nombre:"Sub-21",      rango:"19-21 años", color:"#8e44ad", emoji:"🎓", descripcion:"Categoría juvenil superior. Competición avanzada y desarrollo de élite." },
+  // ── Grupos de adultos / modalidades ──
+  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#2e7d3c", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
+  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#1a5c2a", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
+  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#c8a84b", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
+  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#e67e22", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
+  { id:"bono_5",                 nombre:"Bono 5 Clases",        rango:"Adultos", color:"#3498db", emoji:"🎫", descripcion:"Paquete de 5 clases. Ahorro y continuidad en el aprendizaje." },
+  { id:"bono_10",                nombre:"Bono 10 Clases",       rango:"Adultos", color:"#2980b9", emoji:"🎟️", descripcion:"Paquete de 10 clases. Máximo ahorro y progresión sostenida." },
+  { id:"curso_hcp10",            nombre:"Curso Hándicap (10h)", rango:"Adultos", color:"#9b59b6", emoji:"📊", descripcion:"Curso intensivo de 10 horas para obtener la licencia y el hándicap." },
+];
+
+
 function EstructuraInfantil({data, setData, alumnos}){
   const [vista, setVista] = useState("categorias");
   const [modalGrupo, setModalGrupo] = useState(null);
@@ -5602,24 +5622,6 @@ const CAT_ICONS = {
 // ═══════════════════════════════════════════════════════════════════
 // GRUPOS DE EDAD — Escuela de Golf Ciudad Real 
 // ═══════════════════════════════════════════════════════════════════
-const GRUPOS_EDAD = [
-  // ── Categorías infantiles/juveniles (por edad) ──
-  { id:"prebenjamin", nombre:"Prebenjamín", rango:"5-7 años",   color:"#f5a623", emoji:"🐣", descripcion:"Iniciación lúdica. Juego libre, coordinación básica y amor por el deporte." },
-  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#7b5ea7", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
-  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#3a7abf", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
-  { id:"infantil",    nombre:"Infantil",    rango:"13-14 años", color:"#16a085", emoji:"🦅", descripcion:"Perfeccionamiento técnico y preparación para competición." },
-  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#2e7d3c", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
-  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#c0392b", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
-  { id:"sub21",       nombre:"Sub-21",      rango:"19-21 años", color:"#8e44ad", emoji:"🎓", descripcion:"Categoría juvenil superior. Competición avanzada y desarrollo de élite." },
-  // ── Grupos de adultos / modalidades ──
-  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#2e7d3c", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
-  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#1a5c2a", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
-  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#c8a84b", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
-  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#e67e22", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
-  { id:"bono_5",                 nombre:"Bono 5 Clases",        rango:"Adultos", color:"#3498db", emoji:"🎫", descripcion:"Paquete de 5 clases. Ahorro y continuidad en el aprendizaje." },
-  { id:"bono_10",                nombre:"Bono 10 Clases",       rango:"Adultos", color:"#2980b9", emoji:"🎟️", descripcion:"Paquete de 10 clases. Máximo ahorro y progresión sostenida." },
-  { id:"curso_hcp10",            nombre:"Curso Hándicap (10h)", rango:"Adultos", color:"#9b59b6", emoji:"📊", descripcion:"Curso intensivo de 10 horas para obtener la licencia y el hándicap." },
-];
 
 const EJERCICIOS_CURSO = [
 {id:"p001",grupo:"prebenjamin",trimestre:1,semana:1,categoria:"Coordinación",nombre:"El Globo de Golf",objetivo:"Coordinación ojo-mano y equilibrio.",descripcion:"Golpear globos inflados con palos esponja (pool noodle). Objetivo: mantener el globo en el aire el mayor tiempo posible.",duracion:"15 min",material:"Globos, palos esponja",variantes:["En parejas pasan el globo", "Con la mano izquierda", "Contar cada golpe"],tags:["coordinación", "lúdico"]},
