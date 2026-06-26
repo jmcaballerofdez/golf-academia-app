@@ -8576,7 +8576,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
     {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
       borderRadius:14,padding:"30px 24px",marginBottom:4,textAlign:"center",color:"#fff"}}>
       <div style={{display:"flex",justifyContent:"center",gap:12,marginBottom:16}}>
-        <img src={LOGO_GCR} alt="GCR" style={{height:52,objectFit:"contain"}}/>
+        <img src={LOGO_GCR} alt="GCR" style={{height:52,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
         <img src={LOGO_PGA} alt="PGA" style={{height:48,objectFit:"contain"}}/>
       </div>
       <div style={{fontSize:22,fontWeight:800,marginBottom:6}}>{rpt.titulo}</div>
@@ -9408,7 +9408,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             {/* Golf B — logo principal */}
             <img src={LOGO_GOLFB} alt="Golf B" style={{height:44,objectFit:"contain",background:"white",borderRadius:6,padding:"3px 8px"}}/>
             {/* Logos secundarios */}
-            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:44,objectFit:"contain"}}/>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:44,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
             <img src={LOGO_PGA} alt="PGA España" style={{height:36,objectFit:"contain"}}/>
             <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:36,objectFit:"contain",background:"white",borderRadius:4,padding:"2px"}}/>
             <div style={{marginLeft:6}}>
@@ -9659,7 +9659,7 @@ function SuperAdminShell({data,setData,onLogout}){
       <div style={{maxWidth:980,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain"}}/>
+            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
             <div>
               <div style={{fontWeight:800,fontSize:16}}>José Caballero Golf Academy</div>
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>👑 Panel Administrador</div>
