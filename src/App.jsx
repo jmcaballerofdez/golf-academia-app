@@ -654,8 +654,9 @@ const DEFAULT_LABELS = {
   campo_estado:"Estado", campo_asignado:"Asignado a", campo_zona_trabajo:"Zona de trabajo",
   campo_recurrente:"Tarea recurrente", campo_fechaFin:"Fecha de fin",
   // ── Grupos de edad
-  grupo_pollitos:"Pollitos", grupo_pares:"Pares", grupo_birdies:"Birdies",
-  grupo_eagles:"Eagles", grupo_albatros:"Albatros",
+  grupo_prebenjamin:"Prebenjamín", grupo_benjamin:"Benjamín", grupo_alevin:"Alevín",
+  grupo_infantil:"Infantil", grupo_cadete:"Cadete", grupo_boys_girls:"Junior",
+  grupo_sub21:"Sub-21",
   // ── Portal alumno
   portal_inicio:"Inicio", portal_clases:"Clases", portal_analisis:"Análisis",
   portal_stats:"Estadísticas", portal_ejercicios:"Ejercicios",
@@ -4105,7 +4106,7 @@ function ModAjustes({data,setData,onLogout}){
     { titulo:"💶 Pagos y bonos", keys:["campo_importe","campo_concepto","campo_metodo","campo_bonos","campo_fechaCompra","campo_plazas"] },
     { titulo:"🎬 Vídeo análisis", keys:["campo_tipo_golpe","campo_palo","campo_videourl","campo_positivos","campo_mejorar","campo_tecnico","campo_tutores_msg","campo_valoracion"] },
     { titulo:"📋 Tareas", keys:["campo_tarea_titulo","campo_prioridad","campo_estado","campo_asignado","campo_zona_trabajo","campo_recurrente","campo_fechaFin"] },
-    { titulo:"🐣 Grupos de edad", keys:["grupo_pollitos","grupo_pares","grupo_birdies","grupo_eagles","grupo_albatros"] },
+    { titulo:"🐣 Grupos de edad (RFEG)", keys:["grupo_prebenjamin","grupo_benjamin","grupo_alevin","grupo_infantil","grupo_cadete","grupo_boys_girls","grupo_sub21"] },
     { titulo:"📱 Portal del alumno", keys:["portal_inicio","portal_clases","portal_analisis","portal_stats","portal_ejercicios","portal_mensajes","portal_pin"] },
   ];
 
@@ -7908,7 +7909,7 @@ function ModProgramas({data, setData}){
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <Btn small onClick={()=>setVerProg(prog.id)}>📂 Abrir</Btn>
               <Btn small color="danger" onClick={()=>{
-                if(golfConfirm("¿Eliminar el programa "+prog.nombre+"?"))
+                if(window.confirm("¿Eliminar el programa «"+prog.nombre+"»? Esta acción no se puede deshacer."))
                   setData({...data,programas:programas.filter(p=>p.id!==prog.id)});
               }}>🗑</Btn>
             </div>
