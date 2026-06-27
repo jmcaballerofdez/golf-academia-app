@@ -7704,11 +7704,6 @@ variantes:["5 minutos (versión rápida)","15 minutos (versión completa)","Con 
 esquema:"🏆 10min completos · Cabeza→Cadera→Piernas · Pre-ronda perfecta",
 tags:["físico","pre-ronda","activación","rutina completa"]}
 ];
-];
-];
-];
-];
-];
 
 // ═══════════════════════════════════════════════════════════════════
 // BANCO DE PREGUNTAS PARA TESTS DINÁMICOS
