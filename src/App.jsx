@@ -5527,7 +5527,6 @@ const EJERCICIOS_BIBLIOTECA = [
     kpis:["Consistencia de la rutina","Mejora bajo presión"],
     erroresComunes:["Saltarse pasos","Rutina demasiado larga"],
     tags:["mental","rutina","concentración"] },
-,
 // ── PUTT PROFESIONAL ──
 
 {id:"pp01",cat:"Putt",nivel:"Básico",nombre:"El reloj del putting",icono:"🕐",
