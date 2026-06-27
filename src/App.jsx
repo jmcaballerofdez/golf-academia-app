@@ -7773,15 +7773,17 @@ const TESTS_BANCO = {
 // MÓDULO: EJERCICIOS Y TESTS — PANEL INSTRUCTOR
 // ═══════════════════════════════════════════════════════════════════
 
-const CATS = ["Todos","Putt","Juego Corto","Juego Largo","Estrategia","Reglas","Mental","Fitness Golf"];
+const CATS = ["Todos","Putt","Approach Alto","Approach Bajo","Juego Largo","Estrategia","Reglas","Concentración","Físico","Juego Corto","Mental","Fitness Golf"];
 const CAT_COLORS = {
   "Putt":"green","Juego Corto":"gold","Juego Largo":"blue",
   "Estrategia":"orange","Reglas":"red","Mental":"purple","Fitness Golf":"teal",
   "Drive":"blue","Hierros":"gray","Approach":"gold","Bunker":"orange","Chip":"green","Swing":"purple"
 };
 const CAT_ICONS = {
-  "Putt":"🎯","Juego Corto":"⛳","Juego Largo":"🏌️",
-  "Estrategia":"🧠","Reglas":"📋","Mental":"💭","Fitness Golf":"💪",
+  "Putt":"🎯","Approach Alto":"⬆️","Approach Bajo":"⬇️",
+  "Juego Largo":"🏌️","Estrategia":"♟️","Reglas":"📋",
+  "Concentración":"🧘","Físico":"💪",
+  "Juego Corto":"⛳","Mental":"💭","Fitness Golf":"🏋️",
   "Drive":"🚀","Hierros":"⚙️","Approach":"🎪","Bunker":"🏖️","Chip":"🏑","Swing":"🔄"
 };
 
@@ -8532,9 +8534,9 @@ function ModEjerciciosAdmin({ data, setData }) {
   const todosEj = [...EJERCICIOS_BIBLIOTECA, ...ejerciciosCustom];
 
   const filtrados = todosEj.filter(e => {
-    const matchCat = catFiltro === "Todos" || e.categoria === catFiltro;
-    const matchNivel = nivelFiltro === "Todos" || e.nivel === nivelFiltro || e.nivel === "Todos";
-    const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || (e.tags||[]).some(t=>t.includes(search.toLowerCase()));
+    const matchCat = catFiltro === "Todos" || e.categoria === catFiltro || e.cat === catFiltro;
+    const matchNivel = nivelFiltro === "Todos" || e.nivel === nivelFiltro || e.nivel === "Todos" || e.nivel === "Todos los niveles";
+    const matchSearch = !search || e.nombre.toLowerCase().includes(search.toLowerCase()) || (e.tags||[]).some(t=>t.toLowerCase().includes(search.toLowerCase())) || (e.cat||"").toLowerCase().includes(search.toLowerCase()) || (e.categoria||"").toLowerCase().includes(search.toLowerCase());
     return matchCat && matchNivel && matchSearch;
   });
 
@@ -8582,7 +8584,7 @@ function ModEjerciciosAdmin({ data, setData }) {
         <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar ejercicio o tag…"
             style={{ flex:1, minWidth:160, border:"1.5px solid #d0e0d0", borderRadius:8, padding:"8px 12px", fontSize:14, fontFamily:"inherit" }}/>
-          <Sel value={nivelFiltro} onChange={setNivelFiltro} options={["Todos","Iniciación","Intermedio","Avanzado"].map(v=>({value:v,label:v}))}/>
+          <Sel value={nivelFiltro} onChange={setNivelFiltro} options={["Todos","Básico","Iniciación","Intermedio","Avanzado","Todos los niveles"].map(v=>({value:v,label:v}))}/>
         </div>
         {/* Categorías */}
         <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
@@ -8590,7 +8592,7 @@ function ModEjerciciosAdmin({ data, setData }) {
             <button key={c} onClick={() => setCatFiltro(c)}
               style={{ background: catFiltro===c ? G.fairway : "#f0f0f0", color: catFiltro===c ? G.white : G.soft,
                 border:"none", borderRadius:20, padding:"5px 12px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
-              {CAT_ICONS[c]||"📌"} {c} {c!=="Todos"&&<span style={{opacity:.7}}>({todosEj.filter(e=>e.categoria===c).length})</span>}
+              {CAT_ICONS[c]||"📌"} {c} {c!=="Todos"&&<span style={{opacity:.7}}>({todosEj.filter(e=>e.categoria===c||e.cat===c).length})</span>}
             </button>
           ))}
         </div>
