@@ -1083,42 +1083,8 @@ function PantallaRegistro({onVolver}){
               </Field>
             </div>
 
-            {/* Días y horario preferencia */}
-            <Field label="📅 Días de clase preferidos">
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
-                {["Miércoles","Jueves","Sábado","Domingo"].map(dia=>(
-                  <label key={dia} style={{display:"flex",alignItems:"center",gap:8,
-                    background:form.diasPreferencia.includes(dia)?"#e8f5eb":"#f8f8f8",
-                    borderRadius:8,padding:"8px 10px",cursor:"pointer",
-                    border:form.diasPreferencia.includes(dia)?"2px solid #1a5c2a":"2px solid #eee",
-                    fontWeight:form.diasPreferencia.includes(dia)?700:400,
-                    fontSize:14,color:form.diasPreferencia.includes(dia)?"#1a5c2a":"#555"}}>
-                    <input type="checkbox"
-                      checked={form.diasPreferencia.includes(dia)}
-                      onChange={e=>setForm(f=>({...f,
-                        diasPreferencia:e.target.checked
-                          ?[...f.diasPreferencia,dia]
-                          :f.diasPreferencia.filter(d=>d!==dia)
-                      }))}
-                      style={{width:16,height:16}}/>
-                    {dia}
-                  </label>
-                ))}
-              </div>
-            </Field>
-            <Field label="⏰ Horario preferido">
-              <select value={form.horarioPreferencia}
-                onChange={e=>setForm(f=>({...f,horarioPreferencia:e.target.value}))}
-                style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
-                  padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-                <option value="">Seleccionar horario...</option>
-                <option value="Mañana (9:00-12:00)">Mañana (9:00-12:00)</option>
-                <option value="Mediodía (12:00-15:00)">Mediodía (12:00-15:00)</option>
-                <option value="Tarde (15:00-18:00)">Tarde (15:00-18:00)</option>
-                <option value="Tarde-noche (18:00-21:00)">Tarde-noche (18:00-21:00)</option>
-                <option value="Sin preferencia">Sin preferencia</option>
-              </select>
-            </Field>
+            {/* Días y horario preferencia - eliminados */}
+
           </Card>
 
           <Card style={{marginBottom:12}}>
