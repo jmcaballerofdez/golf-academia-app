@@ -198,7 +198,7 @@ async function generarPDFInforme(rpt, alumnoNombre){
     ["Fecha de emision:", fmtISO(rpt.fechaCreacion)],
   ];
   if(rpt.fechaDesde && rpt.fechaHasta){
-    datosRows.push(["Periodo evaluado:", fmtISO(rpt.fechaDesde) + " a " + fmtISO(rpt.fechaHasta)]);
+    datosRows.push(["Periodo evaluado:", fmtDate(rpt.fechaDesde) + " a " + fmtDate(rpt.fechaHasta)]);
   }
 
   doc.setFontSize(10);
@@ -1083,42 +1083,8 @@ function PantallaRegistro({onVolver}){
               </Field>
             </div>
 
-            {/* Días y horario preferencia */}
-            <Field label="📅 Días de clase preferidos">
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:4}}>
-                {["Miércoles","Jueves","Sábado","Domingo"].map(dia=>(
-                  <label key={dia} style={{display:"flex",alignItems:"center",gap:8,
-                    background:form.diasPreferencia.includes(dia)?"#e8f5eb":"#f8f8f8",
-                    borderRadius:8,padding:"8px 10px",cursor:"pointer",
-                    border:form.diasPreferencia.includes(dia)?"2px solid #1a5c2a":"2px solid #eee",
-                    fontWeight:form.diasPreferencia.includes(dia)?700:400,
-                    fontSize:14,color:form.diasPreferencia.includes(dia)?"#1a5c2a":"#555"}}>
-                    <input type="checkbox"
-                      checked={form.diasPreferencia.includes(dia)}
-                      onChange={e=>setForm(f=>({...f,
-                        diasPreferencia:e.target.checked
-                          ?[...f.diasPreferencia,dia]
-                          :f.diasPreferencia.filter(d=>d!==dia)
-                      }))}
-                      style={{width:16,height:16}}/>
-                    {dia}
-                  </label>
-                ))}
-              </div>
-            </Field>
-            <Field label="⏰ Horario preferido">
-              <select value={form.horarioPreferencia}
-                onChange={e=>setForm(f=>({...f,horarioPreferencia:e.target.value}))}
-                style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
-                  padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-                <option value="">Seleccionar horario...</option>
-                <option value="Mañana (9:00-12:00)">Mañana (9:00-12:00)</option>
-                <option value="Mediodía (12:00-15:00)">Mediodía (12:00-15:00)</option>
-                <option value="Tarde (15:00-18:00)">Tarde (15:00-18:00)</option>
-                <option value="Tarde-noche (18:00-21:00)">Tarde-noche (18:00-21:00)</option>
-                <option value="Sin preferencia">Sin preferencia</option>
-              </select>
-            </Field>
+            {/* Días y horario preferencia - eliminados */}
+
           </Card>
 
           <Card style={{marginBottom:12}}>
@@ -1297,7 +1263,9 @@ function PantallaRegistro({onVolver}){
 
 function LoginScreen({data,onLogin}){
   const [pin,setPin]=useState("");
+  const [mostrarPin,setMostrarPin]=useState(false);
   const [mostrarRegistro,setMostrarRegistro]=useState(false);
+  const [mostrarRecuperar,setMostrarRecuperar]=useState(false);
   const [recordar,setRecordar]=useState(()=>localStorage.getItem("gcr_recordar")==="1");
 
   // Auto-login si hay PIN guardado (se re-ejecuta cuando cargan los datos)
@@ -1415,7 +1383,7 @@ function LoginScreen({data,onLogin}){
           Plataforma Gestión Clases de Golf
         </div>
 
-        {/* Campo de clave */}
+        {/* Campo de clave con ojito */}
         <div style={{fontSize:13,color:G.soft,marginBottom:12,fontWeight:600}}>
           {intentando?"✔ Identificado…":"Introduce tu clave de acceso"}
         </div>
@@ -1423,16 +1391,23 @@ function LoginScreen({data,onLogin}){
         {error&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,
           padding:"8px 12px",fontSize:13,marginBottom:12}}>{error}</div>}
 
-        <div style={{marginBottom:14}}>
-          <input type="password" value={pin}
+        <div style={{marginBottom:14,position:"relative"}}>
+          <input type={mostrarPin?"text":"password"} value={pin}
             onChange={e=>setPin(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter"&&pin.length>0)intentarAcceso(pin);}}
             placeholder="Tu clave de acceso"
             autoComplete="current-password"
             style={{width:"100%",boxSizing:"border-box",border:"2px solid #d0e0d0",
-              borderRadius:12,padding:"14px 16px",fontSize:18,textAlign:"center",
-              fontFamily:"inherit",letterSpacing:2}}/>
+              borderRadius:12,padding:"14px 48px 14px 16px",fontSize:18,textAlign:"center",
+              fontFamily:"inherit",letterSpacing:mostrarPin?1:2}}/>
+          <button onClick={()=>setMostrarPin(v=>!v)}
+            style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",
+              background:"none",border:"none",cursor:"pointer",fontSize:20,color:G.soft,
+              padding:4,lineHeight:1}}>
+            {mostrarPin?"🙈":"👁️"}
+          </button>
         </div>
+
         <button onClick={()=>intentarAcceso(pin)} disabled={pin.length===0}
           style={{width:"100%",background:G.fairway,color:"white",border:"none",
             borderRadius:12,padding:"14px 0",fontSize:16,fontWeight:700,
@@ -1444,6 +1419,35 @@ function LoginScreen({data,onLogin}){
         <div style={{fontSize:11,color:"#ccc",marginTop:14}}>
           Tu clave te identifica automáticamente como profesor o alumno
         </div>
+
+        {/* Olvidé mi clave */}
+        <div style={{marginTop:10,textAlign:"center"}}>
+          <button onClick={()=>setMostrarRecuperar(v=>!v)}
+            style={{background:"none",border:"none",color:G.soft,fontSize:12,
+              cursor:"pointer",textDecoration:"underline"}}>
+            ¿Olvidaste tu clave?
+          </button>
+        </div>
+
+        {mostrarRecuperar&&<div style={{background:"#f0f7f0",borderRadius:10,
+          padding:"14px 16px",marginTop:10,fontSize:13,color:G.ink,textAlign:"left"}}>
+          <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>🔑 Recuperar acceso</div>
+          <p style={{margin:"0 0 8px",color:G.soft,lineHeight:1.5}}>
+            Si eres <b>alumno</b>, contacta con tu profesor para que te indique o restablezca tu PIN.
+          </p>
+          <p style={{margin:"0 0 8px",color:G.soft,lineHeight:1.5}}>
+            Si eres <b>profesor</b>, accede con el PIN de Super-Administrador (<b>Ajustes → Acceso</b>) y restablece tu clave desde ahí.
+          </p>
+          <p style={{margin:0,color:G.soft,lineHeight:1.5}}>
+            Si no recuerdas el PIN de Super-Admin, el PIN por defecto es <b>0000</b>.
+          </p>
+          <button onClick={()=>setMostrarRecuperar(false)}
+            style={{marginTop:10,background:"none",border:"1px solid #ccc",
+              borderRadius:6,padding:"4px 12px",fontSize:12,cursor:"pointer",color:G.soft}}>
+            Cerrar
+          </button>
+        </div>}
+
         <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,justifyContent:"center"}}>
           <input type="checkbox" id="recordar" checked={recordar}
             onChange={e=>{setRecordar(e.target.checked);
@@ -2115,6 +2119,26 @@ function GrupoBadge({a}){
   const g=GRUPOS_EDAD.find(g=>g.id===a.nivel);
   return g?<span style={{background:g.color,color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>{g.emoji} {g.nombre}</span>:null;
 }
+
+const GRUPOS_EDAD = [
+  // ── Categorías infantiles/juveniles (por edad) ──
+  { id:"prebenjamin", nombre:"Prebenjamín", rango:"5-7 años",   color:"#f5a623", emoji:"🐣", descripcion:"Iniciación lúdica. Juego libre, coordinación básica y amor por el deporte." },
+  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#7b5ea7", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
+  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#3a7abf", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
+  { id:"infantil",    nombre:"Infantil",    rango:"13-14 años", color:"#16a085", emoji:"🦅", descripcion:"Perfeccionamiento técnico y preparación para competición." },
+  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#2e7d3c", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
+  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#c0392b", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
+  { id:"sub21",       nombre:"Sub-21",      rango:"19-21 años", color:"#8e44ad", emoji:"🎓", descripcion:"Categoría juvenil superior. Competición avanzada y desarrollo de élite." },
+  // ── Grupos de adultos / modalidades ──
+  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#2e7d3c", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
+  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#1a5c2a", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
+  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#c8a84b", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
+  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#e67e22", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
+  { id:"bono_5",                 nombre:"Bono 5 Clases",        rango:"Adultos", color:"#3498db", emoji:"🎫", descripcion:"Paquete de 5 clases. Ahorro y continuidad en el aprendizaje." },
+  { id:"bono_10",                nombre:"Bono 10 Clases",       rango:"Adultos", color:"#2980b9", emoji:"🎟️", descripcion:"Paquete de 10 clases. Máximo ahorro y progresión sostenida." },
+  { id:"curso_hcp10",            nombre:"Curso Hándicap (10h)", rango:"Adultos", color:"#9b59b6", emoji:"📊", descripcion:"Curso intensivo de 10 horas para obtener la licencia y el hándicap." },
+];
+
 
 function EstructuraInfantil({data, setData, alumnos}){
   const [vista, setVista] = useState("categorias");
@@ -4261,7 +4285,7 @@ function ModAjustes({data,setData,onLogout}){
   const [pinSuper,setPinSuper]=useState(data.superAdminPin||"0000");
   const [savedAdmin,setSavedAdmin]=useState(false);
   const [savedSuper,setSavedSuper]=useState(false);
-  function savePin(){setData({...data,adminPin:pinAdmin});setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  function savePin(){setData({...data,adminPin:pinAdmin});setSavedAdmin(true);setTimeout(()=>setSavedAdmin(false),2000);}
   function saveSuperPin(){setData({...data,superAdminPin:pinSuper});setSavedSuper(true);setTimeout(()=>setSavedSuper(false),2000);}
 
   function exportarDatos(){
@@ -4352,7 +4376,7 @@ function ModAjustes({data,setData,onLogout}){
         </Field>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           <Btn onClick={savePin} disabled={pinAdmin.length<6}>Guardar clave</Btn>
-          {saved&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
+          {savedAdmin&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
         </div>
       </Card>
 
@@ -4566,6 +4590,9 @@ function CambiarPinAlumno({data,setData,alumnoId}){
   const [pinNuevo,setPinNuevo]=useState("");
   const [pinConfirm,setPinConfirm]=useState("");
   const [msg,setMsg]=useState("");
+  const [verActual,setVerActual]=useState(false);
+  const [verNuevo,setVerNuevo]=useState(false);
+  const [verConfirm,setVerConfirm]=useState(false);
   const alumno=(data.alumnos||[]).find(a=>a.id===alumnoId);
 
   function guardar(){
@@ -4583,17 +4610,32 @@ function CambiarPinAlumno({data,setData,alumnoId}){
     {[0,1,2,3,4,5].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<val.length?G.fairway:"#d0e0d0"}}/>)}
   </div>;
 
+  const CampoPin=({label,value,onChange,ver,setVer,placeholder})=>(
+    <Field label={label}>
+      <div style={{position:"relative"}}>
+        <input type={ver?"text":"password"} value={value}
+          onChange={e=>onChange(e.target.value.replace(/\D/g,"").slice(0,6))}
+          placeholder={placeholder}
+          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #d0e0d0",
+            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit",
+            letterSpacing:ver?1:3}}/>
+        <button onClick={()=>setVer(v=>!v)}
+          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
+          {ver?"🙈":"👁️"}
+        </button>
+      </div>
+    </Field>
+  );
+
   return <div>
-    <Field label="PIN actual">
-      <Input type="password" value={pinActual} onChange={v=>setPinActual(v.replace(/\D/g,"").slice(0,6))} placeholder="Tu PIN actual"/>
-    </Field>
-    <Field label="PIN nuevo (mínimo 4 dígitos)">
-      <Input type="password" value={pinNuevo} onChange={v=>setPinNuevo(v.replace(/\D/g,"").slice(0,6))} placeholder="Nuevo PIN"/>
-      <PinDots val={pinNuevo}/>
-    </Field>
-    <Field label="Confirmar PIN nuevo">
-      <Input type="password" value={pinConfirm} onChange={v=>setPinConfirm(v.replace(/\D/g,"").slice(0,6))} placeholder="Repite el nuevo PIN"/>
-    </Field>
+    <CampoPin label="PIN actual" value={pinActual} onChange={setPinActual}
+      ver={verActual} setVer={setVerActual} placeholder="Tu PIN actual"/>
+    <CampoPin label="PIN nuevo (mínimo 4 dígitos)" value={pinNuevo} onChange={setPinNuevo}
+      ver={verNuevo} setVer={setVerNuevo} placeholder="Nuevo PIN"/>
+    <PinDots val={pinNuevo}/>
+    <CampoPin label="Confirmar PIN nuevo" value={pinConfirm} onChange={setPinConfirm}
+      ver={verConfirm} setVer={setVerConfirm} placeholder="Repite el nuevo PIN"/>
     {msg==="error_actual"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN actual no es correcto.</div>}
     {msg==="error_corto"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN nuevo debe tener al menos 4 dígitos.</div>}
     {msg==="error_confirm"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Los PINs nuevos no coinciden.</div>}
@@ -4759,7 +4801,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
               </div>
             </div>
           </div>
-          <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {tab!=="inicio"&&<button onClick={()=>setTab("inicio")}
+              style={{background:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.4)",
+                color:"#fff",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+              ← Inicio
+            </button>}
+            <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
+          </div>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
           {ATABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
@@ -5478,6 +5527,2187 @@ const EJERCICIOS_BIBLIOTECA = [
     kpis:["Consistencia de la rutina","Mejora bajo presión"],
     erroresComunes:["Saltarse pasos","Rutina demasiado larga"],
     tags:["mental","rutina","concentración"] },
+,
+// ── PUTT PROFESIONAL ──
+
+{id:"pp01",cat:"Putt",nivel:"Básico",nombre:"El reloj del putting",icono:"🕐",
+duracion:"20 min",material:"Putter, 12 bolas, tee markers",
+objetivo:"Consistencia desde todas las direcciones a 1m.",
+descripcion:"Coloca 12 tees alrededor del hoyo formando un reloj, cada uno a 1 metro. Putea desde cada posición. Cuenta cuántos entran. Objetivo: 10/12 antes de aumentar a 1.5m.",
+ejecucion:["Coloca 12 tees a 1m del hoyo en forma de reloj","Putea desde la posición 1 (arriba)","Avanza en sentido horario","Objetivo: 10/12 antes de aumentar distancia"],
+variantes:["A 1.5 metros","A 2 metros","Solo el lado más difícil (cuesta abajo)"],
+esquema:"⭕ 12 posiciones · 1m · Completa el reloj sin fallar 2 seguidos",
+tags:["putt","precisión","rutina","presión"]},
+
+{id:"pp02",cat:"Putt",nivel:"Básico",nombre:"El metro de presión",icono:"🎯",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Automatizar el putt de 1m bajo presión.",
+descripcion:"5 putts seguidos de 1 metro. Si fallas uno, vuelves a empezar desde cero. El objetivo es encadenar 5 consecutivos.",
+ejecucion:["Marca 1 metro del hoyo","Bola tras bola sin pausa","Si fallas: reinicia la serie","Registra en cuántos intentos logras 5 seguidos"],
+variantes:["10 seguidos","Con compañero mirando","Con 30s de descanso entre putts"],
+esquema:"● 1m × 5 seguidos · Si fallas → ¡Reinicia!",
+tags:["putt","presión","automatismo","rutina"]},
+
+{id:"pp03",cat:"Putt",nivel:"Intermedio",nombre:"La escalera de distancias",icono:"📏",
+duracion:"25 min",material:"Putter, 5 bolas, tees a 3/5/7/9/12m",
+objetivo:"Calibrar la fuerza a distintas distancias.",
+descripcion:"Putea desde 3, 5, 7, 9 y 12 metros. El objetivo no es meter sino dejar la bola a menos de 50cm (zona muerta).",
+ejecucion:["Empieza a 3m: 2 bolas","Avanza a 5m, 7m, 9m, 12m","Cuenta cuántas quedan en zona muerta","Objetivo: 8/10"],
+variantes:["Con pendiente lateral","De cuesta abajo","Cuesta arriba"],
+esquema:"3m → 5m → 7m → 9m → 12m · Zona muerta ⭕50cm",
+tags:["putt","distancia","calibración","lag putt"]},
+
+{id:"pp04",cat:"Putt",nivel:"Intermedio",nombre:"El fantasma — Lectura de green",icono:"👻",
+duracion:"20 min",material:"Putter, 3 bolas, 2 tees",
+objetivo:"Aprender a leer la línea del putt con precisión.",
+descripcion:"Antes de putear, determina el punto de entrada al hoyo y el apex (punto más alto de la curva). Marca ambos con un tee y comprueba tu lectura.",
+ejecucion:["Observa el putt desde detrás","Identifica el apex de la curva","Marca con tee el punto de entrada","Putea apuntando al punto de entrada, no al hoyo"],
+variantes:["Putts rectos","Curva moderada derecha","Curva moderada izquierda"],
+esquema:"↗️ Apex → ⬤ Entrada → ⛳ Hoyo · Lee el punto de entrada",
+tags:["putt","lectura","línea","green"]},
+
+{id:"pp05",cat:"Putt",nivel:"Básico",nombre:"El péndulo perfecto",icono:"⏱️",
+duracion:"15 min",material:"Putter, 3 bolas, app de metrónomo",
+objetivo:"Desarrollar ritmo constante 2:1 en el putt.",
+descripcion:"Usa metrónomo a 70bpm. El backswing suena en el 1, el impacto en el 2. Movimiento simétrico y suave.",
+ejecucion:["Activa el metrónomo a 70bpm","Backswing en el primer click","Impacto en el segundo click","Follow-through igual de largo que el backswing"],
+variantes:["60bpm para putts largos","80bpm para cortos","Sin metrónomo (de memoria)"],
+esquema:"◀️ Back (click 1) → ▶️ Through (click 2) · Ritmo 2:1",
+tags:["putt","ritmo","péndulo","metrónomo"]},
+
+{id:"pp06",cat:"Putt",nivel:"Básico",nombre:"El gate drill — La puerta",icono:"🚪",
+duracion:"15 min",material:"Putter, 5 bolas, 2 tees",
+objetivo:"Asegurar el centro de la cara en el impacto.",
+descripcion:"Coloca 2 tees a los lados de la bola con 1mm de margen. Si el putter toca un tee, la cara está rotada. Objetivo: 20 putts sin tocar.",
+ejecucion:["2 tees a los lados de la bola (1mm margen)","Realiza el putt normalmente","Si tocas un tee: cara rotada","Objetivo: 20 putts sin tocar los tees"],
+variantes:["Desde 1m","Desde 3m","Con ojos cerrados"],
+esquema:"│ ● │ → ⛳ · Pasar sin tocar los tees",
+tags:["putt","cara","impacto","técnica"]},
+
+{id:"pp07",cat:"Putt",nivel:"Intermedio",nombre:"Los 100 putts",icono:"💯",
+duracion:"30 min",material:"Putter, 10 bolas",
+objetivo:"Sesión de volumen para automatizar el gesto.",
+descripcion:"100 putts: 40 desde 1m, 30 desde 2m, 20 desde 3m, 10 desde 5m. Registra los resultados cada semana.",
+ejecucion:["40 putts desde 1m (objetivo: 36/40)","30 putts desde 2m (objetivo: 20/30)","20 putts desde 3m (objetivo: 10/20)","10 putts desde 5m (objetivo: 3/10)"],
+variantes:["En greens rápidos","En greens lentos","Con variaciones de pendiente"],
+esquema:"1m×40 → 2m×30 → 3m×20 → 5m×10 = 100 putts · Anota resultados",
+tags:["putt","volumen","rutina","progresión"]},
+
+{id:"pp08",cat:"Putt",nivel:"Avanzado",nombre:"El comeback putt",icono:"🔄",
+duracion:"20 min",material:"Putter, 6 bolas, varilla",
+objetivo:"Entrenar el putt de regreso después de pasarse.",
+descripcion:"Putea desde 6m intentando PASAR el hoyo 60-90cm. Luego haz el putt de vuelta. Reduce el miedo a pasarse y entrena el corto bajo presión.",
+ejecucion:["Putea desde 6m para pasarse 60-90cm","Observa dónde queda","Haz el putt de regreso","Registra cuántos comeback entran"],
+variantes:["Desde 4m","Desde 8m","En pendiente pronunciada"],
+esquema:"● 6m → ⛳ → ● 70cm regreso · Entrena el corto de vuelta",
+tags:["putt","comeback","presión","distancia"]},
+
+{id:"pp09",cat:"Putt",nivel:"Avanzado",nombre:"Sin mirar la bola",icono:"🙈",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Mejorar el feeling de distancia mirando al hoyo.",
+descripcion:"Prepara el putt normalmente, pero en el momento de golpear mantén la mirada fija en el hoyo. Confía en el gesto.",
+ejecucion:["Prepara y alinea normalmente","En el backswing: mira el hoyo","Golpea mirando el hoyo","Observa cómo mejora el control de distancia"],
+variantes:["Solo desde 3m","Desde 6m","Ojos cerrados después del impacto"],
+esquema:"👁️ Mirada al hoyo durante el golpe · No mirar la bola",
+tags:["putt","feeling","distancia","confianza"]},
+
+{id:"pp10",cat:"Putt",nivel:"Básico",nombre:"Varilla de alineación",icono:"📐",
+duracion:"20 min",material:"Putter, 5 bolas, 2 varillas",
+objetivo:"Entrenar la alineación y el camino del putter.",
+descripcion:"Coloca dos varillas paralelas formando un canal. El putter debe moverse sin tocarlas. Realiza 20 putts seguidos.",
+ejecucion:["2 varillas paralelas hacia el hoyo","El putter pasa sin tocar ninguna","Si tocas: error de camino","Objetivo: 20 putts sin tocar"],
+variantes:["Canal más estrecho","Con varilla en la cara","Con alineación del cuerpo"],
+esquema:"║ ═══ Putter ═══ ║ → ⛳ · Sin tocar las varillas",
+tags:["putt","camino","alineación","técnica"]},
+
+{id:"pp11",cat:"Putt",nivel:"Básico",nombre:"Un solo ojo — Visión monocular",icono:"👁️",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Mejorar la alineación usando el ojo dominante.",
+descripcion:"Cierra el ojo no dominante durante la preparación. El ojo dominante alinea directamente sobre la línea del putt.",
+ejecucion:["Identifica tu ojo dominante","Cierra el contrario durante la preparación","Alinea el putter sobre la línea","Abre ambos ojos al golpear"],
+variantes:["Solo en preparación","Durante todo el golpe","Comparando con ambos ojos"],
+esquema:"👁️ Ojo dominante → Alineación perfecta → ⛳",
+tags:["putt","ojo dominante","alineación","técnica"]},
+
+{id:"pp12",cat:"Putt",nivel:"Avanzado",nombre:"3 metros — 10 seguidos",icono:"🏆",
+duracion:"20 min",material:"Putter, 5 bolas",
+objetivo:"El putt de 3m es el más importante. Automatizarlo bajo presión.",
+descripcion:"10 putts seguidos de 3m. Si fallas uno, reseteas. Registra tu mejor racha cada semana.",
+ejecucion:["Marca exactamente 3m","Misma rutina en cada putt","Si fallas: contador a cero","Registra tu mejor racha semanal"],
+variantes:["Recto / curva / cuesta abajo","En greens rápidos (stimp 10+)","Con penalización por fallo"],
+esquema:"● 3m × 10 seguidos · Fallas → Reinicia · Registra la racha",
+tags:["putt","3 metros","presión","scoring"]},
+
+{id:"pp13",cat:"Putt",nivel:"Avanzado",nombre:"Putt en pendiente extrema",icono:"⛰️",
+duracion:"20 min",material:"Putter, 6 bolas",
+objetivo:"Dominar putts con pendientes laterales pronunciadas.",
+descripcion:"Busca la pendiente más pronunciada del green. 3 bolas de derecha a izquierda y 3 de izquierda a derecha desde 4m.",
+ejecucion:["Identifica el putt más difícil del green","Observa la pendiente y la velocidad","Apunta 30-60cm fuera del hoyo","Deja que la pendiente lleve la bola"],
+variantes:["Cuesta abajo + pendiente","Cuesta arriba + pendiente","Con viento"],
+esquema:"↗️ Izquierda → ⛳ · Pendiente máxima · Compensación necesaria",
+tags:["putt","pendiente","lectura","avanzado"]},
+
+{id:"pp14",cat:"Putt",nivel:"Básico",nombre:"Espejo postural",icono:"🪞",
+duracion:"15 min",material:"Putter, espejo grande",
+objetivo:"Conciencia corporal del movimiento del putt.",
+descripcion:"Practica frente a un espejo. Verifica: ojos sobre la línea, hombros en péndulo, brazos como una unidad.",
+ejecucion:["Frente al espejo","Ojos sobre la línea del putt","Hombros rotan alrededor de la columna","Brazos y putter como una unidad"],
+variantes:["Sin bola","Filmando con el móvil","Comparando con vídeo pro"],
+esquema:"🪞 Ojos sobre línea · Hombros péndulo · Sin mirar la bola",
+tags:["putt","espejo","técnica","postura"]},
+
+{id:"pp15",cat:"Putt",nivel:"Avanzado",nombre:"Putt ciego — Feel de distancia",icono:"🤲",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Desarrollar el feel de distancia sin la vista.",
+descripcion:"Elige 8 metros. Cierra los ojos antes del backswing. Antes de abrirlos: ¿la bola quedó corta, larga o perfecta?",
+ejecucion:["Establece 8m","Ojos cerrados en el backswing","Golpea con ritmo natural","Antes de mirar: ¿corta, larga, perfecta?"],
+variantes:["5m","12m","Distancias variadas sin saber cuál"],
+esquema:"👁️❌ Ojos cerrados · Confía en el ritmo · ❓ Adivina la distancia",
+tags:["putt","ciego","feel","distancia"]},
+
+{id:"pp16",cat:"Putt",nivel:"Avanzado",nombre:"Match point competitivo",icono:"⚡",
+duracion:"20 min",material:"Putter, 6 bolas, 2 jugadores",
+objetivo:"Presión de competición real en el green.",
+descripcion:"+1 si metes, -1 si fallas, -2 si el rival mete y tú fallas. El primero en llegar a 10 gana.",
+ejecucion:["Posición de 3m","Turnos alternados","Sistema de puntuación","El primero en 10 puntos gana"],
+variantes:["Desde 2m","Desde 4m","Eliminación con varios jugadores"],
+esquema:"⚡ +1 metes · -1 fallas · -2 rival mete y tú no · Primero en 10",
+tags:["putt","competición","presión","match"]},
+
+{id:"pp17",cat:"Putt",nivel:"Intermedio",nombre:"Speed control — El ladrillo",icono:"🧱",
+duracion:"20 min",material:"Putter, 5 bolas, varilla",
+objetivo:"Controlar la velocidad del putt.",
+descripcion:"Varilla detrás del hoyo a 20cm. La bola debe entrar o pararse antes de la varilla. Si la pasa: demasiada fuerza.",
+ejecucion:["Varilla 20cm detrás del hoyo","Putea desde 5m","Zona permitida: dentro o hasta 20cm detrás","¿Cuántas en zona aceptable?"],
+variantes:["Desde 3m","Desde 8m","En cuesta abajo"],
+esquema:"● 5m → [⛳ zona OK ///20cm/// ❌ pasado]",
+tags:["putt","velocidad","control","speed"]},
+
+{id:"pp18",cat:"Putt",nivel:"Básico",nombre:"Sistema de 3 puntos — Alineación",icono:"📍",
+duracion:"20 min",material:"Putter, 5 bolas, rotulador",
+objetivo:"Rutina de alineación consistente y reproducible.",
+descripcion:"1) Marca en la bola apuntando a la línea. 2) Elige un punto intermedio a 30cm. 3) Alinea el putter al punto intermedio.",
+ejecucion:["Traza línea en la bola con rotulador","Alinea la línea al punto intermedio (30cm)","Coloca el putter perpendicular","Putea sin cambiar la alineación"],
+variantes:["Sin línea en la bola","En curva ajustando el punto","Diferentes tipos de línea"],
+esquema:"● Bola → 📍30cm → ... → ⛳ · 3 puntos de referencia",
+tags:["putt","alineación","rutina","sistema"]},
+
+{id:"pp19",cat:"Putt",nivel:"Básico",nombre:"Fringe — Texas Wedge",icono:"🤠",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Usar el putter desde fuera del green.",
+descripcion:"Desde 3m fuera del green (hierba corta), usa el putter. Añade 20-30% de fuerza por la resistencia del fringe.",
+ejecucion:["Posición 3m fuera del green","Putter como si fuera un putt largo","Añade 20-30% de fuerza","Evalúa dónde para la bola"],
+variantes:["5m fuera","Con rough corto","Con pendiente"],
+esquema:"🌿 Fringe 3m → Putter → ⛳ · Fuerza +25%",
+tags:["putt","fringe","texas wedge","fuera green"]},
+
+{id:"pp20",cat:"Putt",nivel:"Intermedio",nombre:"Arco natural — Inside-Square-Inside",icono:"🌈",
+duracion:"20 min",material:"Putter, guía de arco",
+objetivo:"Entrenar el camino natural del putter en arco suave.",
+descripcion:"El putter no va recto sino en arco suave (ISI). Usa una guía de arco para sentir el camino correcto. 20 repeticiones lentas.",
+ejecucion:["Coloca la guía de arco en el suelo","Sigue el arco suavemente sin forzar","Impacto en el punto más bajo del arco","Siente el retorno natural"],
+variantes:["Sin guía (de memoria)","Con chalk en el suelo","Muy despacio para sentirlo"],
+esquema:"↗️ Back (ISI) · ↘️ Through (ISI) · Arco natural del putter",
+tags:["putt","arco","ISI","técnica"]}
+
+
+,
+// ── APPROACH POR ALTO PROFESIONAL ──
+{id:"pa01",cat:"Approach Alto",nivel:"Básico",nombre:"El triángulo de brazos",icono:"🔺",
+duracion:"20 min",material:"Wedge, 10 bolas",
+objetivo:"Conexión brazos-cuerpo en el chip por alto.",
+descripcion:"Forma un triángulo con tus brazos y el pecho. Este triángulo debe mantenerse durante todo el swing corto. No rompas la muñeca izquierda en el impacto.",
+ejecucion:["Agarre normal, forma el triángulo","Rota el cuerpo (no solo los brazos)","El triángulo se mantiene hasta P7","Cadera ligeramente adelantada en el impacto"],
+variantes:["Con toalla bajo los brazos","Swing a media velocidad","Con espejo lateral"],
+esquema:"🔺 Triángulo brazos-pecho · Cuerpo rota · Muñeca izq firme",
+tags:["approach","alto","técnica","conexión"]},
+
+{id:"pa02",cat:"Approach Alto",nivel:"Básico",nombre:"El lob a la toalla",icono:"🎯",
+duracion:"20 min",material:"Lob wedge, 10 bolas, toalla",
+objetivo:"Desarrollar tacto para el lob shot.",
+descripcion:"Coloca una toalla a 15m. La bola debe aterrizar en la toalla y quedarse. Cara muy abierta, swing completo, confía en el loft.",
+ejecucion:["Abre la cara 45°","Abre el stance hacia la izquierda","Swing completo con aceleración","La bola sube muy alta y cae casi vertical"],
+variantes:["Toalla a 10m","Toalla a 25m","Por encima de un obstáculo"],
+esquema:"🎯 Toalla ← ⬆️ Trayectoria alta · Cara 45° abierta",
+tags:["approach","alto","lob","wedge"]},
+
+{id:"pa03",cat:"Approach Alto",nivel:"Intermedio",nombre:"Zonas 50/75/100m",icono:"📊",
+duracion:"30 min",material:"PW, 50°, 56°, 10 bolas",
+objetivo:"Calibrar distancias de approach alto.",
+descripcion:"3 bolas con cada palo desde cada distancia. Objetivo: aterrizar dentro de un círculo de 5m alrededor de la bandera.",
+ejecucion:["PW desde 100m: ¿cuántas en zona 5m?","50° desde 75m: ¿cuántas en zona 5m?","56° desde 50m: ¿cuántas en zona 5m?","Registra resultado semanal"],
+variantes:["Con viento en contra","Con viento a favor","Con viento lateral"],
+esquema:"PW 100m · 50° 75m · 56° 50m · Zona ⭕5m",
+tags:["approach","alto","distancia","calibración"]},
+
+{id:"pa04",cat:"Approach Alto",nivel:"Avanzado",nombre:"El flop shot",icono:"🏖️",
+duracion:"25 min",material:"Lob wedge, 10 bolas",
+objetivo:"Ejecutar el flop sobre un obstáculo cercano.",
+descripcion:"Simula un obstáculo entre tú y el hoyo. Cara al máximo de apertura, swing rápido y completo bajo la bola.",
+ejecucion:["Cara al máximo de apertura","Peso sobre pie izquierdo","Swing rápido y completo bajo la bola","Entra por debajo con la cara abierta"],
+variantes:["Obstáculo más alto","Hoyo más cercano al obstáculo","Desde rough alto"],
+esquema:"● → ⬆️ 45° → 🚧 Obstáculo → ⛳ · Flop shot",
+tags:["approach","alto","flop","obstáculo"]},
+
+{id:"pa05",cat:"Approach Alto",nivel:"Intermedio",nombre:"Clock system — Distancias con wedge",icono:"🕐",
+duracion:"25 min",material:"Wedge, 10 bolas",
+objetivo:"Sistema de distancias basado en la longitud del backswing.",
+descripcion:"Backswing a las 7h (60%), 9h (75%), 11h (90%). Mide la distancia de cada posición y crea tu tabla personal.",
+ejecucion:["Backswing a las 7h → mide distancia","Backswing a las 9h → mide distancia","Backswing a las 11h → mide distancia","Crea tu tabla personal"],
+variantes:["Con viento","Desde distintos lies","Con diferente velocidad"],
+esquema:"🕐 7h=60% · 9h=75% · 11h=90% · Tabla personal",
+tags:["approach","alto","distancia","sistema reloj"]},
+
+{id:"pa06",cat:"Approach Alto",nivel:"Intermedio",nombre:"Pitch de 30 metros",icono:"🎯",
+duracion:"25 min",material:"56° o 60°, 10 bolas",
+objetivo:"Dominar el pitch corto de 30m con máxima precisión.",
+descripcion:"Stance estrecho, peso 60% izquierda, swing de 3/4 con máxima aceleración y buena rotación.",
+ejecucion:["Stance estrecho, peso 60% izquierda","Swing de 3/4 (brazos a altura de hombro)","Rotación completa de cadera y hombros","Aceleración constante hasta el final"],
+variantes:["20 metros","40 metros","Desde rough corto"],
+esquema:"30m · Swing 3/4 · Peso izquierda · Zona ⭕3m",
+tags:["approach","alto","pitch","30m"]},
+
+{id:"pa07",cat:"Approach Alto",nivel:"Avanzado",nombre:"Uso del bounce del wedge",icono:"🦘",
+duracion:"20 min",material:"56° o 60° bounce alto, 10 bolas",
+objetivo:"Usar el bounce para no cavar en el suelo.",
+descripcion:"El bounce rebota en el suelo en lugar de cavar. Cara ligeramente abierta, entrada plana, el divot debe ser mínimo.",
+ejecucion:["Abre la cara ligeramente antes de agarrar","Entrada más plana (no empinada)","Deja que el bounce toque primero","El divot debe ser mínimo o nulo"],
+variantes:["En arena","En hierba dura","En hierba blanda"],
+esquema:"🦘 Bounce toca suelo · No cavar · Entrada plana",
+tags:["approach","alto","bounce","wedge"]},
+
+{id:"pa08",cat:"Approach Alto",nivel:"Avanzado",nombre:"Approach desde rough alto",icono:"🌿",
+duracion:"25 min",material:"Lob wedge, 10 bolas",
+objetivo:"Dominar el approach alto desde hierba larga.",
+descripcion:"La hierba cierra la cara. Compensación: cara más abierta, grip firme, swing más empinado y mayor aceleración.",
+ejecucion:["Cara más abierta para compensar cierre","Grip firme (no cambies el agarre)","Swing más empinado (entrada vertical)","Mayor aceleración para vencer la resistencia"],
+variantes:["Rough moderado","Rough muy alto","Rough mojado"],
+esquema:"🌿 Rough → Swing empinado · Cara +15° · Grip firme",
+tags:["approach","alto","rough","lie difícil"]},
+
+{id:"pa09",cat:"Approach Alto",nivel:"Avanzado",nombre:"Approach con spin — Efecto de frenado",icono:"🔄",
+duracion:"25 min",material:"56° o 60° limpio, 10 bolas",
+objetivo:"Generar spin máximo para que la bola frene.",
+descripcion:"Palo y bola limpios, cara cuadrada, strike limpio en el ecuador de la bola, aceleración máxima, entrada empinada.",
+ejecucion:["Limpia la cara antes de cada golpe","Strike en el ecuador de la bola","Entrada más empinada de lo normal","Aceleración máxima en el impacto"],
+variantes:["Bola mojada (menos spin)","Desde rough (menos spin)","Hierba corta seca (máximo spin)"],
+esquema:"🔄 Spin = Palo limpio + Bola limpia + Strike ecuatorial + Aceleración",
+tags:["approach","alto","spin","control"]},
+
+{id:"pa10",cat:"Approach Alto",nivel:"Avanzado",nombre:"3 trayectorias — 1 palo",icono:"📈",
+duracion:"25 min",material:"PW, 10 bolas",
+objetivo:"Ejecutar el mismo golpe en 3 trayectorias distintas.",
+descripcion:"Desde 60m: alta (cara abierta, bola adelantada), media (normal), baja (cara cerrada, bola atrasada).",
+ejecucion:["Alta: cara +15°, bola adelantada","Media: posición normal","Baja: cara -10°, bola atrasada","Observa diferencias de aterrizaje y rodamiento"],
+variantes:["Con viento en contra (baja)","Con viento a favor (alta)","Desde distintas distancias"],
+esquema:"⬆️ Alta → ➡️ Media → ⬇️ Baja · 3 trayectorias · 1 palo",
+tags:["approach","alto","trayectoria","control"]},
+
+{id:"pa11",cat:"Approach Alto",nivel:"Intermedio",nombre:"Half wedge — El medio golpe",icono:"⚡",
+duracion:"25 min",material:"PW y 52°, 10 bolas",
+objetivo:"Dominar el medio golpe de wedge con máxima consistencia.",
+descripcion:"Swing de 1/2 con máxima aceleración. No deceleres al impactar: el swing corto necesita aceleración.",
+ejecucion:["Backswing hasta los hombros","Aceleración máxima en el impacto","Follow-through completo hasta el final","No frenes nunca en el impacto"],
+variantes:["Con PW","Con 52°","Con 56°"],
+esquema:"⚡ Half swing · Backswing hombros · MAX aceleración · Follow completo",
+tags:["approach","alto","medio golpe","wedge"]},
+
+{id:"pa12",cat:"Approach Alto",nivel:"Avanzado",nombre:"Approach en green elevado",icono:"🏔️",
+duracion:"25 min",material:"Wedges, 10 bolas",
+objetivo:"Dominar el approach cuando el green está por encima.",
+descripcion:"Green elevado: añade 10-15% de distancia, trayectoria alta para superar el frente, aterriza a mitad del green.",
+ejecucion:["Calcula distancia añadiendo la altura","Trayectoria alta para superar el frente","Aterriza en el centro, no en el borde","La pendiente sube ayuda a frenar"],
+variantes:["Green muy elevado (+5m)","Ligeramente elevado (+1m)","Con obstáculo en el frente"],
+esquema:"⬆️ Green elevado · +15% distancia · Aterriza centro",
+tags:["approach","alto","green elevado","distancia"]},
+
+{id:"pa13",cat:"Approach Alto",nivel:"Avanzado",nombre:"Shot clock — 60 segundos de decisión",icono:"⏰",
+duracion:"25 min",material:"Wedges, 10 bolas",
+objetivo:"Tomar decisiones rápidas de approach bajo presión de tiempo.",
+descripcion:"60 segundos para: evaluar el lie, decidir el palo, elegir la trayectoria y ejecutar. Simula la presión real de competición.",
+ejecucion:["Timer a 60 segundos","Evalúa: distancia, pendiente, viento","Decide: palo y trayectoria","Ejecuta con tu rutina siempre"],
+variantes:["40 segundos","Con situación específica","Con compañero evaluando"],
+esquema:"⏰ 60s → 🤔 Decisión → 🏌️ Ejecución · Sin dudar",
+tags:["approach","alto","decisión","presión"]},
+
+{id:"pa14",cat:"Approach Alto",nivel:"Intermedio",nombre:"Approach en el viento",icono:"💨",
+duracion:"25 min",material:"Wedges, 10 bolas",
+objetivo:"Adaptar la trayectoria al viento.",
+descripcion:"Contra: +1 palo, bola más atrás, trayectoria baja. A favor: -1 palo. Lateral: apunta contra el viento.",
+ejecucion:["Evalúa velocidad y dirección del viento","Viento en contra: +1 palo + baja trayectoria","Viento a favor: -1 palo","Viento lateral: apunta contra el viento"],
+variantes:["Solo viento en contra","Solo a favor","Viento lateral de ambos lados"],
+esquema:"💨 Contra:+1p⬇️ · A favor:-1p · Lateral: apunta contra",
+tags:["approach","alto","viento","condiciones"]},
+
+{id:"pa15",cat:"Approach Alto",nivel:"Avanzado",nombre:"El puente — Sobre el árbol",icono:"🌳",
+duracion:"20 min",material:"Lob wedge, 10 bolas",
+objetivo:"Practicar el approach de máxima altura.",
+descripcion:"Usa un árbol o bandera alta como obstáculo. Cara al máximo de apertura, stance muy abierto, swing completo y rápido.",
+ejecucion:["Cara al máximo de apertura (60°+)","Stance muy abierto hacia la izquierda","Swing completo y rápido bajo la bola","La bola sube casi vertical"],
+variantes:["Obstáculo más alto","Más cerca del obstáculo","Con viento en contra"],
+esquema:"🌳 Obstáculo → ⬆️ Máxima altura → ⛳",
+tags:["approach","alto","obstáculo","lob"]},
+
+{id:"pa16",cat:"Approach Alto",nivel:"Avanzado",nombre:"Approach con efecto — Draw y Fade",icono:"↩️",
+duracion:"25 min",material:"Wedges, 10 bolas",
+objetivo:"Ejecutar approaches con curva para rodear obstáculos.",
+descripcion:"Draw: stance cerrado, cara cuadrada. Fade: stance abierto, cara cuadrada. Practica desde 50m.",
+ejecucion:["Draw: stance cerrado, camino inside-out","Fade: stance abierto, camino outside-in","Cara siempre cuadrada al objetivo","Observa la curva y el aterrizaje"],
+variantes:["Solo draw","Solo fade","Desde rough"],
+esquema:"↩️ Draw: cerrado ISI · ↪️ Fade: abierto OTI",
+tags:["approach","alto","draw","fade"]},
+
+{id:"pa17",cat:"Approach Alto",nivel:"Avanzado",nombre:"Lies complicados en pendiente",icono:"⛰️",
+duracion:"25 min",material:"Wedge, 10 bolas",
+objetivo:"Approach alto desde lies en pendiente.",
+descripcion:"Cuesta abajo: hombros paralelos a la pendiente, bola más atrasada, swing siguiendo el terreno. Cuesta arriba: peso adelantado, bola centrada.",
+ejecucion:["Hombros paralelos a la pendiente","Bola ajustada según la cuesta","Swing sigue la pendiente (no vertical)","Espera el resultado ajustado"],
+variantes:["Cuesta arriba","Cuesta abajo","Lie en hondonada"],
+esquema:"⛰️ Pendiente · Hombros paralelos · Swing sigue el terreno",
+tags:["approach","alto","pendiente","lie difícil"]},
+
+{id:"pa18",cat:"Approach Alto",nivel:"Avanzado",nombre:"Pitch desde bunker de fairway",icono:"🏖️",
+duracion:"25 min",material:"LW 60°, arena, 10 bolas",
+objetivo:"Dominar el pitch alto desde bunker de fairway.",
+descripcion:"Stance ligeramente abierto, grip 2cm más abajo, impacto LIMPIO: bola primero, arena después. Swing completo y acelerado.",
+ejecucion:["Stance ligeramente abierto","Grip 2cm más abajo en el agarre","Impacto limpio: bola primero","Swing completo y acelerado"],
+variantes:["Lie perfecto en arena","Lie enterrado","Con lip alto"],
+esquema:"🏖️ Bunker Fairway · Bola primero · Swing completo",
+tags:["approach","alto","bunker fairway","técnica"]},
+
+{id:"pa19",cat:"Approach Alto",nivel:"Intermedio",nombre:"Approach de giro — Lay-up inteligente",icono:"🎰",
+duracion:"20 min",material:"Wedges, 10 bolas",
+objetivo:"Elegir la posición óptima para el approach.",
+descripcion:"No siempre atacas al hoyo. Si el hoyo está adelante con obstáculo: ataca el centro del green y deja el putt fácil. Seguridad > agresividad.",
+ejecucion:["Identifica la posición del hoyo","¿Hay obstáculo detrás? → no ataques","Zona más segura del green","Deja el putt cuesta arriba siempre que puedas"],
+variantes:["Hoyo en cada posición","Con agua detrás","Green pequeño"],
+esquema:"🎰 Hoyo + obstáculo detrás → Centro green → Putt fácil",
+tags:["approach","alto","estrategia","decisión"]},
+
+{id:"pa20",cat:"Approach Alto",nivel:"Básico",nombre:"Aproximación con 3/4 swing",icono:"🌙",
+duracion:"20 min",material:"PW, 10 bolas",
+objetivo:"Desarrollar el swing de 3/4 como golpe de control.",
+descripcion:"El swing de 3/4 (backswing al nivel del hombro) da más control que el completo. Es el golpe de approach más consistente para distancias medias.",
+ejecucion:["Backswing: manos al nivel del hombro (no más)","Giro de cadera completo","Aceleración máxima en la zona de impacto","Follow-through completo a pesar del backswing corto"],
+variantes:["Con distintos wedges","Midiendo la distancia resultante","En viento moderado"],
+esquema:"🌙 Backswing hombros · Cadera completa · Aceleración · Follow completo",
+tags:["approach","alto","3/4 swing","control"]},
+
+// ── APPROACH POR BAJO PROFESIONAL ──
+{id:"pb01",cat:"Approach Bajo",nivel:"Básico",nombre:"El bump and run básico",icono:"🏃",
+duracion:"20 min",material:"7-hierro o 8-hierro, 10 bolas",
+objetivo:"Dominar el golpe rodado básico.",
+descripcion:"Bola atrasada en el stance, peso 70% en pie izquierdo, manos adelantadas. El golpe vuela 30% y rueda 70%.",
+ejecucion:["Bola atrás en el stance","Peso 70% en pie izquierdo","Manos adelantadas (delofting)","Swing de brazos, poco cuerpo"],
+variantes:["Con hierro 9","Con PW (más alto)","Desde diferentes distancias"],
+esquema:"🏃 Vuelo 30% + Rodamiento 70% · Hierro 7 · Bola atrás",
+tags:["approach","bajo","bump and run","rodado"]},
+
+{id:"pb02",cat:"Approach Bajo",nivel:"Básico",nombre:"Regla del 1/3 — Selección de palo",icono:"📏",
+duracion:"25 min",material:"7, 8, 9, PW, 10 bolas",
+objetivo:"Elegir el palo según la relación vuelo/rodamiento.",
+descripcion:"PW vuela 75% y rueda 25%. 8H: 50/50. 6H: 30% vuelo 70% rodamiento.",
+ejecucion:["Mide la distancia y el espacio de vuelo","PW: más vuelo que rodamiento","8H: 50/50","6H: máximo rodamiento"],
+variantes:["Desde distintas posiciones alrededor del green","Con obstáculo que obliga a altura","Desde el fringe"],
+esquema:"PW 75%vuelo · 8H 50/50 · 6H 30%vuelo · Regla 1/3",
+tags:["approach","bajo","selección palo","regla"]},
+
+{id:"pb03",cat:"Approach Bajo",nivel:"Básico",nombre:"El trayectoria de ratón",icono:"🐭",
+duracion:"20 min",material:"8 o 9-hierro, 10 bolas",
+objetivo:"Visualizar el punto de bote y el rodamiento.",
+descripcion:"El primer bote debe ser a 1/3 del recorrido total. Decide el palo según cuánto rodamiento quieres.",
+ejecucion:["Visualiza el punto de aterrizaje (1/3 del camino)","Decide el palo por el rodamiento","Ejecuta apuntando al punto de bote","Observa el rodamiento hasta el hoyo"],
+variantes:["Sin pendiente","Con pendiente lateral","Cuesta abajo"],
+esquema:"● → 📍1er bote (1/3) → 🐭 Rueda suave → ⛳",
+tags:["approach","bajo","rodamiento","visualización"]},
+
+{id:"pb04",cat:"Approach Bajo",nivel:"Básico",nombre:"Texas Wedge",icono:"🤠",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Usar el putter desde fuera del green cuando el terreno lo permite.",
+descripcion:"Usa el putter desde el fringe o el fairway cuando hay hierba corta y plana. Añade 30% de fuerza.",
+ejecucion:["Evalúa: ¿hierba corta hasta el green? → putter","Calcula distancia + resistencia del fringe","Mismo ritmo que un putt largo","Confía en el rodamiento"],
+variantes:["Desde 5m fuera","Desde 10m fuera","Con fringe más largo"],
+esquema:"🤠 Texas Wedge · Putter desde fuera · +30% fuerza",
+tags:["approach","bajo","texas wedge","putter"]},
+
+{id:"pb05",cat:"Approach Bajo",nivel:"Básico",nombre:"Chip de velocidad constante",icono:"⚡",
+duracion:"20 min",material:"8-hierro, 10 bolas",
+objetivo:"Mantener velocidad constante en el chip (no frenar).",
+descripcion:"El follow-through debe ser igual o más largo que el backswing. Ratio 1:1.5 (back:through). Nunca frenes en el impacto.",
+ejecucion:["Backswing corto y controlado","Follow-through MÁS LARGO que el backswing","Nunca frenes en el impacto","Velocidad constante desde el inicio"],
+variantes:["Con metrónomo","Cronometrando el swing","Con espejo"],
+esquema:"⚡ Back:1 → Through:1.5 · Velocidad constante · No frenar nunca",
+tags:["approach","bajo","velocidad","chip"]},
+
+{id:"pb06",cat:"Approach Bajo",nivel:"Básico",nombre:"Chip con toalla bajo el brazo",icono:"🧣",
+duracion:"15 min",material:"8-hierro, toalla, 10 bolas",
+objetivo:"Eliminar el uso excesivo del brazo derecho.",
+descripcion:"Toalla bajo el brazo derecho. Si cae durante el chip: el brazo se separó del cuerpo. La conexión es clave.",
+ejecucion:["Coloca la toalla bajo el brazo derecho","Chip normalmente","Si cae la toalla: el brazo se separó","La conexión brazo-cuerpo es clave"],
+variantes:["En distancias cortas","Distancias medias","Con swing más largo"],
+esquema:"🧣 Toalla bajo brazo · No sueltes · Brazo pegado al cuerpo",
+tags:["approach","bajo","conexión","drill"]},
+
+{id:"pb07",cat:"Approach Bajo",nivel:"Intermedio",nombre:"Chip de mano baja",icono:"👇",
+duracion:"20 min",material:"8-hierro, 10 bolas",
+objetivo:"Técnica de mano baja para eliminar el yips.",
+descripcion:"Mano izquierda debajo de la mano derecha en el grip. Reduce la acción de la muñeca derecha.",
+ejecucion:["Grip: mano derecha arriba, izquierda abajo","Stance estrecho","Swing pendular de brazos","Excelente para jugadores con yips"],
+variantes:["En distintas distancias","Desde diferentes lies","Comparar con grip normal"],
+esquema:"👇 Mano izquierda abajo · Elimina yips · Swing simple",
+tags:["approach","bajo","mano baja","yips"]},
+
+{id:"pb08",cat:"Approach Bajo",nivel:"Intermedio",nombre:"Chip de un brazo — Feel extremo",icono:"💪",
+duracion:"20 min",material:"8-hierro, 10 bolas",
+objetivo:"Desarrollar feeling y sensibilidad en el chip.",
+descripcion:"Solo brazo derecho: feeling. Solo brazo izquierdo: control. Ambos: combina sensación y control.",
+ejecucion:["10 chips solo brazo derecho","10 chips solo brazo izquierdo","10 chips con ambos","Combina el feeling de ambos"],
+variantes:["Distancias cortas (5m)","Distancias medias (10m)","Desde rough"],
+esquema:"💪 Derecho:feeling · Izquierdo:control · Ambos:perfección",
+tags:["approach","bajo","un brazo","feeling"]},
+
+{id:"pb09",cat:"Approach Bajo",nivel:"Avanzado",nombre:"Lie semienterrado",icono:"🦶",
+duracion:"25 min",material:"PW o 9-hierro, 10 bolas",
+objetivo:"Chip cuando la bola está semienterrada en el rough.",
+descripcion:"Bola más atrasada, cara cuadrada o ligeramente cerrada, swing más empinado, más fuerza.",
+ejecucion:["Bola muy atrás del stance","Cara cuadrada o ligeramente cerrada","Swing empinado (más vertical)","Más fuerza: el rough frenará la bola"],
+variantes:["Lie totalmente enterrado","En rough húmedo","Cerca de obstáculo"],
+esquema:"🦶 Semienterrado · Bola atrás · Swing empinado · +fuerza",
+tags:["approach","bajo","semienterrado","lie difícil"]},
+
+{id:"pb10",cat:"Approach Bajo",nivel:"Avanzado",nombre:"Chip en cuesta abajo",icono:"⬇️",
+duracion:"25 min",material:"8-hierro, 10 bolas",
+objetivo:"Dominar el chip desde posición en cuesta abajo.",
+descripcion:"Hombros paralelos a la pendiente (hombro izquierdo más bajo), bola más atrasada, swing siguiendo la pendiente.",
+ejecucion:["Hombros paralelos a la pendiente","Bola más atrás del centro","Swing sigue la pendiente","Espera más rodamiento al aterrizar"],
+variantes:["Pendiente suave","Pendiente pronunciada","Con obstáculo delante"],
+esquema:"⬇️ Cuesta abajo · Hombros paralelos · Bola atrás · +rodamiento",
+tags:["approach","bajo","cuesta abajo","pendiente"]},
+
+{id:"pb11",cat:"Approach Bajo",nivel:"Básico",nombre:"Chip en cuesta arriba",icono:"⬆️",
+duracion:"20 min",material:"PW, 10 bolas",
+objetivo:"Dominar el chip desde posición en cuesta arriba.",
+descripcion:"Hombros paralelos a la pendiente (hombro derecho más bajo), peso adelantado, bola algo adelantada. Sale más alta: usa menos loft.",
+ejecucion:["Hombros paralelos a la pendiente","Peso en pie adelantado","Bola algo adelantada del centro","La bola sale más alta: usa menos loft"],
+variantes:["Pendiente suave","Pendiente pronunciada","Desde rough"],
+esquema:"⬆️ Cuesta arriba · Hombros paralelos · Menos loft de palo",
+tags:["approach","bajo","cuesta arriba","pendiente"]},
+
+{id:"pb12",cat:"Approach Bajo",nivel:"Intermedio",nombre:"Run-up de 40 metros",icono:"📊",
+duracion:"25 min",material:"7-hierro, 10 bolas",
+objetivo:"Ejecutar el golpe rodado desde 40m con precisión.",
+descripcion:"Con un 7-hierro y medio golpe: vuela 15m y rueda 25m. Necesita terreno abierto sin obstáculos.",
+ejecucion:["7-hierro, swing de 1/2","Bola atrás del centro","La bola vuela bajo los primeros 15m","Rueda suavemente los 25m restantes"],
+variantes:["Desde 30m","Desde 50m","Con pendiente lateral"],
+esquema:"🏌️ 7H · Swing 1/2 · 15m vuelo + 25m rodamiento = 40m",
+tags:["approach","bajo","run-up","40m"]},
+
+{id:"pb13",cat:"Approach Bajo",nivel:"Avanzado",nombre:"El stinger — Trayectoria penetrante",icono:"🎯",
+duracion:"25 min",material:"4 o 5-hierro, 10 bolas",
+objetivo:"Ejecutar el golpe penetrante de baja trayectoria.",
+descripcion:"Hierro largo, bola muy atrasada, manos muy adelantadas, follow-through corto. La bola sale muy baja con mucho spin.",
+ejecucion:["Hierro 4 o 5","Bola muy atrás del stance","Manos muy adelantadas (máximo deloft)","Follow-through corto: manos no suben del cinturón"],
+variantes:["Con hierro 3","Desde rough","Con viento en contra"],
+esquema:"🎯 Stinger · Hierro largo · Manos adelantadas · Follow corto",
+tags:["approach","bajo","stinger","viento"]},
+
+{id:"pb14",cat:"Approach Bajo",nivel:"Básico",nombre:"Pelota de tenis — Manos adelantadas",icono:"🎾",
+duracion:"15 min",material:"8-hierro, 1 pelota de tenis",
+objetivo:"Mejorar la técnica manteniendo manos adelantadas.",
+descripcion:"La pelota de tenis es más grande y pesada: enseña a mantener las manos adelantadas y no romper las muñecas.",
+ejecucion:["Usa la pelota de tenis","Chip normal con el 8-hierro","Siente cómo la pelota obliga a mantener manos adelantadas","Vuelve a la bola de golf"],
+variantes:["Pelota de espuma","Comparar sensaciones","Distintas distancias"],
+esquema:"🎾 Pelota grande → Manos adelantadas obligadas",
+tags:["approach","bajo","pelota tenis","drill"]},
+
+{id:"pb15",cat:"Approach Bajo",nivel:"Intermedio",nombre:"Fringe — La elección perfecta",icono:"🔀",
+duracion:"20 min",material:"8-hierro, putter, wedge, 10 bolas",
+objetivo:"Elegir la opción óptima desde el fringe.",
+descripcion:"3 opciones: putter (más seguro), 8-hierro chip (consistente), wedge lob (más riesgo/recompensa). Practica las 3 y decide.",
+ejecucion:["Opción 1: Putter (menor riesgo)","Opción 2: 8-hierro chip bajo","Opción 3: Wedge lob","Decide según distancia, pendiente y habilidad"],
+variantes:["Fringe corto (favorece putter)","Fringe largo (favorece chip)","Con pendiente (favorece lob)"],
+esquema:"🔀 Fringe: Putter vs 8H vs Wedge · Decide según condición",
+tags:["approach","bajo","fringe","decisión"]},
+
+{id:"pb16",cat:"Approach Bajo",nivel:"Avanzado",nombre:"Chip en rough — Seco vs Húmedo",icono:"🌿",
+duracion:"25 min",material:"9-hierro, 10 bolas",
+objetivo:"Adaptar el chip a las condiciones del rough.",
+descripcion:"Rough seco: la bola puede «flyer» (sin spin, rueda más). Rough húmedo: más resistencia, menos rodamiento. Ajusta la fuerza según el tipo.",
+ejecucion:["Evalúa el rough: seco o húmedo","Seco: espera más rodamiento al aterrizar","Húmedo: la hierba frenará más","Ajusta la fuerza según el tipo"],
+variantes:["Rough seco","Rough húmedo","Rough largo vs corto"],
+esquema:"🌿 Seco=flyer · Húmedo=lento · Ajusta fuerza · Observa el resultado",
+tags:["approach","bajo","rough","condiciones"]},
+
+{id:"pb17",cat:"Approach Bajo",nivel:"Avanzado",nombre:"Chip de palo de pie — Cerca del obstáculo",icono:"🏒",
+duracion:"20 min",material:"8-hierro, 10 bolas",
+objetivo:"Técnica alternativa cuando la bola está pegada a un obstáculo.",
+descripcion:"Cuando la bola está pegada a un árbol o valla: sube la mano en el grip, el palo queda más vertical, usa el borde como si fuera un putter.",
+ejecucion:["Sube la mano en el grip","El palo queda más vertical","Usa el borde del palo","Swing pendular simple"],
+variantes:["Con hierro 6","Con hierro 9","Desde distintos obstáculos"],
+esquema:"🏒 Palo vertical · Borde del hierro · Swing péndulo · Obstáculo",
+tags:["approach","bajo","palo vertical","obstáculo"]},
+
+{id:"pb18",cat:"Approach Bajo",nivel:"Básico",nombre:"Técnica de un paso",icono:"1️⃣",
+duracion:"20 min",material:"8-hierro, 10 bolas",
+objetivo:"Técnica simplificada del chip para maximizar la consistencia.",
+descripcion:"3 pasos: 1) bola atrás del stance, 2) manos adelantadas, 3) swing solo con brazos. Simple y muy efectivo.",
+ejecucion:["1: Bola atrás del stance","2: Manos adelantadas (grip forward)","3: Solo brazos, cuerpo quieto","4: Contacto limpio bola-primero"],
+variantes:["Con 9-hierro","Con PW","Desde hierba más larga"],
+esquema:"1️⃣ Bola atrás · 2️⃣ Manos adelantadas · 3️⃣ Solo brazos",
+tags:["approach","bajo","chip","técnica simple"]},
+
+{id:"pb19",cat:"Approach Bajo",nivel:"Intermedio",nombre:"Chip competitivo — Closest to pin",icono:"🏆",
+duracion:"20 min",material:"8-hierro, 10 bolas",
+objetivo:"Presión real de competición en el chip.",
+descripcion:"5 chips desde 10m. Quien más veces queda a menos de 1m del hoyo gana.",
+ejecucion:["5 chips cada jugador","Mide distancia al hoyo de cada chip","Quien más veces queda a <1m: gana","Con eliminación si hay más jugadores"],
+variantes:["Closest to pin","Puntos acumulados","Con obstáculo entre bola y green"],
+esquema:"🏆 Closest to pin · 5 chips · <1m al hoyo · Competición real",
+tags:["approach","bajo","competición","chip"]},
+
+{id:"pb20",cat:"Approach Bajo",nivel:"Intermedio",nombre:"Chip de velocidad mínima — Toque suave",icono:"🤌",
+duracion:"20 min",material:"PW, 10 bolas",
+objetivo:"Desarrollar el toque máximo en el chip corto.",
+descripcion:"Chips de 3-5m con la mínima velocidad necesaria. Esto desarrolla la sensibilidad extrema y mejora el control en chips delicados junto al hoyo.",
+ejecucion:["Solo distancias de 3-5m","Mínima fuerza necesaria","La bola apenas llega al hoyo","Siente el peso del palo y el contacto"],
+variantes:["Desde el fringe","Desde el rough corto","Con un solo brazo"],
+esquema:"🤌 3-5m · Mínima fuerza · Máximo feeling · Toque delicado",
+tags:["approach","bajo","feeling","toque"]}
+
+,
+// ── JUEGO LARGO PROFESIONAL ──
+{id:"jl01",cat:"Juego Largo",nivel:"Básico",nombre:"Hip hinge — Postura del address",icono:"🦴",
+duracion:"15 min",material:"Palo de golf",
+objetivo:"Establecer la postura correcta del address.",
+descripcion:"Con un palo vertical en la espalda tocando cabeza, dorsal y coxis, flexiona hacia adelante doblando SOLO las caderas. Esta es la postura correcta del address.",
+ejecucion:["Palo vertical atrás: 3 puntos de contacto","Flexiona caderas hacia adelante (bisagra)","La espalda no se dobla","Rodillas ligeramente flexionadas"],
+variantes:["Sin palo (de memoria)","Con espejo lateral","Filmando con el móvil"],
+esquema:"🦴 3 puntos espalda · Bisagra cadera · Espalda RECTA · Address correcto",
+tags:["juego largo","postura","address","hip hinge"]},
+
+{id:"jl02",cat:"Juego Largo",nivel:"Básico",nombre:"El divot perfecto — Bola primero",icono:"🟫",
+duracion:"20 min",material:"Hierro 7, 10 bolas",
+objetivo:"Aprender la entrada correcta al impacto.",
+descripcion:"El divot debe estar DELANTE de donde estaba la bola. Traza una línea en el suelo: la bola a la derecha, el divot a la izquierda de la línea.",
+ejecucion:["Traza una línea en el suelo","Bola a la derecha de la línea","Impacto: la cara toca la línea o delante","Si tocas detrás: error fat"],
+variantes:["Con arena en el suelo","Con tee en el suelo","En campo de prácticas"],
+esquema:"── Línea ── · Bola derecha · Divot izquierda · Bola PRIMERO",
+tags:["juego largo","divot","impacto","bola primero"]},
+
+{id:"jl03",cat:"Juego Largo",nivel:"Básico",nombre:"Pies juntos — Equilibrio del swing",icono:"👣",
+duracion:"20 min",material:"Hierro 7, 10 bolas",
+objetivo:"Mejorar el equilibrio y la rotación en el swing.",
+descripcion:"Con los pies completamente juntos, realiza swings suaves. Si pierdes el equilibrio: usas demasiado cuerpo o brazos incorrectamente.",
+ejecucion:["Pies completamente juntos","Swing al 60% de velocidad","Si pierdes el equilibrio: repite más despacio","Aumenta gradualmente la velocidad"],
+variantes:["Con hierro 9","Con hierro 5","Con driver (muy avanzado)"],
+esquema:"👣 Pies juntos · 60% velocidad · Equilibrio · Rotación correcta",
+tags:["juego largo","equilibrio","pies juntos","drill"]},
+
+{id:"jl04",cat:"Juego Largo",nivel:"Intermedio",nombre:"El swing en espejo",icono:"🪞",
+duracion:"20 min",material:"Hierro 7, espejo grande",
+objetivo:"Desarrollar conciencia corporal del swing.",
+descripcion:"Practica frente a un espejo. Verifica: plano del backswing correcto, rotación de caderas, follow-through equilibrado.",
+ejecucion:["Sin bola: swing completo observando el espejo","¿El palo apunta al objetivo en P6?","Observa la rotación de caderas","Verifica el finish (¿equilibrio completo?)"],
+variantes:["Filmación lateral con móvil","Comparando con un modelo pro","Solo posición de impacto"],
+esquema:"🪞 Plano correcto · Rotación caderas · Balance finish",
+tags:["juego largo","espejo","auto-corrección","swing"]},
+
+{id:"jl05",cat:"Juego Largo",nivel:"Básico",nombre:"El grip — Los 3 tipos",icono:"✋",
+duracion:"20 min",material:"Hierro 7",
+objetivo:"Dominar los 3 tipos de grip y elegir el más adecuado.",
+descripcion:"Overlapping (Vardon): más común. Interlocking: meñique y índice entrelazados (Tiger, Nicklaus). Baseball: todos los dedos (principiantes).",
+ejecucion:["5 min con cada tipo de grip","¿Cuál da más control?","¿Cuál da más potencia?","Elige el que da más consistencia"],
+variantes:["Grip débil (fade)","Grip neutro (recto)","Grip fuerte (draw)"],
+esquema:"✋ Overlapping vs Interlocking vs Baseball · Elige TU grip",
+tags:["juego largo","grip","agarre","técnica básica"]},
+
+{id:"jl06",cat:"Juego Largo",nivel:"Básico",nombre:"Alineación con varillas",icono:"📐",
+duracion:"20 min",material:"Hierro 7, 2 varillas",
+objetivo:"Desarrollar rutina de alineación consistente.",
+descripcion:"Varilla 1 apunta al objetivo. Varilla 2 paralela en los pies. Error más común: pies apuntan al objetivo en lugar de paralelos.",
+ejecucion:["Varilla 1: apuntando al objetivo","Varilla 2: paralela a la 1, en los pies","Pies, caderas y hombros paralelos a la varilla 2","El palo apunta a la varilla 1"],
+variantes:["Sin varillas (de memoria)","Con targets distintos","Con vídeo lateral"],
+esquema:"═══ Línea objetivo ═══ · ═══ Línea pies (paralela) ═══",
+tags:["juego largo","alineación","varillas","rutina"]},
+
+{id:"jl07",cat:"Juego Largo",nivel:"Avanzado",nombre:"Draw y fade intencional",icono:"↩️",
+duracion:"30 min",material:"Hierro 7, 10 bolas",
+objetivo:"Ejecutar curvas intencionales con consistencia.",
+descripcion:"Draw: cierra el stance 10°, cara cuadrada, camino inside-out. Fade: abre el stance 10°, cara cuadrada, camino outside-in.",
+ejecucion:["Draw: pies 10° cerrados, cara al objetivo, ISI","Fade: pies 10° abiertos, cara al objetivo, OTI","5 draws seguidos → 5 fades seguidos","Observa la diferencia de distancia"],
+variantes:["Con driver","Con hierro 5","Para rodear un árbol"],
+esquema:"↩️ Draw: Feet closed·ISI · ↪️ Fade: Feet open·OTI",
+tags:["juego largo","draw","fade","curva intencional"]},
+
+{id:"jl08",cat:"Juego Largo",nivel:"Intermedio",nombre:"El driver — Tee height",icono:"🏌️",
+duracion:"25 min",material:"Driver, 10 bolas, tees",
+objetivo:"Optimizar la posición del tee para maximizar distancia.",
+descripcion:"La mitad de la bola debe estar por encima de la corona del driver. Bola frente al talón izquierdo. Golpear en el ascenso del swing.",
+ejecucion:["Tee: mitad de la bola sobre la corona","Bola: frente al talón izquierdo","Stance más ancho que con hierros","Golpear en el ascenso (sweeping motion)"],
+variantes:["Tee más alto (más distancia)","Tee más bajo (más control)","Bola más o menos adelantada"],
+esquema:"🏌️ Tee: mitad bola sobre corona · Bola: frente al talón izq.",
+tags:["juego largo","driver","tee","configuración"]},
+
+{id:"jl09",cat:"Juego Largo",nivel:"Avanzado",nombre:"La 3-madera desde el suelo",icono:"🌲",
+duracion:"25 min",material:"3-madera, 10 bolas",
+objetivo:"Dominar la 3-madera desde el suelo (sin tee).",
+descripcion:"Bola ligeramente adelantada del centro, swing más plano que con hierros, barrer la hierba suavemente (no dejes divot profundo).",
+ejecucion:["Bola un poco adelantada del centro","Swing más plano que con hierros","El palo barre la hierba suavemente","Toca el tee imaginario bajo la bola"],
+variantes:["Desde el tee con tee muy bajo","Desde rough","En fairway firme vs. hierba blanda"],
+esquema:"🌲 3-madera · Bola adelantada · Swing plano · Barre la hierba",
+tags:["juego largo","3-madera","madera de calle","técnica"]},
+
+{id:"jl10",cat:"Juego Largo",nivel:"Intermedio",nombre:"El whoosh — Velocidad al revés",icono:"💫",
+duracion:"15 min",material:"Hierro 7 al revés",
+objetivo:"Desarrollar velocidad máxima en el área de impacto.",
+descripcion:"Sujeta el palo por la cabeza (al revés). Swing rápido. El 'whoosh' (silbido) más fuerte debe sonar en el área de impacto, no antes.",
+ejecucion:["Sujeta el palo por la cabeza del hierro","Swing completo","Escucha dónde suena el whoosh más fuerte","Debe sonar en el área de impacto"],
+variantes:["Más lento para identificar","Más rápido para aumentar velocidad","Antes y después de la práctica"],
+esquema:"💫 Palo al revés → Whoosh = zona de impacto → Velocidad máxima",
+tags:["juego largo","velocidad","whoosh","potencia"]},
+
+{id:"jl11",cat:"Juego Largo",nivel:"Intermedio",nombre:"El hierro 6 — Palo de la consistencia",icono:"⭐",
+duracion:"25 min",material:"Hierro 6, 20 bolas",
+objetivo:"Dominar el hierro 6 como referencia de consistencia.",
+descripcion:"20 bolas seguidas anotando el % de golpes sólidos. Objetivo: 70% sólidos antes de subir al hierro 5.",
+ejecucion:["20 bolas con hierro 6","Anota: sólido / fat / thin / shanked","Calcula el porcentaje","Objetivo: 70% sólidos"],
+variantes:["En campo cubierto","En campo exterior","Con condiciones de viento"],
+esquema:"⭐ Hierro 6 · 20 bolas · 70% sólidos = pasar al siguiente nivel",
+tags:["juego largo","hierro 6","consistencia","referencia"]},
+
+{id:"jl12",cat:"Juego Largo",nivel:"Básico",nombre:"Impact bag — Manos adelantadas",icono:"👊",
+duracion:"20 min",material:"Hierro 7, impact bag o bolsa de arena",
+objetivo:"Desarrollar la sensación del impacto con manos adelantadas.",
+descripcion:"Coloca la bolsa donde estaría la bola. Swing lento hasta llegar a la bolsa. Las manos deben llegar antes que la cabeza del palo.",
+ejecucion:["Coloca la bolsa donde estaría la bola","Swing lento hasta llegar a la bolsa","Las manos llegan antes que la cabeza","Siente la presión en las manos adelantadas"],
+variantes:["Golpe muy lento","Velocidad media","Con el palo completo"],
+esquema:"👊 Impact bag · Manos adelantadas · Sin flip · Lento → Rápido",
+tags:["juego largo","impacto","impact bag","manos adelantadas"]},
+
+{id:"jl13",cat:"Juego Largo",nivel:"Intermedio",nombre:"Secuencia downswing — Rodilla primero",icono:"🦵",
+duracion:"20 min",material:"Hierro 7, 10 bolas",
+objetivo:"Mejorar la transferencia de peso de derecha a izquierda.",
+descripcion:"En el tope del backswing, inicia el downswing moviendo la rodilla izquierda hacia el objetivo. Luego cadera, hombro y brazo.",
+ejecucion:["En el tope del backswing: pausa 1 segundo","Inicia moviendo la rodilla izquierda al objetivo","Luego sigue cadera, hombro y brazo","Siente la diferencia en potencia"],
+variantes:["Muy lento para sentir la secuencia","Con banda elástica","Exagerando el movimiento"],
+esquema:"🦵 Rodilla izq → Cadera → Hombro → Brazo · Secuencia correcta",
+tags:["juego largo","transferencia peso","rodilla","secuencia"]},
+
+{id:"jl14",cat:"Juego Largo",nivel:"Avanzado",nombre:"Hierros largos — Confianza con el 4H",icono:"⚙️",
+duracion:"25 min",material:"4-hierro o 5-hierro, 10 bolas",
+objetivo:"Desarrollar confianza con los hierros largos.",
+descripcion:"Bola ligeramente adelantada, swing tranquilo y completo, no intentes levantar la bola. El loft ya lo hace.",
+ejecucion:["Bola ligeramente adelantada del centro","Swing más lento y completo","NO intentes levantar la bola","Confía en el golpe limpio y el loft"],
+variantes:["Empezar con el 6-hierro","4-hierro desde el tee","Comparar con hierros cortos"],
+esquema:"⚙️ Hierro 4 · Bola adelantada · Swing completo · No levantes",
+tags:["juego largo","hierro largo","4-hierro","confianza"]},
+
+{id:"jl15",cat:"Juego Largo",nivel:"Intermedio",nombre:"Gate del fairway — Precisión con driver",icono:"🚗",
+duracion:"25 min",material:"Driver, 10 bolas",
+objetivo:"Desarrollar precisión con el driver.",
+descripcion:"Coloca dos varillas en el fairway formando una puerta de 20m a 150m. Objetivo: hacer pasar la bola por la puerta (7/10).",
+ejecucion:["Varillas a 150m formando puerta de 20m","Elige un objetivo DENTRO de la puerta","Ejecuta tu swing normal","Objetivo: 7/10 pasan por la puerta"],
+variantes:["Puerta de 15m (más difícil)","Puerta a 180m","Con curva (fade/draw)"],
+esquema:"🚗 Driver → 150m → [║ 20m puerta ║] · Objetivo: 7/10",
+tags:["juego largo","driver","precisión","fairway"]},
+
+{id:"jl16",cat:"Juego Largo",nivel:"Avanzado",nombre:"Desde el rough — Estrategia de salida",icono:"🌿",
+duracion:"25 min",material:"Hierros 5-7, 10 bolas",
+objetivo:"Recuperar eficientemente desde el rough.",
+descripcion:"Prioridad: volver al fairway, no llegar al green. Rough alto: 9-hierro para salir. Rough moderado: hierro 6-7 con más velocidad.",
+ejecucion:["Evalúa: rough corto, moderado o alto","Rough alto: olvida la distancia, sal al fairway","Rough moderado: hierro 6-7 más agresivo","Siempre: ángulo más empinado en rough"],
+variantes:["Rough húmedo","Rough seco","Con mala postura del pie"],
+esquema:"🌿 Rough: Evalúa → Elige palo → Sal al FAIRWAY siempre",
+tags:["juego largo","rough","estrategia","recuperación"]},
+
+{id:"jl17",cat:"Juego Largo",nivel:"Básico",nombre:"Posiciones clave P1-P10",icono:"🔄",
+duracion:"25 min",material:"Hierro 7, espejo",
+objetivo:"Verificar las posiciones clave del swing.",
+descripcion:"P1 (address), P6 (cima backswing), P7 (impacto), P10 (finish). Practica cada posición lentamente.",
+ejecucion:["P1: Address — peso neutro, espalda recta","P6: Cima — hombro izq bajo el mentón","P7: Impacto — cadera girada, peso izquierda","P10: Finish — balance completo, pecho al objetivo"],
+variantes:["Con filmación lateral","Con espejo","En cámara lenta mental"],
+esquema:"P1→P3→P6→P7→P9→P10 · Posiciones clave del swing",
+tags:["juego largo","swing","posiciones","técnica"]},
+
+{id:"jl18",cat:"Juego Largo",nivel:"Intermedio",nombre:"Zonas de aterrizaje — Tee shot",icono:"📍",
+duracion:"30 min",material:"Driver + madera 3, 15 bolas",
+objetivo:"Optimizar la estrategia de tee shot eligiendo zonas.",
+descripcion:"Identifica: zona A (ideal), zona B (aceptable), zona peligro (evitar). Si zona A tiene peligro: apunta a zona B.",
+ejecucion:["Identifica las 3 zonas en el fairway","Si zona A tiene peligro: apunta a zona B","Usa menos palo para más control si hace falta","El objetivo es el fairway, no la distancia"],
+variantes:["Con agua izquierda","Con OB derecha","Fairway estrecho"],
+esquema:"📍 Zona A (ideal) · Zona B (segura) · ❌ Peligro · Decide",
+tags:["juego largo","estrategia","tee shot","zonas"]},
+
+{id:"jl19",cat:"Juego Largo",nivel:"Intermedio",nombre:"Velocidad de swing — Secuencia correcta",icono:"💨",
+duracion:"25 min",material:"Driver, sensor de swing o app",
+objetivo:"Incrementar velocidad con la secuencia correcta.",
+descripcion:"La secuencia: caderas → hombros → brazos → palo. Practica swing al 80% y al 100%. Si al 100% baja la distancia: pierdes eficiencia.",
+ejecucion:["Swing al 80%: mide la distancia","Swing al 100%: ¿la distancia aumentó o bajó?","Si bajó: secuencia incorrecta","Practica: cadera → hombro → brazo → palo"],
+variantes:["Con sensor (Swing Caddie)","Con whoosh invertido","Comparando 3/4 vs. completo"],
+esquema:"💨 Secuencia · Cadera→Hombro→Brazo→Palo · Velocidad=Eficiencia",
+tags:["juego largo","velocidad","potencia","secuencia"]},
+
+{id:"jl20",cat:"Juego Largo",nivel:"Básico",nombre:"El campo imaginario — 18 hoyos en prácticas",icono:"🌄",
+duracion:"30 min",material:"Set completo en campo de prácticas",
+objetivo:"Simular la presión de campo en prácticas.",
+descripcion:"Imagina 18 hoyos reales. Cada bola es un golpe de un hoyo específico. No puedes repetir si sale mal.",
+ejecucion:["Diseña un campo imaginario de 9 hoyos","Cada bola = un golpe real (sin repetición)","Si sale mal: añade un golpe","Observa cómo la presión afecta el juego"],
+variantes:["9 hoyos imaginarios","18 hoyos imaginarios","Con target flags como hoyos"],
+esquema:"🌄 Campo imaginario · Sin repetición · Cada bola = golpe real",
+tags:["juego largo","campo imaginario","presión","simulación"]},
+
+// ── ESTRATEGIA PROFESIONAL ──
+{id:"es01",cat:"Estrategia",nivel:"Todos",nombre:"Plan de campo por hoyo",icono:"🗺️",
+duracion:"30 min",material:"Libreta, yardage book",
+objetivo:"Crear un plan estratégico para cada hoyo antes de jugar.",
+descripcion:"Para cada hoyo: 1) Target zone del tee shot, 2) Ángulo de ataque al green, 3) Dónde NO estar, 4) Plan de 2 putts.",
+ejecucion:["Estudia el yardage book o app GPS","Marca la target zone de cada hoyo","Identifica los peligros a evitar","Decide: ¿conservador o agresivo?"],
+variantes:["Plan conservador vs agresivo","Para competición vs ronda social","Con y sin viento"],
+esquema:"🗺️ Target Zone → Ángulo ataque → Evitar peligros → 2 putts plan",
+tags:["estrategia","plan","hoyo","gestión"]},
+
+{id:"es02",cat:"Estrategia",nivel:"Todos",nombre:"La regla del 80%",icono:"🎯",
+duracion:"20 min",material:"Libreta",
+objetivo:"Elegir siempre el palo con el que llegas el 80% de las veces.",
+descripcion:"Si dices «con PW llego justo en el mejor caso» → usa el 9-hierro. El palo del 80%: 8 de cada 10 veces llegas donde quieres.",
+ejecucion:["Anota tus distancias reales (no las ideales)","Para cada palo: ¿con qué % llegas?","Usa el palo con el que llegas el 80%","Nunca uses el palo que 'quizás' llega"],
+variantes:["En campo de prácticas midiendo","En ronda de práctica","En competición"],
+esquema:"🎯 Palo del 80% · No el perfecto · Consistencia siempre",
+tags:["estrategia","selección palo","80%","consistencia"]},
+
+{id:"es03",cat:"Estrategia",nivel:"Todos",nombre:"El cuadrante del green",icono:"🎰",
+duracion:"20 min",material:"Libreta, plano del green",
+objetivo:"Atacar siempre la zona que maximiza la probabilidad de birdie.",
+descripcion:"El green tiene 4 cuadrantes. Si el hoyo está adelante-derecha: ataca el centro-izquierda. Nunca ataques al hoyo si hay peligro detrás.",
+ejecucion:["Identifica la posición del hoyo","Divide el green en 4 cuadrantes","Ataca el cuadrante opuesto al hoyo","Nunca ataques al hoyo si hay peligro detrás"],
+variantes:["Hoyo en cada posición","Con agua detrás","En greens pequeños"],
+esquema:"🎰 Green ÷ 4 · Ataca opuesto al hoyo · 2 putts fáciles",
+tags:["estrategia","green","cuadrante","ataque"]},
+
+{id:"es04",cat:"Estrategia",nivel:"Todos",nombre:"El par realista según handicap",icono:"📊",
+duracion:"20 min",material:"Libreta",
+objetivo:"Establecer expectativas realistas según el nivel actual.",
+descripcion:"HC 0: par = par del campo. HC 18: par real = bogey en cada hoyo. HC 36: par real = doble bogey. Estrategia adaptada al par real.",
+ejecucion:["Calcula tu par real según handicap","HC18: par real = Bogey en cada hoyo","Estrategia: evitar los doble-bogey","Celebra cuando bajas del par real"],
+variantes:["Jugar con el par real como objetivo","Ajustar la estrategia al par real","Competición entre distintos HC"],
+esquema:"📊 HC18: Par real=Bogey · Objetivo: Cero doble-bogeys",
+tags:["estrategia","bogey golf","par realista","HC"]},
+
+{id:"es05",cat:"Estrategia",nivel:"Todos",nombre:"El golf de posición — Ajedrez",icono:"♟️",
+duracion:"25 min",material:"Madera 3 o híbrido",
+objetivo:"Colocar la bola en la posición óptima para el segundo golpe.",
+descripcion:"El tee shot perfecto no es el más largo, es el que deja el mejor ángulo al green. A veces pegar corto a propósito da mejor ángulo.",
+ejecucion:["Identifica el mejor ángulo de ataque al green","¿Desde dónde tienes más green visible?","¿Desde dónde evitas los bunkers del green?","Golpea a ESA posición aunque sea más corta"],
+variantes:["Par 4 largo","Par 5 (en 2 o en 3)","Con obstáculos en el camino"],
+esquema:"♟️ Posición > Distancia · Mejor ángulo al green · Golf de ajedrez",
+tags:["estrategia","posición","ángulo","tee shot"]},
+
+{id:"es06",cat:"Estrategia",nivel:"Todos",nombre:"El agua — Protocolo de decisión",icono:"💧",
+duracion:"20 min",material:"Libreta, set completo",
+objetivo:"Tomar decisiones correctas y sin ansiedad ante el agua.",
+descripcion:"Si tienes +10m de margen con tu palo: golpea normal. Si el margen es <10m: usa un palo menos. Nunca golpees con miedo al agua.",
+ejecucion:["Calcula distancia al agua y al borde seguro","Decide el palo con 10m+ de margen","Confía en la decisión: no cambies en el swing","Si cae: penalización y siguiente con calma"],
+variantes:["Agua delante del green","Agua lateral","Agua detrás del green"],
+esquema:"💧 Agua · Margen +10m · Palo correcto · Confía · Sin miedo",
+tags:["estrategia","agua","obstáculo","decisión"]},
+
+{id:"es07",cat:"Estrategia",nivel:"Todos",nombre:"Gestión del bogey — Escape inteligente",icono:"🚨",
+duracion:"20 min",material:"Set completo",
+objetivo:"Limitar el daño cuando el golpe sale mal.",
+descripcion:"Desde posición de peligro: acepta el bogey extra, minimiza el daño. No intentes recuperar todo en un golpe: acabarás con triple.",
+ejecucion:["Desde posición de peligro: evalúa primero","¿Puedo llegar al green? Solo si es >80% probable","Si no: chip de salida al fairway primero","Objetivo: máximo doble bogey"],
+variantes:["Desde OB","Desde agua","Desde rough alto"],
+esquema:"🚨 Mal golpe → No heroes → Sal al fairway → Máximo doble bogey",
+tags:["estrategia","gestión","bogey","daño control"]},
+
+{id:"es08",cat:"Estrategia",nivel:"Todos",nombre:"Par 5 — Las 3 opciones tácticas",icono:"5️⃣",
+duracion:"25 min",material:"Set completo",
+objetivo:"Elegir la táctica óptima en los par 5.",
+descripcion:"Opción A: en 2 (solo si >80% probable). Opción B: layup a 80-100m del green. Opción C: 3 golpes seguros.",
+ejecucion:["Evalúa distancia del drive habitual","¿Puedes llegar en 2? Solo si 80% probable","Si no: tee shot + layup + wedge + 2 putts","No intentes en 2 si necesitas golpe perfecto"],
+variantes:["Par 5 corto (alcanzable en 2)","Par 5 largo (3 golpes para todos)","Par 5 con agua en el 2do golpe"],
+esquema:"5️⃣ En 2 (solo si 80%) · Layup+wedge · 3 golpes seguros",
+tags:["estrategia","par 5","opciones","táctica"]},
+
+{id:"es09",cat:"Estrategia",nivel:"Todos",nombre:"Los 4 escenarios de viento",icono:"💨",
+duracion:"20 min",material:"Libreta, set completo",
+objetivo:"Tomar decisiones correctas según el viento.",
+descripcion:"Contra: +1 o +2 palos, trayectoria baja. A favor: -1 palo. Lateral izq: apunta a la derecha. Lateral der: apunta a la izquierda.",
+ejecucion:["Evalúa velocidad (lanza hierba al aire)","Identifica la dirección exacta","Aplica el escenario correspondiente","Ajusta también la trayectoria"],
+variantes:["Viento flojo (5-10 km/h)","Viento moderado (10-20)","Viento fuerte (+20)"],
+esquema:"💨 Contra:+1p⬇️ · A favor:-1p · Lateral: apunta contra",
+tags:["estrategia","viento","ajuste","condiciones"]},
+
+{id:"es10",cat:"Estrategia",nivel:"Todos",nombre:"El layup inteligente",icono:"🛡️",
+duracion:"20 min",material:"Libreta, set completo",
+objetivo:"Hacer layup a tu distancia de confort personal.",
+descripcion:"Cada jugador tiene distancias de confort. Haz layup a ESA distancia, no a cualquier distancia solo por quedar bien.",
+ejecucion:["¿Con qué palo y distancia tienes más up & downs?","Si es desde 80m: layup a 80m siempre","Si es desde 50m: layup a 50m","Nunca a distancia incómoda"],
+variantes:["En par 4 largo","En par 5","Con obstáculo en la zona de layup"],
+esquema:"🛡️ Layup a TU distancia de confort · Más up & downs = Mejor score",
+tags:["estrategia","layup","distancia","confort"]},
+
+{id:"es11",cat:"Estrategia",nivel:"Avanzado",nombre:"Golf estadístico — Strokes Gained",icono:"📈",
+duracion:"30 min",material:"App estadísticas",
+objetivo:"Usar estadísticas para identificar áreas de mayor mejora.",
+descripcion:"GIR, FIR, Putts por ronda, Up & Down %, Sand Save %. Identifica cuál tiene mayor impacto en tu score y dedica el 80% de práctica a esa área.",
+ejecucion:["Instala una app de estadísticas","Registra 3-5 rondas","Analiza: ¿dónde pierdes más shots?","Dedica el 80% de práctica a esa área"],
+variantes:["Solo anotar putts por ronda","Solo anotar GIR","Análisis completo"],
+esquema:"📈 GIR+FIR+Putts+UpDown · Practica el área más débil",
+tags:["estrategia","estadísticas","strokes gained","análisis"]},
+
+{id:"es12",cat:"Estrategia",nivel:"Todos",nombre:"Análisis post-ronda — 3 preguntas",icono:"📋",
+duracion:"20 min",material:"Libreta, scorecard",
+objetivo:"Aprender de cada ronda con un análisis estructurado.",
+descripcion:"Después de cada ronda: 1) ¿Mejor hoyo y por qué? 2) ¿Peor hoyo y cómo evitarlo? 3) ¿Qué practicar esta semana?",
+ejecucion:["Repasa el scorecard después de la ronda","Responde las 3 preguntas sin excusas","Identifica el patrón de fallos","Programa la práctica específica"],
+variantes:["Las 5 preguntas (más profundo)","Análisis cada 9 hoyos","Con compañero de práctica"],
+esquema:"📋 1.Mejor hoyo · 2.Peor hoyo · 3.¿Qué practicar? · Semanal",
+tags:["estrategia","análisis","post-ronda","aprendizaje"]},
+
+{id:"es13",cat:"Estrategia",nivel:"Todos",nombre:"Par 3 — Estrategia según HC",icono:"3️⃣",
+duracion:"25 min",material:"Set completo",
+objetivo:"Estrategia específica para los par 3 según nivel.",
+descripcion:"HC bajo: busca birdie. HC medio: busca par, acepta bogey. HC alto: zona grande del green, evita obstáculos, acepta 3 putts.",
+ejecucion:["Analiza el par 3: ¿agua, bunkers, desnivel?","HC bajo: ataca el hoyo si está en zona segura","HC alto: apunta al centro del green siempre","Nunca ataques el hoyo si hay peligro"],
+variantes:["Par 3 con agua enfrente","Con bunkers laterales","Green en pendiente"],
+esquema:"3️⃣ HC bajo→ataca hoyo · HC alto→centro green SIEMPRE",
+tags:["estrategia","par 3","hoyo corto","HC"]},
+
+{id:"es14",cat:"Estrategia",nivel:"Todos",nombre:"OB — No arriesgues con driver",icono:"🚫",
+duracion:"20 min",material:"Madera 3 o híbrido",
+objetivo:"Gestionar los hoyos con peligro de OB.",
+descripcion:"Si hay OB en el tee shot: nunca uses el driver en un hoyo que no controlas. Es mejor 20m menos con fairway que OB (+2).",
+ejecucion:["Identifica la dirección del OB","Apunta AL LADO CONTRARIO del OB","Usa el palo que garantiza el fairway 90%","Nunca te arriesgues con OB posible"],
+variantes:["OB a la derecha","OB a la izquierda","OB por largo"],
+esquema:"🚫 OB · Apunta contrario · Madera 3 > driver · Fairway = ganar",
+tags:["estrategia","OB","gestión riesgo","tee shot"]},
+
+{id:"es15",cat:"Estrategia",nivel:"Todos",nombre:"La zona de scoring 80-100m",icono:"💰",
+duracion:"25 min",material:"Wedges, 15 bolas",
+objetivo:"Dominar la zona que más afecta al handicap.",
+descripcion:"La zona 80-100m es donde más se diferencian los handicaps. Merece el 30% de la práctica total.",
+ejecucion:["30% del tiempo de práctica: 80-100m","Usa PW, 50° y 52°","Objetivo: zona de 5m alrededor de la bandera","Registra el resultado semanal"],
+variantes:["80m","90m","100m","Con distintas posiciones del hoyo"],
+esquema:"💰 80-100m · 30% de práctica · Zona ⭕5m · Mejora el HC",
+tags:["estrategia","scoring","80-100m","wedge"]},
+
+{id:"es16",cat:"Estrategia",nivel:"Todos",nombre:"Pre-shot routine — El escudo contra la presión",icono:"🧘",
+duracion:"20 min",material:"Set completo",
+objetivo:"Desarrollar una rutina pre-golpe que funcione bajo presión.",
+descripcion:"La rutina: 1) Visualizar, 2) Práctica swing, 3) Setup, 4) Trigger. Máximo 30 segundos. Siempre idéntica.",
+ejecucion:["Define TU rutina: visualizar+swing práctica+setup+trigger","Cronométrala: siempre la misma duración","Practica CON y SIN presión","En competición: confía en la rutina"],
+variantes:["Rutina corta (20s)","Rutina completa (30s)","Solo en putts importantes"],
+esquema:"🧘 1.Visualiza · 2.Práctica swing · 3.Setup · 4.Trigger · <30s",
+tags:["estrategia","rutina","presión","pre-shot"]},
+
+{id:"es17",cat:"Estrategia",nivel:"Todos",nombre:"El bunker — Estrategia de escape",icono:"🏖️",
+duracion:"20 min",material:"SW, 10 bolas",
+objetivo:"Estrategia correcta al caer en un bunker.",
+descripcion:"Bunker greenside: objetivo = green y 2 putts. Bunker de fairway: objetivo = fairway, NO el green a menos que el lip sea bajo.",
+ejecucion:["Bunker greenside: siempre intenta el green","Bunker fairway: evalúa el lip primero","Lip alto: sal perpendicular al bunker","Lip bajo + distancia manejable: ataca el green"],
+variantes:["Bunker con lip alto","Bunker con lip bajo","Bunker con lie enterrado"],
+esquema:"🏖️ Greenside→green siempre · Fairway→evalúa lip→elige",
+tags:["estrategia","bunker","escape","táctica"]},
+
+{id:"es18",cat:"Estrategia",nivel:"Todos",nombre:"Target específico — Juega al objetivo",icono:"🎯",
+duracion:"20 min",material:"Set completo",
+objetivo:"Desarrollar el hábito de jugar siempre a un objetivo específico.",
+descripcion:"No 'el fairway' sino 'ese árbol de la derecha del fairway'. No 'el green' sino 'la bandera roja'. El cerebro funciona mejor con objetivos específicos.",
+ejecucion:["Antes de cada golpe: target ESPECÍFICO","Cierra los ojos y visualiza el golpe","Ejecuta viendo mentalmente el target","Evalúa: ¿apuntaste al target correcto?"],
+variantes:["Target a 50m","Target a 150m","Target invisible (imagina un punto)"],
+esquema:"🎯 Target específico · No 'el fairway': ese árbol · Visualiza primero",
+tags:["estrategia","target","objetivo","mental"]},
+
+{id:"es19",cat:"Estrategia",nivel:"Todos",nombre:"Viento a favor — No pegues más fuerte",icono:"🎈",
+duracion:"20 min",material:"Set completo",
+objetivo:"Maximizar el viento a favor sin perder control.",
+descripcion:"Con viento a favor: usa un palo menos, pero NO cambies el swing. El error: intentar golpear más fuerte. El viento ya hace el trabajo.",
+ejecucion:["Viento a favor: usa un palo menos","NO cambies el swing","Deja que el viento haga el trabajo","Putting: el viento afecta poco"],
+variantes:["Viento leve (-1 palo)","Viento fuerte (-2 palos)","Viento a favor en approach"],
+esquema:"🎈 Viento a favor: -1 palo · MISMO swing · No pegues más fuerte",
+tags:["estrategia","viento a favor","control","distancia"]},
+
+{id:"es20",cat:"Estrategia",nivel:"Todos",nombre:"Scorecard — Juego de decisiones",icono:"📝",
+duracion:"25 min",material:"Scorecard, libreta",
+objetivo:"Aprender a leer el scorecard para tomar decisiones estratégicas.",
+descripcion:"Antes de la ronda: identifica los 3 hoyos donde puedes ganar shots y los 3 donde puedes perderlos. Planifica hoyo a hoyo.",
+ejecucion:["Lee el scorecard antes de salir","Identifica los 3 hoyos más favorables para ti","Identifica los 3 hoyos más peligrosos","Planifica estrategia específica para cada uno"],
+variantes:["En campos conocidos","En campos nuevos","Para competición importante"],
+esquema:"📝 3 hoyos a ganar + 3 a proteger · Plan hoyo a hoyo · Pre-ronda",
+tags:["estrategia","scorecard","planificación","pre-ronda"]}
+
+,
+// ── REGLAS PROFESIONAL ──
+{id:"rg01",cat:"Reglas",nivel:"Todos",nombre:"El drop moderno — Regla 14.3",icono:"⬇️",
+duracion:"15 min",material:"Bola, área de drop",
+objetivo:"Ejecutar el drop correctamente según las Reglas 2019+.",
+descripcion:"Drop moderno: soltar la bola desde altura de rodilla. Debe caer y quedarse en el área de alivio. Si sale: se hace drop dos veces, luego se coloca.",
+ejecucion:["Identifica el punto más cercano de alivio completo","Mide el área de alivio (1 o 2 largos de palo)","Suelta la bola desde la rodilla dentro del área","Si sale del área: repite una vez, luego coloca"],
+variantes:["Drop en obstáculo de agua","Drop en terreno en reparación","Drop por OB (stroke and distance)"],
+esquema:"⬇️ Rodilla · Área de alivio · Max 2 drops → coloca · Regla 14.3",
+tags:["reglas","drop","procedimiento","2019"]},
+
+{id:"rg02",cat:"Reglas",nivel:"Todos",nombre:"Obstáculo de agua — 3 opciones",icono:"💧",
+duracion:"15 min",material:"Libreta",
+objetivo:"Conocer las 3 opciones al caer en obstáculo de penalización.",
+descripcion:"Regla 17: Opción 1: jugar desde donde está. Opción 2: drop en línea recta detrás (+1). Opción 3: volver al origen (+1).",
+ejecucion:["Opción 1: ¿la bola es jugable? (raramente)","Opción 2: drop en línea detrás del agua (+1)","Identifica dónde cruzó la bola el margen","Obstáculo rojo: también drop lateral (+1)"],
+variantes:["Obstáculo amarillo (2 opciones)","Obstáculo rojo (3 opciones + lateral)","Agua al frente del hoyo"],
+esquema:"💧 Agua: Jugar / Drop línea (+1) / Volver origen (+1) · Regla 17",
+tags:["reglas","agua","penalización","drop"]},
+
+{id:"rg03",cat:"Reglas",nivel:"Todos",nombre:"OB y bola perdida",icono:"🚫",
+duracion:"15 min",material:"Libreta",
+objetivo:"Entender el procedimiento de OB y bola perdida.",
+descripcion:"OB o bola perdida: penalización de golpe y distancia. Anuncia bola provisional si hay duda. En algunos campos hay regla local de drop lateral (+2).",
+ejecucion:["OB: vuelve al origen + 1 penalización","Bola perdida: igual que OB","Bola provisional: anúnciala antes de buscar","Regla local de drop (si existe): +2"],
+variantes:["OB con bola provisional","Bola perdida en rough","Opción de drop local"],
+esquema:"🚫 OB/Perdida · Stroke & distance · Bola provisional · Anuncia",
+tags:["reglas","OB","perdida","stroke distance"]},
+
+{id:"rg04",cat:"Reglas",nivel:"Todos",nombre:"Bola injugable — 3 opciones",icono:"❌",
+duracion:"15 min",material:"Libreta",
+objetivo:"Conocer las 3 opciones cuando la bola es injugable (+1).",
+descripcion:"Opción A: volver al origen. Opción B: drop lateral 2 largos. Opción C: drop atrás en línea. En bunker: solo dentro del bunker (excepto +2 extra).",
+ejecucion:["Opción A: más segura, pierdes distancia","Opción B: drop lateral 2 largos","Opción C: drop atrás en línea (mejor ángulo)","En bunker: B y C deben quedar en el bunker"],
+variantes:["Injugable en rough","Injugable pegado a árbol","Injugable en bunker"],
+esquema:"❌ Injugable (+1): A)Vuelve · B)Lateral 2L · C)Línea atrás",
+tags:["reglas","injugable","opciones","drop"]},
+
+{id:"rg05",cat:"Reglas",nivel:"Todos",nombre:"El bunker — Reglas específicas",icono:"🏖️",
+duracion:"15 min",material:"Bunker, libreta",
+objetivo:"Conocer todas las reglas específicas de los bunkers.",
+descripcion:"NO toques la arena con el palo antes del golpe. SÍ puedes clavar los pies. Desde 2019: puedes tocar la arena detrás de la bola si no es un test.",
+ejecucion:["NO: práctica swing tocando la arena","NO: tocar arena con el palo en el address","SÍ: clavar los pies para estabilizarte","SÍ: tocar arena accidentalmente sin ser un test"],
+variantes:["Bola mojada en bunker","Bunker con agua","Bunker con OB detrás"],
+esquema:"🏖️ NO toca arena pre-golpe · SÍ pies clavar · Regla 12",
+tags:["reglas","bunker","prohibiciones","arena"]},
+
+{id:"rg06",cat:"Reglas",nivel:"Todos",nombre:"El green — Reglas específicas",icono:"⛳",
+duracion:"15 min",material:"Green, libreta",
+objetivo:"Conocer todas las reglas específicas en el green.",
+descripcion:"Puedes: marcar la bola, limpiarla, reparar marcas de bola y pico de animal. NO puedes: reparar marcas de spike. Bandera: libre elección desde 2019.",
+ejecucion:["Sí: marcar y limpiar la bola","Sí: reparar pitch marks","Sí: reparar daños de pico de animal","No: reparar marcas de spike (clavos)"],
+variantes:["¿Arena del green antes de putear?","¿Pisar la línea del compañero?","¿Puteo toca la bandera?"],
+esquema:"⛳ Sí=marcar/limpiar/pitch marks · No=spikes · Bandera libre",
+tags:["reglas","green","putting","marcas"]},
+
+{id:"rg07",cat:"Reglas",nivel:"Todos",nombre:"La bandera — Reglas 2019",icono:"🚩",
+duracion:"15 min",material:"Bandera, libreta",
+objetivo:"Conocer las reglas actualizadas sobre la bandera.",
+descripcion:"Desde 2019: puedes dejar la bandera puesta al putear desde el green. Si el putt toca la bandera puesta: sin penalización.",
+ejecucion:["Puedes dejar la bandera: sin penalización si la tocas","Puedes pedir que la quiten","Caddie puede sostenerla","Caddie NO puede tenerla puesta durante el golpe desde el green"],
+variantes:["¿Desde fuera del green con bandera puesta?","¿Bandera caída en el suelo?","¿El asistente la suelta antes del impacto?"],
+esquema:"🚩 2019: Bandera puesta=OK · Si toca=sin penalización",
+tags:["reglas","bandera","pin","2019"]},
+
+{id:"rg08",cat:"Reglas",nivel:"Todos",nombre:"GUR — Terreno en reparación",icono:"🚧",
+duracion:"15 min",material:"Libreta",
+objetivo:"Aplicar correctamente el alivio por terreno en reparación.",
+descripcion:"GUR sin penalización: punto más cercano de alivio completo + drop a 1 largo de palo. El punto no puede estar más cerca del hoyo.",
+ejecucion:["Identifica la GUR (marcada en blanco)","Encuentra el punto más cercano de alivio","Ese punto NO puede estar más cerca del hoyo","Drop a 1 largo de palo de ese punto"],
+variantes:["GUR con bola dentro","GUR en el stance","GUR en el camino del swing"],
+esquema:"🚧 GUR → Punto + cercano alivio → 1 largo drop · Sin penalización",
+tags:["reglas","GUR","terreno reparación","alivio"]},
+
+{id:"rg09",cat:"Reglas",nivel:"Todos",nombre:"Obstáculos inamovibles — Alivio",icono:"🏗️",
+duracion:"15 min",material:"Libreta",
+objetivo:"Obtener alivio correcto de obstáculos inamovibles artificiales.",
+descripcion:"Aspersor, cartel, raíl de carrito: alivio sin penalización si interfiere con bola, stance o swing. Mismo procedimiento que GUR.",
+ejecucion:["¿Interfiere con bola, stance O swing?","Sí → alivio sin penalización","Punto más cercano de alivio completo","Drop a 1 largo de palo"],
+variantes:["Aspersor en el rough","Carril de carrito","Cartel o valla"],
+esquema:"🏗️ Obstáculo inamovible → Punto + cercano → Drop 1 largo · Sin penalización",
+tags:["reglas","obstáculo inamovible","alivio","drop"]},
+
+{id:"rg10",cat:"Reglas",nivel:"Todos",nombre:"Bola que se mueve — ¿Penalización?",icono:"⚠️",
+duracion:"15 min",material:"Libreta",
+objetivo:"Saber cuándo se añade penalización si la bola se mueve.",
+descripcion:"Si el jugador mueve la bola accidentalmente: +1 y reponer. Si fue por causas naturales (viento, gravedad): sin penalización.",
+ejecucion:["¿Quién o qué movió la bola?","Viento/gravedad: sin penalización, juega donde está","Jugador accidentalmente: +1, reponer","En el green: sin penalización si el viento la mueve"],
+variantes:["Bola que rueda durante el address","Bola que cae del árbol","Bola movida al retirar obstáculo"],
+esquema:"⚠️ Naturaleza mueve→Sin penalización · Jugador mueve→+1 reponer",
+tags:["reglas","bola se mueve","penalización","natural"]},
+
+{id:"rg11",cat:"Reglas",nivel:"Todos",nombre:"Bola incorrecta — +2 penalización",icono:"🔴",
+duracion:"15 min",material:"Libreta",
+objetivo:"Entender la penalización por jugar la bola incorrecta.",
+descripcion:"Golpear la bola incorrecta: +2 golpes en stroke play. Debes volver y jugar la correcta. Si no corriges antes del siguiente hoyo: descalificación.",
+ejecucion:["Identifica tu bola antes de golpear (marca la bola)","Si no estás seguro: declárala provisionalmente","Bola incorrecta: +2 y corriges con la correcta","En match play: pierdes el hoyo"],
+variantes:["En rough con otra bola similar","Al sacar del agua","Dos bolas del mismo tipo juntas"],
+esquema:"🔴 Bola incorrecta: +2 stroke play · Pierde hoyo match play · Marca tu bola",
+tags:["reglas","bola incorrecta","penalización","identificación"]},
+
+{id:"rg12",cat:"Reglas",nivel:"Todos",nombre:"Match play — Diferencias clave",icono:"⚔️",
+duracion:"15 min",material:"Libreta",
+objetivo:"Conocer las diferencias entre stroke play y match play.",
+descripcion:"Match play: ganas hoyos, no golpes. Puedes conceder putts. Penalizaciones son pérdida de hoyo. Puedes rendir el hoyo en cualquier momento.",
+ejecucion:["Match play: cuenta hoyos ganados/perdidos","Puedes conceder el putt al rival","Bola incorrecta: pierde el hoyo (no +2)","Puedes rendir el hoyo en cualquier momento"],
+variantes:["Match play de 9 hoyos","Match play por parejas","Con handicap"],
+esquema:"⚔️ Match: Hoyos no golpes · Conceder · Penalización=pierde hoyo",
+tags:["reglas","match play","stroke play","diferencias"]},
+
+{id:"rg13",cat:"Reglas",nivel:"Todos",nombre:"Slow play — Etiqueta de tiempo",icono:"⏰",
+duracion:"15 min",material:"Cronómetro",
+objetivo:"Entender las reglas de ritmo de juego.",
+descripcion:"Tiempo máximo por golpe: 40 segundos. El slow play es infracción en competición. Ready golf recomendado.",
+ejecucion:["Cronometra tus golpes: objetivo <40 segundos","Actúa cuando sea tu turno (no esperes)","Ready golf: juega cuando estés listo","Avisa al árbitro si el grupo anterior va lento"],
+variantes:["Cronometrar toda la ronda","Ready golf sin seguir el honor","Gestión del tiempo en competición"],
+esquema:"⏰ Máx 40s por golpe · Ready golf · Avisa árbitro si hay slow play",
+tags:["reglas","slow play","etiqueta","tiempo"]},
+
+{id:"rg14",cat:"Reglas",nivel:"Intermedio",nombre:"Bunker con agua — Regla especial",icono:"🌊",
+duracion:"15 min",material:"Libreta",
+objetivo:"Procedimiento cuando hay agua acumulada en un bunker.",
+descripcion:"Bunker con agua: alivio sin penalización dentro del bunker (parte seca, aunque esté más cerca del hoyo). O drop fuera con +2.",
+ejecucion:["Opción A: drop en parte seca del bunker (sin penalización)","Opción B: drop fuera del bunker en línea atrás (+2)","Si todo el bunker tiene agua: fuera con +2","Nunca +1: es +0 (dentro) o +2 (fuera)"],
+variantes:["Bunker con poca agua","Bunker completamente inundado","Bunker con GUR dentro"],
+esquema:"🌊 Bunker con agua: Dentro seco(+0) o Fuera línea(+2)",
+tags:["reglas","bunker","agua","condiciones adversas"]},
+
+{id:"rg15",cat:"Reglas",nivel:"Todos",nombre:"Raíz del árbol — ¿Hay alivio?",icono:"🌳",
+duracion:"15 min",material:"Libreta",
+objetivo:"Decidir cuándo hay alivio por raíces u obstáculos naturales.",
+descripcion:"Raíces, rocas, suelo duro: NO hay alivio sin penalización. Si hay GUR marcado: alivio. Si no: juega o injugable (+1).",
+ejecucion:["Raíz de árbol sin marcar: no hay alivio","Injugable (+1): 3 opciones","Si hay peligro de rotura del palo: ¿merece?","Terreno duro no marcado: no hay alivio"],
+variantes:["Raíz superficial","Raíz que afecta al swing","Piedra sin marcar"],
+esquema:"🌳 Raíz/piedra sin marca=NO alivio · Injugable(+1) o juega",
+tags:["reglas","raíz","injugable","obstáculo natural"]},
+
+{id:"rg16",cat:"Reglas",nivel:"Todos",nombre:"Información y consejos — ¿Qué puedo preguntar?",icono:"❓",
+duracion:"15 min",material:"Libreta",
+objetivo:"Saber qué tipo de información puedes solicitar.",
+descripcion:"SÍ: distancias, localización de peligros, reglas. NO: qué palo usó el compañero (consejo no autorizado → +2).",
+ejecucion:["SÍ: distancias, localización de peligros","SÍ: reglas y procedimientos","NO: qué palo usó el compañero (+2)","SÍ: pregunta todo a tu caddie"],
+variantes:["¿Puedo ver el yardage book del compañero?","¿Puedo usar rangefinder?","¿El caddie puede decirme el palo?"],
+esquema:"❓ SÍ:distancias/reglas · NO:qué palo usó rival(+2 consejo ilegal)",
+tags:["reglas","información","consejo","palo"]},
+
+{id:"rg17",cat:"Reglas",nivel:"Todos",nombre:"El score — Responsabilidad del jugador",icono:"📝",
+duracion:"15 min",material:"Scorecard, bolígrafo",
+objetivo:"Entender la responsabilidad respecto a la tarjeta.",
+descripcion:"El jugador es responsable del score correcto en cada hoyo. Score mayor del real: se acepta. Score menor del real: descalificación.",
+ejecucion:["Anota cada hoyo correctamente","Antes de firmar: verifica hoyo a hoyo","Score mayor: se acepta (pierdes golpes)","Score menor: descalificación automática"],
+variantes:["En competición stroke play","Match play (no hay tarjeta)","Con handicap aplicado"],
+esquema:"📝 Hoyo x hoyo correcto · Firmar=responsabilidad · Menor=DQ",
+tags:["reglas","scorecard","tarjeta","responsabilidad"]},
+
+{id:"rg18",cat:"Reglas",nivel:"Todos",nombre:"La línea de juego — No la toques",icono:"🚷",
+duracion:"15 min",material:"Green, libreta",
+objetivo:"Restricciones relacionadas con la línea de juego.",
+descripcion:"Fuera del green: no puedes tocarla para indicar dirección. En el green: puedes señalar sin tocar. El caddie puede tocar la línea solo en el green.",
+ejecucion:["Fuera del green: NO señales tocando la línea","En el green: puedes indicar sin tocar","Caddie: puede tocar la línea SOLO en el green","Nunca presiones la línea del putt"],
+variantes:["¿El caddie puede estar detrás durante el golpe?","¿Pisar la línea del compañero?","¿Limpiar hojas del camino?"],
+esquema:"🚷 Línea: No tocar fuera del green · Green: señalar sin presionar",
+tags:["reglas","línea de juego","caddie","green"]},
+
+{id:"rg19",cat:"Reglas",nivel:"Intermedio",nombre:"El golpe cancelado — ¿Cuándo?",icono:"↩️",
+duracion:"15 min",material:"Libreta",
+objetivo:"Saber cuándo se puede cancelar un golpe sin penalización.",
+descripcion:"Un golpe se puede cancelar si: interferencia de bola externa, compañero golpeó tu bola, interferencia de espectador.",
+ejecucion:["Interferencia de bola externa: cancela y vuelve","Compañero golpeó tu bola: repón sin penalización","Interferencia de espectador: cancelación posible","Siempre consulta al árbitro si hay duda"],
+variantes:["Bola del compañero golpea la tuya en el green","Espectador detiene la bola","Interferencia mecánica (carrito)"],
+esquema:"↩️ Golpe cancelado: interferencia externa · Consulta árbitro siempre",
+tags:["reglas","cancelar golpe","interferencia","árbitro"]},
+
+{id:"rg20",cat:"Reglas",nivel:"Todos",nombre:"Quiz de reglas — 10 situaciones",icono:"🧩",
+duracion:"20 min",material:"Libreta, tarjetas de quiz",
+objetivo:"Repasar 10 situaciones reales mediante un quiz.",
+descripcion:"Para cada situación: 1) ¿Qué penalización? 2) ¿Procedimiento correcto? 3) ¿Hay otra opción?",
+ejecucion:["S1: Bola en agua amarilla","S2: Bola perdida en rough","S3: Bola toca bandera puesta","S4: Árbol en camino del swing","S5-S10: Situaciones variadas"],
+variantes:["Quiz en grupo","Quiz de velocidad","Quiz en campo real"],
+esquema:"🧩 10 situaciones · Penalización + Procedimiento + Opción alternativa",
+tags:["reglas","quiz","situaciones","repaso"]},
+
+// ── CONCENTRACIÓN Y RUTINAS PROFESIONAL ──
+{id:"cc01",cat:"Concentración",nivel:"Todos",nombre:"Respiración 4-7-8",icono:"🌬️",
+duracion:"10 min",material:"Ninguno",
+objetivo:"Reducir la ansiedad antes de golpes importantes.",
+descripcion:"Inhala 4 segundos, aguanta 7, exhala 8. Reduce el ritmo cardíaco y activa el sistema nervioso parasimpático.",
+ejecucion:["Inhala por la nariz: 1-2-3-4","Aguanta: 1-2-3-4-5-6-7","Exhala por la boca: 1-2-3-4-5-6-7-8","Repite 3 veces antes del golpe importante"],
+variantes:["4-4-4 (más fácil)","Box breathing (4-4-4-4)","Solo exhalación larga"],
+esquema:"🌬️ 4s inhala → 7s aguanta → 8s exhala · Repite 3 veces",
+tags:["concentración","respiración","ansiedad","rutina"]},
+
+{id:"cc02",cat:"Concentración",nivel:"Todos",nombre:"El semáforo — Stop, Look, Go",icono:"🚦",
+duracion:"15 min",material:"Ninguno",
+objetivo:"Sistema de 3 fases para estructurar la concentración.",
+descripcion:"ROJO: para, evalúa, elige. ÁMBAR: rutina pre-golpe, visualiza. VERDE: compromiso total, ejecuta sin pensar más.",
+ejecucion:["🔴 Rojo: Para. Evalúa distancia, viento, lie. Elige","🟡 Ámbar: Rutina. Visualiza. Práctica swing","🟢 Verde: Ejecuta. 100% compromiso. Sin pensar","Si hay duda en Verde: vuelve a Rojo"],
+variantes:["Con cronómetro (máx 40s total)","Solo en golpes importantes","En ronda completa"],
+esquema:"🚦 🔴Evalúa → 🟡Rutina → 🟢Ejecuta · Sin dudar en el Verde",
+tags:["concentración","semáforo","rutina","decisión"]},
+
+{id:"cc03",cat:"Concentración",nivel:"Todos",nombre:"Un solo pensamiento",icono:"💭",
+duracion:"15 min",material:"Libreta",
+objetivo:"Pensar en UNA SOLA cosa durante el swing.",
+descripcion:"El error más común: demasiados pensamientos durante el swing. Un cerebro que piensa demasiado no ejecuta bien. Un pensamiento clave por sesión.",
+ejecucion:["Antes de la sesión: decide TU pensamiento (ej: 'rotación')","Durante TODOS los golpes: solo ese pensamiento","Si aparece otro: descártalo","Cambia el pensamiento solo en la SIGUIENTE sesión"],
+variantes:["'Tempo lento'","'Termina arriba'","'Target'","'Rotación'"],
+esquema:"💭 1 pensamiento por sesión · Descarta el resto · Cambia cada sesión",
+tags:["concentración","pensamiento","swing","mental"]},
+
+{id:"cc04",cat:"Concentración",nivel:"Todos",nombre:"El trigger — Entrar en zona",icono:"🟢",
+duracion:"15 min",material:"Varilla o tee como trigger visual",
+objetivo:"Crear un disparador psicológico para entrar en concentración máxima.",
+descripcion:"El trigger es una acción física que indica al cerebro que empieza la concentración: tocar la cabeza del palo, respiración profunda, mirar el target. Siempre el mismo.",
+ejecucion:["Elige TU trigger (único y reproducible)","El trigger marca el inicio de la pre-shot routine","Entre el trigger y el golpe: 100% foco","Después del golpe: SALES de la zona"],
+variantes:["Trigger táctil (tocar el palo)","Trigger visual (mirar el target)","Trigger de respiración"],
+esquema:"🟢 Trigger → 100% Foco → Golpe → 🔴 Relájate (fuera zona)",
+tags:["concentración","trigger","zona","rutina"]},
+
+{id:"cc05",cat:"Concentración",nivel:"Todos",nombre:"La burbuja de foco",icono:"🫧",
+duracion:"15 min",material:"Ninguno",
+objetivo:"Aislar la atención de las distracciones externas.",
+descripcion:"En el momento del golpe imagina que estás dentro de una burbuja. Dentro: tú, el palo, la bola, el target. Fuera: público, viento, pensamientos negativos.",
+ejecucion:["Practica la burbuja con ruido de fondo","Cuando alguien pasa: ignora (están fuera)","Pensamientos negativos: están fuera de la burbuja","Solo entra: el target y el golpe presente"],
+variantes:["Con música de fondo","Con compañero haciendo ruido","En horas punta del campo"],
+esquema:"🫧 Burbuja: Tú+palo+bola+target · Distracciones: fuera siempre",
+tags:["concentración","burbuja","atención","foco"]},
+
+{id:"cc06",cat:"Concentración",nivel:"Todos",nombre:"El parking lot — Aparcar problemas",icono:"🅿️",
+duracion:"10 min",material:"Libreta",
+objetivo:"Dejar los problemas externos fuera del campo.",
+descripcion:"Antes de la ronda: escribe todo lo que preocupa. Deja la libreta en el coche. Los recoges al terminar.",
+ejecucion:["Antes de la ronda: 5 min en el coche","Escribe todo lo que te preocupa","Di: 'lo aparco, lo recupero al terminar'","Si aparece en el campo: está aparcado"],
+variantes:["Solo en competición","Con una 'palabra de parking'","Compartiendo con el compañero"],
+esquema:"🅿️ Pre-ronda: escribe → aparcar → jugar → recuperar",
+tags:["concentración","parking lot","problemas","mental"]},
+
+{id:"cc07",cat:"Concentración",nivel:"Todos",nombre:"Visualización pre-ronda",icono:"🎬",
+duracion:"20 min",material:"Silla cómoda, silencio",
+objetivo:"Realizar una ronda mental completa antes de jugar.",
+descripcion:"La noche anterior o la mañana: cierra los ojos y visualiza todos los hoyos. Para cada hoyo: el tee shot perfecto, el approach, el putt que entra.",
+ejecucion:["Cierra los ojos (15-20 min)","Visualiza el primer hoyo: tee, fairway, green","Tu golpe PERFECTO en cada hoyo","Acaba con el putt del 18 entrando y celebrando"],
+variantes:["Solo los 3 hoyos más difíciles","Con música relajante","Solo los tee shots"],
+esquema:"🎬 Visualiza: Tee→fairway→green→putt · Perfecto · Noche anterior",
+tags:["concentración","visualización","pre-ronda","mental"]},
+
+{id:"cc08",cat:"Concentración",nivel:"Todos",nombre:"Proceso vs resultado",icono:"📝",
+duracion:"15 min",material:"Libreta",
+objetivo:"Enfocarse en el proceso en lugar del resultado.",
+descripcion:"Después de cada golpe, puntúa el PROCESO del 1 al 10. Ignora el resultado (dónde fue la bola). El buen proceso produce buenos resultados.",
+ejecucion:["¿Seguí mi rutina? (1-10)","¿Confié en el golpe? (1-10)","¿Me comprometí con el target? (1-10)","Ignora dónde fue la bola al puntuar"],
+variantes:["Solo puntuar la rutina","Solo el compromiso","Durante 9 hoyos"],
+esquema:"📝 Proceso 1-10 · No el resultado · Rutina+Confianza+Compromiso",
+tags:["concentración","proceso","resultado","evaluación"]},
+
+{id:"cc09",cat:"Concentración",nivel:"Todos",nombre:"Soltar el mal golpe — El siguiente",icono:"⏮️",
+duracion:"10 min",material:"Ninguno",
+objetivo:"Soltar el mal golpe anterior y volver al presente.",
+descripcion:"10 segundos para evaluar el golpe. Imagina que ese golpe se va al pasado. Di en voz baja: 'Siguiente'. El cerebro necesita este ritual de cierre.",
+ejecucion:["Golpe malo: 10 segundos de evaluación tranquila","¿Qué salió mal? Una sola cosa","Imagina que ese golpe se va al pasado","Di en voz baja: 'Siguiente'. 100% presente"],
+variantes:["Con gesto físico (tirar al suelo imaginario)","Con palabra de cierre personal","Escribiéndolo en la libreta"],
+esquema:"⏮️ Mal golpe → 10s evalúa → 'Siguiente' → 100% presente",
+tags:["concentración","soltar","pasado","presente"]},
+
+{id:"cc10",cat:"Concentración",nivel:"Todos",nombre:"Diálogo interno positivo",icono:"💬",
+duracion:"15 min",material:"Libreta",
+objetivo:"Reemplazar el pensamiento negativo por uno neutro o positivo.",
+descripcion:"El diálogo negativo activa el sistema de amenaza y bloquea el rendimiento. Reemplaza cada pensamiento negativo con uno neutro ('Next shot') o de proceso ('rotación completa').",
+ejecucion:["Identifica TUS pensamientos negativos habituales","Para cada uno: crea un reemplazo neutro/positivo","Cuando aparezca el negativo: di el positivo","Practicalo durante la sesión de práctica"],
+variantes:["Solo pensamientos de proceso","Con afirmaciones personales","Compartiendo con el profesor"],
+esquema:"💬 Negativo → 🔄 Neutro/Positivo · Lista personal · Di en voz alta",
+tags:["concentración","diálogo interno","positivo","mental"]},
+
+{id:"cc11",cat:"Concentración",nivel:"Todos",nombre:"El ritual pre-ronda — 30 minutos perfectos",icono:"⏱️",
+duracion:"30 min",material:"Set completo, green de prácticas",
+objetivo:"Rutina de calentamiento consistente para cada ronda.",
+descripcion:"30 min: 5m stretching, 5m putts cortos, 5m putts largos, 5m chips, 5m approach, 5m golpes completos. No te canses: activa, no entrena.",
+ejecucion:["5m: estiramientos de espalda, caderas, hombros","5m: 20 putts de 1m","5m: putts de 3-5m (calibrar el green)","5m: chips desde el fringe","5m: approaches a distintas distancias","5m: hierro 7→driver→hierro 7"],
+variantes:["15 min (poco tiempo)","Solo putting (si llegas tarde)","Énfasis en el área más débil"],
+esquema:"⏱️ 5stretch+5putt corto+5putt largo+5chip+5approach+5largo",
+tags:["concentración","calentamiento","pre-ronda","ritual"]},
+
+{id:"cc12",cat:"Concentración",nivel:"Todos",nombre:"Mindfulness entre golpes",icono:"🧘",
+duracion:"20 min",material:"Ninguno",
+objetivo:"Practicar la presencia plena entre golpes para reducir ansiedad.",
+descripcion:"Entre golpes: observa 5 cosas que VES, 4 que OYES, 3 que TOCAS. Esta práctica desactiva la mente crítica.",
+ejecucion:["Mientras caminas: observa activamente","5 cosas que VES (colores, formas)","4 cosas que OYES (pájaros, viento, pasos)","3 cosas que TOCAS (grip, brisa, suelo)"],
+variantes:["Técnica 5-4-3-2-1 completa","Solo visión (observar colores del campo)","Atención a la respiración al caminar"],
+esquema:"🧘 5VES+4OYES+3TOCAS · Mindfulness entre golpes · Anti-ansiedad",
+tags:["concentración","mindfulness","presencia","ansiedad"]},
+
+{id:"cc13",cat:"Concentración",nivel:"Todos",nombre:"El banco de swings — Confianza",icono:"🏦",
+duracion:"20 min",material:"Set completo",
+objetivo:"Crear un banco de recuerdos positivos para activar la confianza.",
+descripcion:"Recuerda 5 de tus mejores golpes de todos los tiempos. Antes de un golpe importante, 'retira del banco' ese recuerdo.",
+ejecucion:["Escribe tus 5 mejores golpes de todos los tiempos","Para cada uno: dónde fue, qué sentiste","Antes de un golpe difícil: recuerda uno del banco","Siente ese feeling y ejecuta con esa confianza"],
+variantes:["10 mejores golpes","Solo mejores putts","Solo mejores drives"],
+esquema:"🏦 5 mejores golpes · Recuerda → Feeling → Ejecuta con confianza",
+tags:["concentración","confianza","banco swings","mental"]},
+
+{id:"cc14",cat:"Concentración",nivel:"Avanzado",nombre:"El flow state — Estado de flujo",icono:"🌊",
+duracion:"20 min",material:"Ninguno",
+objetivo:"Identificar y reproducir las condiciones del estado de flujo.",
+descripcion:"El flow: juegas sin pensar, automáticamente, con confianza total. Condiciones: desafío≈habilidad, atención plena, sin juicio de resultados.",
+ejecucion:["Recuerda tu mejor ronda: ¿qué pensabas?","¿Qué sentías? ¿Qué hacías diferente?","Identifica 3 condiciones que producen tu flow","Activa esas condiciones conscientemente antes de jugar"],
+variantes:["Diario de flow","Pre-ritual de activación","Simulación en práctica"],
+esquema:"🌊 Flow=Desafío≈Habilidad+Atención+Sin juicio · Identifica TUS condiciones",
+tags:["concentración","flow","estado flujo","mental avanzado"]},
+
+{id:"cc15",cat:"Concentración",nivel:"Todos",nombre:"Presión simulada con consecuencias",icono:"⚡",
+duracion:"25 min",material:"Set completo, compañero",
+objetivo:"Entrenar bajo presión simulada para preparar la mente.",
+descripcion:"Establece consecuencias reales en la práctica: si fallas 3 chips seguidos → 10 flexiones. La presión simulada activa los mismos mecanismos que la real.",
+ejecucion:["Define una consecuencia real (no muy severa)","Ejecuta el ejercicio con la consecuencia en mente","Observa cómo la presión afecta tu rutina","Practica mantener la rutina a pesar de la presión"],
+variantes:["Consecuencias positivas (recompensas)","Consecuencias negativas leves","Competición entre compañeros"],
+esquema:"⚡ Consecuencias reales · Rutina idéntica bajo presión · Simula competición",
+tags:["concentración","presión","competición","simulación"]},
+
+{id:"cc16",cat:"Concentración",nivel:"Todos",nombre:"Recuperación entre golpes",icono:"⏸️",
+duracion:"15 min",material:"Ninguno",
+objetivo:"Recuperarse mentalmente entre golpes.",
+descripcion:"Entre golpe y golpe: camina relajado, habla de otra cosa, respira profundo. La recuperación mental es tan importante como la concentración.",
+ejecucion:["Después de cada golpe: 10 segundos de evaluación tranquila","Camina hacia siguiente posición: desconecta","Habla con el compañero de otra cosa","En las últimas 30m: re-activa el foco"],
+variantes:["Después de un mal golpe (recuperación activa)","Después de un buen golpe (mantén energía)","Técnica de 'sacudir' el golpe"],
+esquema:"⏸️ Golpe → 10s evalúa → Desconecta → 30m antes: re-activa",
+tags:["concentración","recuperación","entre golpes","mental"]},
+
+{id:"cc17",cat:"Concentración",nivel:"Todos",nombre:"La rutina de putting bajo presión",icono:"🎯",
+duracion:"20 min",material:"Putter, 5 bolas",
+objetivo:"Rutina de putting idéntica con y sin presión.",
+descripcion:"Define tu rutina de putting en 5-6 pasos fijos. Esta rutina NUNCA cambia, ni bajo presión ni en momentos clave.",
+ejecucion:["Define tu rutina: 6 pasos fijos","Lee la línea desde atrás","Coloca el putter perpendicular","2 prácticas swings","Mira el hoyo una vez","Golpea"],
+variantes:["Cronometrar la rutina (siempre igual)","Con público mirando","En putts de 1m, 3m y 6m"],
+esquema:"🎯 6 pasos FIJOS · Presión=misma rutina · NUNCA cambia",
+tags:["concentración","putting","rutina","presión"]},
+
+{id:"cc18",cat:"Concentración",nivel:"Todos",nombre:"La aceptación — Par realista",icono:"🤝",
+duracion:"15 min",material:"Libreta",
+objetivo:"Desarrollar la aceptación del nivel actual como base para la mejora.",
+descripcion:"La aceptación no es resignación, es realismo. Si eres HC 20, acepta que harás bogeys. Esta aceptación reduce la ansiedad y paradójicamente mejora el rendimiento.",
+ejecucion:["Define tu par realista según tu handicap","Acepta ese nivel sin juicio","Cuando hagas un bogey (tu par real): no te enfades","Cada hoyo bajo el par real: celebra el extra"],
+variantes:["HC 36: celebra el doble bogey","HC 18: celebra el bogey","HC 10: celebra el par"],
+esquema:"🤝 Aceptación: Par realista=HC · No luches con la realidad · Mejora gradual",
+tags:["concentración","aceptación","realismo","mental"]},
+
+{id:"cc19",cat:"Concentración",nivel:"Todos",nombre:"Cierre mental post-ronda",icono:"🌅",
+duracion:"15 min",material:"Libreta",
+objetivo:"Cerrar mentalmente la ronda para no llevar el golf a casa.",
+descripcion:"Al terminar: 1) Identifica 1 cosa buena. 2) Identifica 1 cosa a mejorar. 3) Di 'gracias' y cierra. El golf quedó en el campo.",
+ejecucion:["Al llegar al coche: 5 minutos de cierre","1 cosa buena: ¿cuál fue tu mejor momento?","1 cosa a mejorar: ¿qué practicaré esta semana?","'Gracias por el juego' → Cierra la libreta"],
+variantes:["Con compañero (compartir 1+1)","Solo en competición","Escritura en diario de golf"],
+esquema:"🌅 1bueno+1mejora+Gracias · Cierra el golf · No te lo lleves a casa",
+tags:["concentración","post-ronda","cierre","ritual"]},
+
+{id:"cc20",cat:"Concentración",nivel:"Todos",nombre:"Zona de confort — Ampliar gradualmente",icono:"📐",
+duracion:"20 min",material:"Set completo",
+objetivo:"Ampliar la zona de confort saliendo gradualmente de ella.",
+descripcion:"Para mejorar: practica regularmente justo FUERA de la zona de confort. Un poco más difícil que lo habitual. Ni demasiado fácil ni imposible.",
+ejecucion:["Identifica tu zona de confort actual","Practica algo un poco más difícil","Cuando lo domines: es tu nueva zona de confort","Vuelve a salir un paso más"],
+variantes:["En putting (distancias más largas)","En chip (lies más difíciles)","En presión (competición)"],
+esquema:"📐 Zona confort → Practica ligeramente fuera → Nueva zona confort",
+tags:["concentración","zona confort","mejora","progresión"]}
+
+,
+// ── FÍSICO GOLF (1-50) ──
+{id:"fi01",cat:"Físico",nivel:"Básico",nombre:"Rotación de columna con palo",icono:"🔄",
+duracion:"10 min",material:"Palo de golf",series:"3×15",
+objetivo:"Mejorar la rotación torácica para un backswing más completo.",
+descripcion:"Palo horizontal sobre los hombros. Rota el torso hacia la derecha (backswing) y hacia la izquierda (follow-through). Sin mover las caderas.",
+ejecucion:["Palo horizontal en los hombros","Rota hacia la derecha: hombro izquierdo baja","Vuelve al centro","Rota hacia la izquierda: hombro derecho baja"],
+variantes:["Con resistencia de banda","Sentado (caderas fijas)","Con pausa en el extremo"],
+esquema:"🔄 Palo en hombros · 90° rotación · Sin mover caderas · 3×15",
+tags:["físico","rotación","torso","backswing"]},
+
+{id:"fi02",cat:"Físico",nivel:"Básico",nombre:"Hip hinge con palo",icono:"🦴",
+duracion:"10 min",material:"Palo de golf",series:"3×10",
+objetivo:"Establecer la postura correcta del address.",
+descripcion:"Palo vertical en la espalda tocando cabeza, dorsal y coxis. Flexiona hacia adelante doblando SOLO las caderas.",
+ejecucion:["Palo vertical: 3 puntos de contacto","Flexiona caderas hacia adelante","La espalda no se dobla","Rodillas ligeramente flexionadas"],
+variantes:["Sin palo (de memoria)","Con espejo lateral","Añadiendo peso"],
+esquema:"🦴 3 puntos espalda · Bisagra cadera · Espalda RECTA · Address",
+tags:["físico","hip hinge","postura","address"]},
+
+{id:"fi03",cat:"Físico",nivel:"Intermedio",nombre:"Plancha lateral con rotación",icono:"💪",
+duracion:"10 min",material:"Esterilla",series:"3×10 cada lado",
+objetivo:"Fortalecer el core lateral y mejorar la estabilidad.",
+descripcion:"Plancha lateral. Levanta el brazo libre hacia el techo y bájalo girando bajo el cuerpo.",
+ejecucion:["Posición de plancha lateral","Brazo libre apunta al techo","Gira llevando ese brazo por debajo del cuerpo","Vuelve a la posición inicial"],
+variantes:["Con peso en la mano","Más lento","Con pausa arriba"],
+esquema:"💪 Plancha lateral → Brazo arriba → Giro bajo → Repite",
+tags:["físico","core","plancha","rotación"]},
+
+{id:"fi04",cat:"Físico",nivel:"Intermedio",nombre:"Sentadilla con rotación",icono:"🦵",
+duracion:"10 min",material:"Palo o pelota medicinal",series:"3×12",
+objetivo:"Fuerza de piernas con rotación específica del golf.",
+descripcion:"Sentadilla normal. Al subir, rota el tronco llevando los brazos a la izquierda (follow-through). Alterna.",
+ejecucion:["Sentadilla: baja controlado","Al subir: rota torso llevando brazos izquierda","Baja de nuevo","Al subir: rota a la derecha","Alterna cada repetición"],
+variantes:["Con mancuernas","Solo rotación (sin sentadilla)","Más lento"],
+esquema:"🦵 Squat down → Rotate left → Down → Rotate right · Alterna",
+tags:["físico","sentadilla","piernas","rotación"]},
+
+{id:"fi05",cat:"Físico",nivel:"Intermedio",nombre:"Pallof press — Anti-rotación",icono:"🔒",
+duracion:"10 min",material:"Banda elástica anclada lateralmente",series:"3×12 cada lado",
+objetivo:"Fortalecer el core en anti-rotación.",
+descripcion:"Banda anclada a un lado. Extiende los brazos al frente y aguanta. La banda intenta girarte: tú resistes.",
+ejecucion:["Banda anclada a la derecha","De pie perpendicular, banda al pecho","Extiende brazos al frente","Resiste la rotación: core activo 3-5 segundos","Vuelve al pecho"],
+variantes:["Con más resistencia","De rodillas","Con rotación controlada"],
+esquema:"🔒 Banda lateral → Extiende → Resiste 3s → Vuelve · Anti-rotación",
+tags:["físico","anti-rotación","estabilidad","core"]},
+
+{id:"fi06",cat:"Físico",nivel:"Básico",nombre:"Rotación de caderas",icono:"🌀",
+duracion:"10 min",material:"Ninguno",series:"3×20",
+objetivo:"Mejorar movilidad y velocidad de rotación de caderas.",
+descripcion:"De pie, manos en caderas. Círculos amplios: 10 horario y 10 antihorario. Luego lateral y adelante-atrás.",
+ejecucion:["Manos en caderas, pies separados","Círculos amplios horario ×10","Círculos amplios antihorario ×10","Lado a lado ×10","Adelante-atrás ×10"],
+variantes:["Solo un plano","Con resistencia","Más amplitud"],
+esquema:"🌀 Círculos completos · Horario+Antihorario · Todos los planos",
+tags:["físico","caderas","movilidad","calentamiento"]},
+
+{id:"fi07",cat:"Físico",nivel:"Intermedio",nombre:"Cable woodchop — Diagonal del swing",icono:"🪓",
+duracion:"10 min",material:"Polea alta o banda elástica",series:"3×12 cada lado",
+objetivo:"Simular el patrón de rotación del swing con resistencia.",
+descripcion:"Polea alta-lateral. Lleva el cable de arriba-afuera a abajo-adentro. Imita el downswing.",
+ejecucion:["Polea alta a la derecha","Agarra con ambas manos","Lleva de arriba-derecha a abajo-izquierda","Imita el movimiento del swing","Controla el retorno"],
+variantes:["Inverso (ground to sky)","Con banda","Más lento y controlado"],
+esquema:"🪓 Polea alta lateral → Diagonal abajo → Patrón downswing",
+tags:["físico","cable","rotación","potencia swing"]},
+
+{id:"fi08",cat:"Físico",nivel:"Básico",nombre:"Glute bridge",icono:"🌉",
+duracion:"10 min",material:"Esterilla",series:"3×15",
+objetivo:"Fortalecer glúteos y cadena posterior para mayor potencia.",
+descripcion:"Tumbado boca arriba, rodillas flexionadas. Eleva las caderas hasta formar una línea recta. Aprieta los glúteos en la cima.",
+ejecucion:["Tumbado, rodillas a 90°, pies planos","Eleva caderas apretando glúteos","Aguanta 2 segundos arriba","Baja controlado"],
+variantes:["A una pierna","Con peso en las caderas","Con banda en rodillas"],
+esquema:"🌉 Tumbado → Eleva caderas → Aprieta glúteos 2s → Baja",
+tags:["físico","glúteos","cadena posterior","potencia"]},
+
+{id:"fi09",cat:"Físico",nivel:"Básico",nombre:"Equilibrio en un pie",icono:"🦩",
+duracion:"10 min",material:"Foam pad opcional",series:"3×30s cada pie",
+objetivo:"Mejorar el equilibrio y la estabilidad de tobillo.",
+descripcion:"De pie sobre un pie, mantén el equilibrio 30 segundos. Progresión: ojos cerrados, superficie inestable, con swing de brazos.",
+ejecucion:["Un pie en el suelo, rodilla ligeramente flexionada","Mantén el equilibrio 30 segundos","Progresión: cierra los ojos","Progresión 2: mueve los brazos como en el swing"],
+variantes:["Sobre foam pad","Con ojos cerrados","Imitando el swing"],
+esquema:"🦩 Un pie → 30s equilibrio → Ojos cerrados → Swing de brazos",
+tags:["físico","equilibrio","tobillo","estabilidad"]},
+
+{id:"fi10",cat:"Físico",nivel:"Básico",nombre:"90/90 stretch — Movilidad de cadera",icono:"🧘",
+duracion:"10 min",material:"Esterilla",series:"3×30s cada lado",
+objetivo:"Mejorar la movilidad de cadera para mayor rotación.",
+descripcion:"Sentado en posición 90/90 (pierna delantera y trasera a 90°). Inclínate sobre la pierna delantera para estirar la cadera trasera.",
+ejecucion:["Siéntate en 90/90","Inclínate lentamente sobre la pierna delantera","Mantén la espalda recta","Siente el estiramiento en la cadera trasera"],
+variantes:["Con rotación de tronco añadida","Más inclinación","Aguantar más tiempo"],
+esquema:"🧘 90/90 · Inclina hacia adelante · Estiramiento cadera · 30s",
+tags:["físico","cadera","movilidad","estiramiento"]},
+
+{id:"fi11",cat:"Físico",nivel:"Básico",nombre:"Superman — Cadena posterior",icono:"🦸",
+duracion:"10 min",material:"Esterilla",series:"3×12 cada diagonal",
+objetivo:"Fortalecer la zona lumbar y la cadena posterior.",
+descripcion:"Tumbado boca abajo. Levanta simultáneamente brazo derecho y pierna izquierda. Aguanta 3 segundos. Alterna.",
+ejecucion:["Tumbado boca abajo, brazos extendidos","Levanta brazo derecho y pierna izquierda","Aguanta 3 segundos","Baja y alterna con brazo izq y pierna der"],
+variantes:["Solo brazos","Solo piernas","Con peso en manos"],
+esquema:"🦸 Tumbado → Brazo der+Pierna izq → 3s → Alterna",
+tags:["físico","lumbar","cadena posterior","estabilidad"]},
+
+{id:"fi12",cat:"Físico",nivel:"Básico",nombre:"Cat-Cow — Movilidad de columna",icono:"🐄",
+duracion:"10 min",material:"Esterilla",series:"3×15",
+objetivo:"Mantener la movilidad de la columna en flexión y extensión.",
+descripcion:"A cuatro patas: alterna entre cat (espalda arqueada arriba) y cow (espalda hundida). Ideal como calentamiento.",
+ejecucion:["A cuatro patas: manos bajo hombros","Cat: curva la espalda hacia arriba","Cow: hunde la espalda, cabeza arriba","Ritmo lento, inhala en cow, exhala en cat"],
+variantes:["Con pausa en cada posición","Añadiendo rotación lateral","Solo cat o solo cow"],
+esquema:"🐄 Cat(curva-exhala) ↔ Cow(hunde-inhala) · Calentamiento columna",
+tags:["físico","columna","cat-cow","calentamiento"]},
+
+{id:"fi13",cat:"Físico",nivel:"Básico",nombre:"Rotación torácica en cuadrupedia",icono:"🐈",
+duracion:"10 min",material:"Esterilla",series:"3×10 cada lado",
+objetivo:"Mejorar la movilidad torácica que limita el backswing.",
+descripcion:"A cuatro patas, mano detrás de la cabeza. Rota el codo hacia el techo. Esto aísla la rotación torácica.",
+ejecucion:["A cuatro patas","Mano derecha detrás de la cabeza","Rota el codo derecho hacia el techo","Vuelve hasta que el codo mire al suelo"],
+variantes:["Con pausa arriba","Más amplitud de rotación","Alternando lados sin parar"],
+esquema:"🐈 Cuadrupedia → Mano cabeza → Codo al techo → Codo al suelo",
+tags:["físico","torácica","movilidad","backswing"]},
+
+{id:"fi14",cat:"Físico",nivel:"Intermedio",nombre:"Dead bug — Core profundo",icono:"🐛",
+duracion:"10 min",material:"Esterilla",series:"3×10 cada diagonal",
+objetivo:"Fortalecer el core profundo manteniendo estabilidad lumbar.",
+descripcion:"Tumbado boca arriba, brazos y piernas al aire (90°). Baja simultáneamente brazo derecho y pierna izquierda sin tocar el suelo. El lumbar no se despega.",
+ejecucion:["Tumbado, brazos y rodillas a 90°","Zona lumbar plana contra el suelo","Baja brazo derecho y pierna izquierda","Sin tocar el suelo: vuelve","El lumbar no se mueve"],
+variantes:["Solo brazos","Solo piernas","Con pausa abajo"],
+esquema:"🐛 Tumbado · Lumbar plana · Brazo der+Pierna izq bajan → Vuelven",
+tags:["físico","dead bug","core profundo","lumbar"]},
+
+{id:"fi15",cat:"Físico",nivel:"Básico",nombre:"Wall angels — Movilidad de hombros",icono:"😇",
+duracion:"10 min",material:"Pared",series:"3×10",
+objetivo:"Mejorar la movilidad de hombros para el swing.",
+descripcion:"Espalda pegada a la pared, brazos en W (codos a 90°). Sube hasta la Y (extendidos arriba) manteniendo todo pegado a la pared.",
+ejecucion:["Espalda y nuca pegadas a la pared","Codos a 90° pegados (W)","Sube lentamente hasta la Y","Todo debe mantenerse en contacto con la pared"],
+variantes:["Más lento","Con foam entre la espalda y la pared","Solo la Y"],
+esquema:"😇 Espalda en pared → W(codos) → Y(arriba) · Todo pegado",
+tags:["físico","hombros","movilidad","postura"]},
+
+{id:"fi16",cat:"Físico",nivel:"Intermedio",nombre:"Lunge con twist",icono:"🦶",
+duracion:"10 min",material:"Palo o pelota medicinal",series:"3×10 cada lado",
+objetivo:"Fuerza de pierna de apoyo y rotación simultánea.",
+descripcion:"Zancada hacia adelante con la pierna izquierda. Al bajar, rota el torso hacia la izquierda. Alterna.",
+ejecucion:["Zancada adelante pierna izquierda","Al bajar: rota torso a la izquierda","Rodilla delantera sobre el pie","Sube volviendo al centro","Alterna piernas"],
+variantes:["Sin rotación (solo zancada)","Con peso","4 direcciones (multidireccional)"],
+esquema:"🦶 Zancada izq+Rotación izq → Zancada der+Rotación der",
+tags:["físico","zancada","piernas","rotación"]},
+
+{id:"fi17",cat:"Físico",nivel:"Básico",nombre:"Farmer's carry — Caminata de granjero",icono:"🌾",
+duracion:"10 min",material:"Mancuernas o bolsas de arena",series:"4×20m",
+objetivo:"Mejorar estabilidad del core y el agarre.",
+descripcion:"Agarra un peso en cada mano y camina 20m. El peso obliga al core a trabajar para mantener la postura.",
+ejecucion:["Peso en ambas manos (moderado)","Camina erguido, hombros hacia atrás","Core activo","Pasos medianos, controlados"],
+variantes:["Solo un lado (unilateral)","Con pasos más largos","Más peso"],
+esquema:"🌾 Peso en manos → Camina erguido 20m → Core activo todo el tiempo",
+tags:["físico","core","estabilidad","agarre"]},
+
+{id:"fi18",cat:"Físico",nivel:"Básico",nombre:"Estiramiento del piriforme — Figura 4",icono:"4️⃣",
+duracion:"10 min",material:"Esterilla",series:"3×30s cada lado",
+objetivo:"Estirar el piriforme para prevenir dolor ciático.",
+descripcion:"Tumbado boca arriba. Cruza el tobillo derecho sobre la rodilla izquierda (figura 4). Lleva ambas piernas hacia el pecho.",
+ejecucion:["Tumbado boca arriba","Cruza tobillo derecho sobre rodilla izquierda","Agarra el muslo izquierdo con ambas manos","Lleva hacia el pecho 30 segundos"],
+variantes:["Sentado en silla (más fácil)","Más profundidad","Añadiendo rotación"],
+esquema:"4️⃣ Tobillo sobre rodilla contraria → Tira hacia pecho → 30s",
+tags:["físico","piriforme","ciática","estiramiento"]},
+
+{id:"fi19",cat:"Físico",nivel:"Intermedio",nombre:"Plank con toque de hombros",icono:"🤚",
+duracion:"10 min",material:"Esterilla",series:"3×20 toques",
+objetivo:"Fortalecer el core con anti-rotación dinámica.",
+descripcion:"Plancha alta. Sin rotar las caderas, lleva la mano derecha al hombro izquierdo. Alterna. Las caderas NO se mueven.",
+ejecucion:["Posición de plancha alta","Core activado, caderas estables","Mano derecha toca hombro izquierdo","Vuelve y alterna","Las caderas NO se mueven"],
+variantes:["Con los pies más separados (más fácil)","Más lento","Añadiendo peso en la espalda"],
+esquema:"🤚 Plancha alta → Toca hombro contrario → Caderas fijas → Alterna",
+tags:["físico","plancha","anti-rotación","core dinámico"]},
+
+{id:"fi20",cat:"Físico",nivel:"Básico",nombre:"Hip flexor stretch",icono:"🚀",
+duracion:"10 min",material:"Esterilla",series:"3×30s cada lado",
+objetivo:"Estirar los flexores de cadera que limitan el follow-through.",
+descripcion:"Media arrodilla. Empuja la cadera delantera hacia adelante. Siente el estiramiento en el frente de la cadera trasera.",
+ejecucion:["Rodilla derecha en el suelo, pie izquierdo adelante","Empuja la cadera HACIA ADELANTE","El torso permanece erguido","Siente el estiramiento en el frente de la cadera"],
+variantes:["Elevando el brazo del mismo lado","Con rotación de tronco","Sobre superficie elevada"],
+esquema:"🚀 Media arrodilla · Empuja cadera adelante · Torso recto · 30s",
+tags:["físico","psoas","flexores cadera","follow-through"]},
+
+{id:"fi21",cat:"Físico",nivel:"Avanzado",nombre:"Nordic hamstring — Excéntrico",icono:"🌙",
+duracion:"10 min",material:"Compañero o banco anclado",series:"3×5-8",
+objetivo:"Fortalecer excéntricamente los isquiotibiales.",
+descripcion:"Rodillas en el suelo, pies sujetos. Baja el cuerpo lo más despacio posible usando solo los isquiotibiales. Cae con las manos.",
+ejecucion:["Rodillas en el suelo, pies sujetos","Cuerpo erguido al inicio","Baja hacia el suelo LO MÁS DESPACIO POSIBLE","Cae con las manos, vuelve empujando"],
+variantes:["Con asistencia de banda","Solo la fase de bajada","Con inclinación inicial menor"],
+esquema:"🌙 Rodillas suelo → Baja LENTO (isquios frenan) → Cae con manos",
+tags:["físico","isquiotibiales","excéntrico","prevención lesión"]},
+
+{id:"fi22",cat:"Físico",nivel:"Básico",nombre:"Sentadilla goblet",icono:"🍷",
+duracion:"10 min",material:"Pesa rusa o mancuerna",series:"3×12",
+objetivo:"Fuerza de piernas con postura erecta.",
+descripcion:"Sujeta la pesa con ambas manos frente al pecho. Sentadilla manteniendo el peso pegado al pecho. La pesa obliga el torso a mantenerse erecto.",
+ejecucion:["Pesa rusa con ambas manos, pegada al pecho","Pies separados ancho de hombros o más","Baja (rodillas siguen punteras)","El torso permanece erecto","Sube apretando los glúteos"],
+variantes:["Con pausa abajo","Con tempo lento en la bajada","Sin peso (aprendizaje)"],
+esquema:"🍷 Pesa al pecho · Sentadilla erecta · Rodillas sobre pies",
+tags:["físico","goblet squat","piernas","postura"]},
+
+{id:"fi23",cat:"Físico",nivel:"Intermedio",nombre:"Lateral band walk",icono:"🦀",
+duracion:"10 min",material:"Banda de resistencia en tobillos",series:"3×15 cada dirección",
+objetivo:"Fortalecer los abductores de cadera.",
+descripcion:"Banda en tobillos. Camina lateralmente en media sentadilla. Rodillas sobre los pies (no se juntan).",
+ejecucion:["Banda en tobillos","Media sentadilla","Paso lateral con la pierna derecha, luego cierra","15 pasos a la derecha y 15 a la izquierda","Rodillas NO se juntan"],
+variantes:["Banda más resistente","Pasos más amplios","Con media sentadilla más profunda"],
+esquema:"🦀 Banda tobillos · Media sentadilla · 15 der → 15 izq",
+tags:["físico","glúteo medio","abductores","estabilidad cadera"]},
+
+{id:"fi24",cat:"Físico",nivel:"Básico",nombre:"Face pull — Tirón al rostro",icono:"😤",
+duracion:"10 min",material:"Banda elástica o polea",series:"3×15",
+objetivo:"Fortalecer rotadores externos de hombro y trapecio medio.",
+descripcion:"Banda a la altura de la cara. Tira hacia la cara con ambas manos, abriendo los codos (W al final).",
+ejecucion:["Banda a la altura de los ojos","Agarra con ambas manos","Tira hacia la cara abriendo los codos (W final)","Los pulgares apuntan hacia atrás","Controla el retorno"],
+variantes:["Con más resistencia","Con rotación externa añadida","Unilateral"],
+esquema:"😤 Banda a la cara · Tira → W al final · Codos afuera · Hombro sano",
+tags:["físico","hombro","face pull","prevención"]},
+
+{id:"fi25",cat:"Físico",nivel:"Intermedio",nombre:"Rotación de tronco sentado",icono:"🪑",
+duracion:"10 min",material:"Silla sin respaldo",series:"3×20 rotaciones",
+objetivo:"Trabajar la rotación torácica con caderas fijas.",
+descripcion:"Sentado en silla sin respaldo (caderas fijas). Brazos cruzados. Rota el tronco al máximo sin mover las caderas.",
+ejecucion:["Sentado, pies planos en el suelo","Brazos cruzados en el pecho","Rota el tronco a la derecha (máximo turn)","Vuelve al centro y rota a la izquierda","Las caderas se quedan quietas"],
+variantes:["Con palo en los hombros","Con pausa en el extremo","Con rotación más rápida"],
+esquema:"🪑 Sentado · Caderas fijas · Rota tronco 90° der-izq",
+tags:["físico","rotación","sentado","torácica"]},
+
+{id:"fi26",cat:"Físico",nivel:"Básico",nombre:"Y-T-W raises — Control escapular",icono:"🦅",
+duracion:"10 min",material:"Mancuernas ligeras opcional",series:"3×10 de cada letra",
+objetivo:"Fortalecer los estabilizadores escapulares.",
+descripcion:"Tumbado boca abajo. Y (brazos diagonal arriba), T (brazos en cruz), W (codos a 90°). Levanta ligeramente en cada posición.",
+ejecucion:["Tumbado boca abajo","Y: brazos arriba-diagonal, levanta 2s","T: brazos en cruz, levanta 2s","W: codos 90°, sube codos como alas 2s"],
+variantes:["Con mancuernas ligeras","Solo una letra por sesión","Más lento"],
+esquema:"🦅 Y(diagonal) → T(cruz) → W(codos 90°) · 2s cada uno",
+tags:["físico","escápula","hombro","manguito rotador"]},
+
+{id:"fi27",cat:"Físico",nivel:"Avanzado",nombre:"Speed training — Overload/Underload",icono:"⚡",
+duracion:"10 min",material:"Palo más pesado y más ligero",series:"3 rondas × 5 swings c/u",
+objetivo:"Aumentar la velocidad de swing.",
+descripcion:"5 swings con palo pesado, 5 con palo ligero (máxima velocidad), 5 con el palo normal. Aumenta la velocidad por sesión.",
+ejecucion:["5 swings con palo 10% más pesado","5 swings con palo más ligero (máxima velocidad)","5 swings con el palo normal","Mide la velocidad con sensor o whoosh"],
+variantes:["Con palos SuperSpeed","Con donut en el driver","Midiendo con app"],
+esquema:"⚡ Pesado×5 → Ligero×5 → Normal×5 · Transferencia de velocidad",
+tags:["físico","velocidad","speed training","potencia"]},
+
+{id:"fi28",cat:"Físico",nivel:"Básico",nombre:"Doorway stretch — Pectorales",icono:"🚪",
+duracion:"10 min",material:"Marco de puerta",series:"3×30s cada lado",
+objetivo:"Estirar los pectorales que limitan el backswing.",
+descripcion:"Antebrazo en el marco de la puerta (codo a 90°). Gira el cuerpo hacia la izquierda hasta sentir el estiramiento en el pecho derecho.",
+ejecucion:["Antebrazo en el marco (codo a 90°)","Gira el cuerpo hacia el lado contrario","Siente el estiramiento en el pecho","30 segundos por lado"],
+variantes:["Brazo más arriba (pectoral menor)","Brazo más abajo (pectoral mayor)","Con rotación añadida"],
+esquema:"🚪 Antebrazo marco → Gira cuerpo contrario → Pecho abre → 30s",
+tags:["físico","pectorales","flexibilidad","backswing"]},
+
+{id:"fi29",cat:"Físico",nivel:"Avanzado",nombre:"Press de potencia con rotación",icono:"☀️",
+duracion:"10 min",material:"Pesa rusa o mancuerna",series:"3×8 cada lado",
+objetivo:"Potencia explosiva con patrón de golf.",
+descripcion:"Pesa en rack (hombro). Rotación de caderas derecha (backswing), luego giro explosivo izquierda + press arriba simultáneo.",
+ejecucion:["Pesa en posición rack (hombro derecho)","Pequeña rotación caderas a la derecha","Giro explosivo caderas izquierda + press arriba","Baja controlado"],
+variantes:["Con banda","Con kettlebell","Solo la rotación sin press"],
+esquema:"☀️ Rack der → Giro caderas izq + Press arriba → Potencia explosiva",
+tags:["físico","potencia","press","explosivo"]},
+
+{id:"fi30",cat:"Físico",nivel:"Básico",nombre:"Estiramiento de isquiotibiales activo",icono:"🦵",
+duracion:"10 min",material:"Esterilla",series:"3×10 cada pierna",
+objetivo:"Mejorar la flexibilidad de isquiotibiales para la postura.",
+descripcion:"Tumbado boca arriba. Rodilla al pecho. Extiende la rodilla despacio. Aguanta 2 segundos. Los isquiotibiales cortos limitan el address.",
+ejecucion:["Tumbado, lleva rodilla al pecho","Extiende la pierna despacio","Aguanta 2 segundos","Flexiona y vuelve a empezar"],
+variantes:["Con banda alrededor del pie","Más amplitud","Combinado con rotación de tobillo"],
+esquema:"🦵 Rodilla al pecho → Extiende despacio → 2s → Flexiona",
+tags:["físico","isquiotibiales","flexibilidad","postura"]},
+
+{id:"fi31",cat:"Físico",nivel:"Básico",nombre:"Fortalecimiento del agarre",icono:"🤜",
+duracion:"10 min",material:"Pelota anti-estrés",series:"3×20 cada mano",
+objetivo:"Fortalecer el agarre para mayor control del palo.",
+descripcion:"Aprieta la pelota 3 segundos y suelta. La presión en el palo debe ser 5/10: firme sin apretar.",
+ejecucion:["Pelota anti-estrés en la mano","Aprieta firmemente 3 segundos","Suelta completamente","Nota la diferencia y aplica al golf"],
+variantes:["Con extensor de dedos","Alternando dedos","Con toalla mojada (más difícil)"],
+esquema:"🤜 Aprieta 3s → Suelta → Presión 5/10 en el palo · Ambas manos",
+tags:["físico","agarre","mano","control palo"]},
+
+{id:"fi32",cat:"Físico",nivel:"Intermedio",nombre:"Single leg bridge",icono:"🌁",
+duracion:"10 min",material:"Esterilla",series:"3×12 cada pierna",
+objetivo:"Fortalecer glúteos de forma unilateral.",
+descripcion:"Igual que el glute bridge pero solo con una pierna. La otra extendida en el aire. Simula la carga en la pierna izquierda durante el impacto.",
+ejecucion:["Tumbado, una rodilla flexionada, otra extendida","Eleva las caderas con el pie que está en el suelo","Aprieta el glúteo en la cima","Baja controlado"],
+variantes:["Con peso en las caderas","Con banda en rodillas","Con pausa arriba"],
+esquema:"🌁 Una pierna suelo → Otra extendida → Eleva → Aprieta glúteo",
+tags:["físico","glúteo","unilateral","impacto"]},
+
+{id:"fi33",cat:"Físico",nivel:"Básico",nombre:"Rotación de muñecas con palo",icono:"🎡",
+duracion:"10 min",material:"Palo de golf",series:"3×20 cada dirección",
+objetivo:"Fortalecer antebrazos y mejorar la rotación en el swing.",
+descripcion:"Palo horizontal frente a ti. Rota hacia adentro (pronación) y hacia afuera (supinación) con los antebrazos.",
+ejecucion:["Palo horizontal frente a ti","Rota hacia adentro (pronación)","Vuelve al centro","Rota hacia afuera (supinación)","Ritmo controlado"],
+variantes:["Con resistencia de banda","Con palo más pesado","Solo pronación o supinación"],
+esquema:"🎡 Palo horizontal · Rota adentro → Afuera · Antebrazos activos",
+tags:["físico","antebrazo","rotación forearm","control"]},
+
+{id:"fi34",cat:"Físico",nivel:"Básico",nombre:"Movilidad de tobillo",icono:"🦶",
+duracion:"10 min",material:"Pared",series:"3×15 cada tobillo",
+objetivo:"Mejorar la dorsiflexión del tobillo para la estabilidad.",
+descripcion:"De pie frente a la pared. Toca la pared con la rodilla (pie plano). Aleja el pie y repite. Más distancia = mejor movilidad.",
+ejecucion:["Pie a 10cm de la pared","Rodilla toca la pared (sin levantar el talón)","Aleja el pie 1cm más","Repite hasta que no puedas sin levantar el talón"],
+variantes:["Con calcetines en suelo liso","Con peso encima","Midiendo la distancia semanal"],
+esquema:"🦶 Pie en suelo → Rodilla toca pared → Aleja → Máxima distancia",
+tags:["físico","tobillo","dorsiflexión","movilidad"]},
+
+{id:"fi35",cat:"Físico",nivel:"Intermedio",nombre:"Tirón de banda hacia abajo — Downswing",icono:"⬇️",
+duracion:"10 min",material:"Banda elástica o polea alta",series:"3×12",
+objetivo:"Fortalecer dorsales y el patrón del downswing.",
+descripcion:"Banda anclada arriba-derecha. Tira hacia abajo-izquierda rotando el tronco. Imita el inicio del downswing.",
+ejecucion:["Banda anclada arriba-derecha","Agarra con ambas manos","Tira hacia abajo-izquierda rotando el tronco","Controla el retorno"],
+variantes:["Con polea","Más resistencia","Solo el movimiento de tronco"],
+esquema:"⬇️ Banda arriba → Tira abajo-izq rotando = Patrón downswing",
+tags:["físico","dorsal","downswing","tirón"]},
+
+{id:"fi36",cat:"Físico",nivel:"Básico",nombre:"Cervical — Rotación de cuello",icono:"🔄",
+duracion:"10 min",material:"Ninguno",series:"3×10 cada lado",
+objetivo:"Mantener movilidad del cuello para la posición correcta en el swing.",
+descripcion:"Sentado erguido. Rota la cabeza lentamente hacia la derecha. Aguanta 3 segundos. Alterna.",
+ejecucion:["Sentado erguido, hombros relajados","Rota la cabeza a la derecha","Sin inclinar: solo rotación pura","Aguanta 3 segundos","Alterna lados"],
+variantes:["Con inclinación lateral","Más lento","Con resistencia manual suave"],
+esquema:"🔄 Cabeza recta → Rota der 3s → Centro → Rota izq 3s",
+tags:["físico","cuello","cervical","movilidad"]},
+
+{id:"fi37",cat:"Físico",nivel:"Avanzado",nombre:"Overhead squat con palo",icono:"🏋️",
+duracion:"10 min",material:"Palo de golf o PVC",series:"3×10",
+objetivo:"Evaluar y mejorar la movilidad global del cuerpo.",
+descripcion:"Sentadilla completa con el palo elevado sobre la cabeza (brazos rectos). Si el palo cae: hay limitaciones de movilidad.",
+ejecucion:["Pies separados, punteras ligeramente afuera","Palo sobre la cabeza, brazos rectos","Baja en sentadilla completa","El palo no debe caer hacia adelante"],
+variantes:["Con palo más ancho","Con tope de talones","Más lento"],
+esquema:"🏋️ Palo arriba+Sentadilla completa = Test movilidad global",
+tags:["físico","movilidad global","overhead squat","evaluación"]},
+
+{id:"fi38",cat:"Físico",nivel:"Básico",nombre:"Manguito rotador — Rotación externa",icono:"🔧",
+duracion:"10 min",material:"Banda elástica",series:"3×15 cada hombro",
+objetivo:"Fortalecer el manguito rotador para prevenir lesiones.",
+descripcion:"Codo pegado al cuerpo a 90°. Lleva la mano hacia afuera (rotación externa). El ejercicio más importante de prevención en golf.",
+ejecucion:["Banda anclada al frente","Codo pegado al cuerpo, 90° de flexión","Lleva la mano hacia afuera","Mantén el codo pegado durante todo el movimiento","Vuelve controlado"],
+variantes:["Tumbado de lado","Con más resistencia","Combinado con elevación"],
+esquema:"🔧 Codo 90° pegado cuerpo → Rotación externa → Vuelve · Previene lesión",
+tags:["físico","manguito rotador","hombro","prevención"]},
+
+{id:"fi39",cat:"Físico",nivel:"Intermedio",nombre:"Remo con rotación",icono:"🚣",
+duracion:"10 min",material:"Banda elástica",series:"3×12 cada lado",
+objetivo:"Fortalecer espalda y core en el patrón del swing.",
+descripcion:"Banda anclada al frente. Tira de la banda hacia atrás con la mano derecha mientras rotas el tronco. Imita el backswing.",
+ejecucion:["Banda anclada al frente","Tira con mano derecha hacia atrás-derecha","Rota el tronco hacia la derecha","Vuelve controlado"],
+variantes:["Sentado","Con polea","Bilateral"],
+esquema:"🚣 Banda frente → Tira+rota derecha → Patrón backswing",
+tags:["físico","remo","espalda","backswing"]},
+
+{id:"fi40",cat:"Físico",nivel:"Básico",nombre:"Sentadilla búlgara",icono:"🏔️",
+duracion:"10 min",material:"Banco o silla",series:"3×10 cada pierna",
+objetivo:"Fuerza de pierna de apoyo (pierna izquierda en el impacto).",
+descripcion:"Pie trasero sobre el banco. Baja la rodilla trasera hacia el suelo. La pierna delantera trabaja en máxima carga.",
+ejecucion:["Pie trasero sobre banco","Pierna delantera adelantada","Baja la rodilla trasera hacia el suelo","La pierna delantera trabaja en bajada y subida"],
+variantes:["Con mancuernas","Con peso corporal","Más profundidad"],
+esquema:"🏔️ Pie trasero en banco → Baja rodilla → Pierna delantera trabaja",
+tags:["físico","pierna","sentadilla búlgara","unilateral"]},
+
+{id:"fi41",cat:"Físico",nivel:"Básico",nombre:"Estiramiento dorsal — Sleeper stretch",icono:"😴",
+duracion:"10 min",material:"Esterilla",series:"3×30s cada lado",
+objetivo:"Estirar la cápsula posterior del hombro para prevenir impingement.",
+descripcion:"Tumbado de lado sobre el hombro derecho, brazo a 90°. Con la mano izquierda, empuja el antebrazo derecho hacia el suelo.",
+ejecucion:["Tumbado de lado sobre hombro derecho","Brazo derecho a 90° delante","Mano izquierda empuja el antebrazo hacia el suelo","Siente el estiramiento en la parte posterior del hombro"],
+variantes:["Menos presión","Con rotación del tronco","Con calor previo"],
+esquema:"😴 De lado · Brazo 90° · Empuja hacia suelo · Posterior hombro · 30s",
+tags:["físico","hombro posterior","impingement","prevención"]},
+
+{id:"fi42",cat:"Físico",nivel:"Intermedio",nombre:"Activación de glúteo medio — Almeja",icono:"🔆",
+duracion:"10 min",material:"Banda en rodillas",series:"3×20 cada lado",
+objetivo:"Activar el glúteo medio que estabiliza la cadera en el swing.",
+descripcion:"Tumbado de lado con banda en las rodillas. Abre la rodilla superior hacia el techo (almeja). Pies juntos.",
+ejecucion:["Tumbado de lado, rodillas juntas a 90°","Banda en las rodillas","Abre la rodilla superior hacia el techo","Mantén los pies juntos","Cierra controlado"],
+variantes:["Banda más resistente","Con pausa arriba","Con cadera en extensión"],
+esquema:"🔆 De lado · Rodillas 90° · Abre rodilla superior · Almeja ×20",
+tags:["físico","glúteo medio","activación","almeja"]},
+
+{id:"fi43",cat:"Físico",nivel:"Básico",nombre:"Flexiones con rotación",icono:"🔄",
+duracion:"10 min",material:"Esterilla",series:"3×10 alternas",
+objetivo:"Fuerza de empuje con rotación específica del golf.",
+descripcion:"Flexión normal. Al subir, rota el cuerpo y extiende un brazo hacia el techo (plancha lateral). Alterna.",
+ejecucion:["Flexión hasta abajo","Al subir: rota abriendo el cuerpo a la derecha","Brazo derecho al techo","Vuelve a flexión","Repite al lado izquierdo"],
+variantes:["Sin rotación completa","Con mancuerna en la mano","Sobre rodillas (más fácil)"],
+esquema:"🔄 Flexión → Plancha lateral derecha → Flexión → Plancha izq",
+tags:["físico","flexiones","rotación","pecho"]},
+
+{id:"fi44",cat:"Físico",nivel:"Básico",nombre:"Caminar de puntillas y talones",icono:"👟",
+duracion:"10 min",material:"Ninguno",series:"3×10m cada variación",
+objetivo:"Fortalecer los pies y el tobillo para la estabilidad.",
+descripcion:"10m de puntillas, 10m de talones, 10m de borde interno, 10m de borde externo. Activa toda la musculatura del pie.",
+ejecucion:["10m de puntillas","10m de talones","10m de borde interno del pie","10m de borde externo","Velocidad controlada"],
+variantes:["Más lento","Con ojos cerrados","En superficie irregular"],
+esquema:"👟 Puntillas → Talones → Borde interno → Borde externo · 10m",
+tags:["físico","pie","tobillo","estabilidad base"]},
+
+{id:"fi45",cat:"Físico",nivel:"Intermedio",nombre:"Stir the pot — Swiss ball",icono:"🥣",
+duracion:"10 min",material:"Swiss ball",series:"3×10 cada dirección",
+objetivo:"Desafiar la estabilidad del core en movimiento circular.",
+descripcion:"Codos sobre la swiss ball, posición de plancha. Realiza círculos con los codos sin mover las caderas.",
+ejecucion:["Codos sobre la swiss ball","Posición de plancha: cuerpo recto","Círculos pequeños horario","Las caderas NO se mueven","Alterna antihorario"],
+variantes:["Círculos más grandes","Más lento","Con los pies juntos"],
+esquema:"🥣 Codos en swiss ball · Círculos · Caderas fijas · Horario+Antihorario",
+tags:["físico","swiss ball","core avanzado","estabilidad"]},
+
+{id:"fi46",cat:"Físico",nivel:"Básico",nombre:"Respiración diafragmática",icono:"🫁",
+duracion:"10 min",material:"Esterilla",series:"3×10 respiraciones",
+objetivo:"Activar el core profundo mediante la respiración correcta.",
+descripcion:"Mano en el pecho, mano en el abdomen. Solo sube la mano del abdomen. El diafragma es el techo del core.",
+ejecucion:["Tumbado, mano pecho y mano abdomen","Inhala: solo sube el abdomen","El pecho no sube","Exhala lentamente 3-4 segundos"],
+variantes:["Sentado","De pie","Combinado con ejercicios de core"],
+esquema:"🫁 Mano abdomen sube · Mano pecho quieta · Core profundo activo",
+tags:["físico","diafragma","core profundo","respiración"]},
+
+{id:"fi47",cat:"Físico",nivel:"Avanzado",nombre:"Salto lateral — Lateral bound",icono:"⬅️",
+duracion:"10 min",material:"Ninguno",series:"3×10 cada dirección",
+objetivo:"Potencia lateral de pierna para la transferencia de peso.",
+descripcion:"Desde un pie, salta lateralmente aterrizando en el otro. Aguanta 1 segundo en equilibrio. Simula la transferencia de peso.",
+ejecucion:["De pie sobre pierna derecha","Salta lateralmente hacia la izquierda","Aterriza sobre pierna izquierda","Aguanta 1 segundo en equilibrio","Salta de vuelta"],
+variantes:["Saltos más pequeños","Con aterrizaje más largo","Con amortiguación exagerada"],
+esquema:"⬅️ Pie der → Salta → Aterriza pie izq → 1s equilibrio → Repite",
+tags:["físico","potencia lateral","transferencia peso","explosivo"]},
+
+{id:"fi48",cat:"Físico",nivel:"Básico",nombre:"Apertura de cadera — Hip circles",icono:"⭕",
+duracion:"10 min",material:"Ninguno",series:"3×10 cada dirección",
+objetivo:"Mejorar la movilidad articular de la cadera en todos los planos.",
+descripcion:"De pie, manos en caderas. Círculos amplios: horario y antihorario. Luego lateral y adelante-atrás.",
+ejecucion:["Manos en caderas, pies separados","Círculos horario ×10","Círculos antihorario ×10","Lateral ×10","Adelante-atrás ×10"],
+variantes:["Círculos más amplios","En posición de media sentadilla","Con apoyo en la pared"],
+esquema:"⭕ Círculos completos · Todos los planos · Movilidad articular cadera",
+tags:["físico","cadera","movilidad articular","calentamiento"]},
+
+{id:"fi49",cat:"Físico",nivel:"Intermedio",nombre:"Inverted row — Tirón invertido",icono:"🔄",
+duracion:"10 min",material:"Barra baja o TRX",series:"3×12",
+objetivo:"Fortalecer la espalda media para mantener la postura.",
+descripcion:"Tumbado bajo una barra baja. Agarra y sube el pecho hasta la barra. El cuerpo permanece recto.",
+ejecucion:["Tumbado bajo la barra, brazos extendidos","Agarra la barra con ambas manos","Sube el pecho hasta la barra","Cuerpo recto durante todo el movimiento","Baja controlado"],
+variantes:["Con los pies más elevados","Con pausa arriba","Con agarre neutro"],
+esquema:"🔄 Tumbado bajo barra → Sube pecho → Cuerpo recto · Postura",
+tags:["físico","espalda media","romboides","postura"]},
+
+{id:"fi50",cat:"Físico",nivel:"Básico",nombre:"Lunge multidireccional con palo",icono:"🌐",
+duracion:"10 min",material:"Palo de golf",series:"3×8 cada dirección",
+objetivo:"Fuerza funcional multidireccional para el golf.",
+descripcion:"Zancada en 4 direcciones: adelante, diagonal-derecha, lateral-derecha, diagonal-atrás. En cada zancada: rotación del tronco con el palo.",
+ejecucion:["Zancada adelante + Rotación izquierda","Zancada diagonal derecha + Rotación derecha","Zancada lateral derecha + Rotación derecha","Zancada diagonal atrás + Rotación izquierda"],
+variantes:["Solo 2 direcciones","Con mancuerna","Más lento y controlado"],
+esquema:"🌐 Zancada 4 direcciones × Rotación · 360° de movimiento",
+tags:["físico","multidireccional","zancada","funcional"]}
+
+,
+// ── FÍSICO GOLF (51-100) ──
+{id:"fi51",cat:"Físico",nivel:"Básico",nombre:"Estiramiento de cuádriceps de pie",icono:"🦵",
+duracion:"10 min",material:"Ninguno",series:"3×30s cada pierna",
+objetivo:"Flexibilidad del cuádriceps para la postura del address.",
+descripcion:"De pie, lleva el talón derecho al glúteo derecho. Rodillas juntas y torso erguido. El cuádriceps tenso limita el follow-through.",
+ejecucion:["De pie, apoyo en pared si es necesario","Lleva el talón al glúteo","Rodillas JUNTAS","Torso erguido","Si quieres más: inclina el tronco ligeramente adelante"],
+variantes:["Tumbado de lado","Con inclinación añadida","Con la otra pierna flexionada"],
+esquema:"🦵 Talón al glúteo · Rodillas juntas · Torso erguido · 30s",
+tags:["físico","cuádriceps","flexibilidad","follow-through"]},
+
+{id:"fi52",cat:"Físico",nivel:"Intermedio",nombre:"Press de hombro con rotación",icono:"💪",
+duracion:"10 min",material:"Banda elástica o mancuerna",series:"3×10 cada lado",
+objetivo:"Fuerza de hombro con el patrón de rotación del golf.",
+descripcion:"Rota el tronco hacia la derecha mientras llevas la banda hacia la derecha (backswing). Luego rota izquierda extendiendo el brazo (follow-through).",
+ejecucion:["Banda a la altura del pecho","Rota a la derecha: brazo derecho se extiende","Vuelve al centro","Rota a la izquierda: brazo izquierdo se extiende"],
+variantes:["Con mancuerna","Con pesa rusa","Solo el movimiento de rotación"],
+esquema:"💪 Rota der+extiende → Centro → Rota izq+extiende · Patrón swing",
+tags:["físico","hombro","rotación","patrón swing"]},
+
+{id:"fi53",cat:"Físico",nivel:"Básico",nombre:"Rotación en decúbito — X-factor",icono:"🌀",
+duracion:"10 min",material:"Esterilla",series:"3×15",
+objetivo:"Mejorar la separación cadera-hombros (X-factor).",
+descripcion:"Tumbado boca arriba, rodillas flexionadas. Palo sobre el pecho. Sin mover las rodillas, rota solo los hombros hacia la derecha.",
+ejecucion:["Tumbado, rodillas flexionadas a 90°","Palo sobre el pecho","Rodillas fijas mirando al techo","Rota solo los HOMBROS hacia la derecha","Siente la separación cadera-hombro"],
+variantes:["Con más rotación","Con pausa en el extremo","Más lento"],
+esquema:"😴 Tumbado · Rodillas fijas · Solo hombros rotan · X-factor",
+tags:["físico","separación","x-factor","rotación torácica"]},
+
+{id:"fi54",cat:"Físico",nivel:"Básico",nombre:"Curl de bíceps con banda",icono:"💪",
+duracion:"10 min",material:"Banda elástica",series:"3×15",
+objetivo:"Fortalecer el bíceps para el control del palo.",
+descripcion:"Banda bajo los pies. Curl clásico. El bíceps controla el palo durante el backswing y el inicio del downswing.",
+ejecucion:["Banda bajo ambos pies","Agarra con ambas manos","Curl: codos a los lados","Solo mueve el antebrazo","Baja controlado 3 segundos"],
+variantes:["Unilateral","Con mancuerna","Con martillo (neutro)"],
+esquema:"💪 Banda bajo pies · Curl · Codos quietos · Baja 3s",
+tags:["físico","bíceps","agarre","control"]},
+
+{id:"fi55",cat:"Físico",nivel:"Intermedio",nombre:"Extensión de tríceps",icono:"🔧",
+duracion:"10 min",material:"Banda elástica",series:"3×15",
+objetivo:"Fortalecer el tríceps para el control del codo en el swing.",
+descripcion:"Banda anclada arriba. Flexiona y extiende el codo. El tríceps controla la posición del codo (evitar el flying elbow).",
+ejecucion:["Banda anclada arriba","Agarra con brazo doblado (codo a 90°)","Extiende el codo hacia abajo","Mantén el codo cerca del cuerpo","Controla el retorno"],
+variantes:["Bilateral","Con mancuerna","Con presa de martillo"],
+esquema:"🔧 Codo flexionado → Extiende → No flying elbow · Control del codo",
+tags:["físico","tríceps","codo","control palo"]},
+
+{id:"fi56",cat:"Físico",nivel:"Básico",nombre:"Elevación lateral de hombro",icono:"✈️",
+duracion:"10 min",material:"Mancuernas ligeras o banda",series:"3×15",
+objetivo:"Fortalecer el deltoides medio para el control del palo.",
+descripcion:"De pie, mancuernas a los lados. Eleva hasta la altura de los hombros (90°) con el pulgar ligeramente hacia abajo.",
+ejecucion:["De pie, mancuernas a los lados","Eleva lateralmente hasta la altura de los hombros","Pulgar ligeramente hacia abajo","Pausa en la cima 1 segundo","Baja controlado 3 segundos"],
+variantes:["Con banda","Unilateral","Con inclinación hacia adelante"],
+esquema:"✈️ Lateral raise · Pulgar abajo · 90° · Pausa 1s · Baja 3s",
+tags:["físico","deltoides","hombro","control palo"]},
+
+{id:"fi57",cat:"Físico",nivel:"Intermedio",nombre:"Ground to sky — Cadena cinética",icono:"⬆️",
+duracion:"10 min",material:"Banda elástica",series:"3×12 cada lado",
+objetivo:"Desarrollar la potencia rotatoria desde los pies hasta las manos.",
+descripcion:"Banda anclada abajo-izquierda. Lleva las manos de abajo-izquierda a arriba-derecha rotando el cuerpo. Cadena cinética completa.",
+ejecucion:["Banda anclada abajo a tu izquierda","Agarra con ambas manos (abajo-izquierda)","Lleva hasta arriba-derecha rotando el cuerpo","Controla el retorno"],
+variantes:["Con polea","Más resistencia","Más lento"],
+esquema:"⬆️ Banda abajo-izq → Manos arriba-der → Cadena cinética completa",
+tags:["físico","cadena cinética","rotación","potencia"]},
+
+{id:"fi58",cat:"Físico",nivel:"Básico",nombre:"Box step — Escalón multidireccional",icono:"📦",
+duracion:"10 min",material:"Escalón de 20-30cm",series:"3×10 cada dirección",
+objetivo:"Fuerza funcional de piernas y equilibrio dinámico.",
+descripcion:"Con un escalón bajo: sube frontal, lateral y baja lateralmente. Alterna piernas.",
+ejecucion:["Escalón de 20-30cm","Subida frontal ×10","Subida lateral ×10","Bajada lateral ×10","Alterna piernas"],
+variantes:["Escalón más alto","Con mancuernas","Con tempo lento"],
+esquema:"📦 Escalón · Frontal+Lateral subida+Lateral bajada · Ambas piernas",
+tags:["físico","escalón","piernas","funcional"]},
+
+{id:"fi59",cat:"Físico",nivel:"Básico",nombre:"Apertura de cadera tumbado",icono:"🔓",
+duracion:"10 min",material:"Esterilla",series:"3×15 cada cadera",
+objetivo:"Mejorar la rotación externa de cadera para el swing.",
+descripcion:"Tumbado boca arriba. Rodilla derecha a 90°. Lleva la rodilla afuera (rotación externa) y adentro (rotación interna).",
+ejecucion:["Tumbado, rodilla izquierda estabiliza","Rodilla derecha a 90°, pie en el suelo","Lleva rodilla hacia afuera (ext)","Vuelve al centro","Lleva rodilla hacia adentro (int)"],
+variantes:["Con banda en la rodilla","Solo rotación externa","Con pausa en el extremo"],
+esquema:"🔓 Rodilla 90° → Afuera(ext) → Centro → Adentro(int) · Arco",
+tags:["físico","cadera","rotación externa","movilidad"]},
+
+{id:"fi60",cat:"Físico",nivel:"Intermedio",nombre:"Peso muerto con banda",icono:"🏋️",
+duracion:"10 min",material:"Banda elástica",series:"3×15",
+objetivo:"Fortalecer glúteos e isquiotibiales con el patrón del swing.",
+descripcion:"Pie sobre la banda. Hip hinge con resistencia. Fortalece la musculatura posterior en el patrón del golf.",
+ejecucion:["Pie en la banda, banda sobre las caderas","Hip hinge hacia adelante","La banda resiste el movimiento","Extiende las caderas de vuelta","Aprieta los glúteos al final"],
+variantes:["Con barra","Unilateral","Con más resistencia"],
+esquema:"🏋️ Banda en caderas → Hip hinge → Extiende → Aprieta glúteos",
+tags:["físico","glúteos","isquiotibiales","hip hinge"]},
+
+{id:"fi61",cat:"Físico",nivel:"Avanzado",nombre:"Split squat — Pierna dividida",icono:"⚔️",
+duracion:"10 min",material:"Mancuernas opcionales",series:"3×12 cada pierna",
+objetivo:"Fuerza de pierna en posición dividida similar al stance.",
+descripcion:"Posición split (pierna adelantada, trasera con rodilla casi en el suelo). Sube y baja. Similar a la amplitud del stance en el golf.",
+ejecucion:["Pierna derecha adelante, izquierda atrasada","Baja la rodilla trasera sin tocar","Sube volviendo a la posición inicial","El tronco permanece erguido","Añade mancuernas para más resistencia"],
+variantes:["Con mancuernas","Con pie trasero elevado (búlgara)","Con pausa abajo"],
+esquema:"⚔️ Split position · Baja rodilla trasera → Sube · Stance del golf",
+tags:["físico","split squat","pierna","stance"]},
+
+{id:"fi62",cat:"Físico",nivel:"Básico",nombre:"Crunch diagonal — Oblicuos",icono:"↗️",
+duracion:"10 min",material:"Esterilla",series:"3×20 alternos",
+objetivo:"Fortalecer los oblicuos que son los principales rotadores del swing.",
+descripcion:"Crunch con rotación: codo derecho hacia rodilla izquierda y viceversa.",
+ejecucion:["Tumbado, manos detrás de la cabeza","Levanta el torso + rota: codo der a rodilla izq","Vuelve","Codo izq a rodilla der","Ritmo controlado, no botes"],
+variantes:["Con peso detrás de la cabeza","Más lento","Con pausa en la torsión"],
+esquema:"↗️ Codo der → Rodilla izq · Codo izq → Rodilla der · Alterna",
+tags:["físico","oblicuos","core","rotación"]},
+
+{id:"fi63",cat:"Físico",nivel:"Básico",nombre:"Extensión dorsal — Lumbar",icono:"🏋️",
+duracion:"10 min",material:"Banco Romano o suelo",series:"3×12",
+objetivo:"Fortalecer la cadena posterior completa.",
+descripcion:"En banco Romano, baja el torso hasta horizontal. Sube hasta línea recta. Sin hiperextender.",
+ejecucion:["Posición en banco Romano","Baja el torso lentamente (4 segundos)","Sube hasta posición horizontal","Aprieta glúteos en la cima"],
+variantes:["Con peso en el pecho","En el suelo (superman)","Con pausa arriba"],
+esquema:"🏋️ Baja 4s → Arriba horizontal → Aprieta glúteos · Cadena posterior",
+tags:["físico","lumbar","extensión dorsal","cadena posterior"]},
+
+{id:"fi64",cat:"Físico",nivel:"Intermedio",nombre:"Seated row — Remo sentado",icono:"🚣",
+duracion:"10 min",material:"Polea o banda",series:"3×15",
+objetivo:"Fortalecer la musculatura postural para mantener la postura en la ronda.",
+descripcion:"Sentado frente a la polea. Tira hacia el estómago manteniendo el torso erguido. Aprieta los omóplatos al final.",
+ejecucion:["Sentado, piernas ligeramente flexionadas","Tira hacia el estómago manteniendo el torso erguido","Al final: aprieta los omóplatos juntos","Controla el retorno 3 segundos"],
+variantes:["Con agarre neutro","Unilateral","Con rotación añadida"],
+esquema:"🚣 Sentado · Tira → Omóplatos juntos · Torso erguido · Postura 4h",
+tags:["físico","remo","postura","resistencia"]},
+
+{id:"fi65",cat:"Físico",nivel:"Básico",nombre:"Sumo squat con brazos al frente",icono:"🤼",
+duracion:"10 min",material:"Ninguno",series:"3×15",
+objetivo:"Mejorar la flexibilidad de ingle y la postura profunda.",
+descripcion:"Pies muy separados, punteras 45° afuera. Brazos extendidos al frente. Baja con espalda recta.",
+ejecucion:["Pies muy separados, punteras 45° afuera","Brazos extendidos al frente","Baja con espalda recta","Rodillas siguen la dirección de los pies","Sube sin despegar los talones"],
+variantes:["Con pesa rusa al frente","Con pausa abajo","Con talones elevados"],
+esquema:"🤼 Pies 45° · Espalda recta · Brazos frente · Ingle abierta",
+tags:["físico","ingle","flexibilidad","postura profunda"]},
+
+{id:"fi66",cat:"Físico",nivel:"Básico",nombre:"Retromarcha — Correr hacia atrás",icono:"⬅️",
+duracion:"10 min",material:"Espacio abierto",series:"4×20m",
+objetivo:"Equilibrio, propiocepción y fuerza de glúteos.",
+descripcion:"Corre hacia atrás durante 20m. Requiere activación de glúteos, propiocepción y equilibrio dinámico.",
+ejecucion:["Espacio seguro y plano","Corre hacia atrás a velocidad moderada","Pasos pequeños al principio","Torso ligeramente inclinado adelante","Camina de vuelta y repite"],
+variantes:["Caminar hacia atrás (más fácil)","Más rápido","En curva"],
+esquema:"⬅️ Retromarcha 20m · Glúteos+Propiocepción+Equilibrio dinámico",
+tags:["físico","retromarcha","propiocepción","glúteos"]},
+
+{id:"fi67",cat:"Físico",nivel:"Intermedio",nombre:"Pallof press de rodillas",icono:"🙏",
+duracion:"10 min",material:"Banda elástica",series:"3×12 cada lado",
+objetivo:"Anti-rotación de core sin contribución de las piernas.",
+descripcion:"De rodillas, banda anclada lateral. Extiende los brazos al frente y aguanta. Más difícil que de pie al eliminar la base de las piernas.",
+ejecucion:["De rodillas, banda anclada a un lado","Lleva la banda al pecho","Extiende brazos al frente","Resiste la rotación 3-5 segundos","Vuelve al pecho"],
+variantes:["Con más resistencia","Semiarrodillado","Con rotación controlada"],
+esquema:"🙏 De rodillas · Banda lateral · Extiende · Resiste 3-5s · Core",
+tags:["físico","anti-rotación","core","de rodillas"]},
+
+{id:"fi68",cat:"Físico",nivel:"Básico",nombre:"Movilidad de hombro — Círculos",icono:"🔄",
+duracion:"10 min",material:"Ninguno",series:"3×10 cada dirección",
+objetivo:"Mantener la movilidad articular del hombro.",
+descripcion:"Brazo extendido, realiza círculos desde pequeños hasta grandes. Horario y antihorario. Ambos hombros.",
+ejecucion:["Brazo derecho extendido","Círculos pequeños horario ×10","Círculos grandes horario ×10","Antihorario ×10 cada tamaño","Alterna brazo"],
+variantes:["Con mancuerna ligera","Con banda","Solo brazo izquierdo"],
+esquema:"🔄 Brazo extendido · Círculos pequeños → grandes · Horario+Antihorario",
+tags:["físico","hombro","movilidad","calentamiento"]},
+
+{id:"fi69",cat:"Físico",nivel:"Avanzado",nombre:"Plyometric push-up — Flexión explosiva",icono:"🚀",
+duracion:"10 min",material:"Esterilla",series:"3×8",
+objetivo:"Desarrollar la potencia explosiva del tren superior.",
+descripcion:"Flexión normal, luego empuja con explosividad para que las manos se separen del suelo. La potencia del tren superior transfiere al swing.",
+ejecucion:["Posición de flexión","Baja controlado","Empuja EXPLOSIVO (manos se separan del suelo)","Aterriza suavemente con codos semiflexionados","Repite"],
+variantes:["Con palmada (más fácil)","Sobre rodillas (para principiantes)","Con altura (cajón)"],
+esquema:"🚀 Flexión → Empuje EXPLOSIVO → Manos del suelo → Aterriza",
+tags:["físico","potencia","explosivo","tren superior"]},
+
+{id:"fi70",cat:"Físico",nivel:"Básico",nombre:"Estiramiento de gemelos",icono:"🦵",
+duracion:"10 min",material:"Pared",series:"3×30s cada pierna",
+objetivo:"Mantener la flexibilidad de gemelos para la estabilidad en el swing.",
+descripcion:"De pie frente a la pared. Pierna trasera recta, talón pegado al suelo. Inclínate hacia la pared sintiendo el estiramiento en el gemelo.",
+ejecucion:["Manos en la pared","Pierna derecha trasera, recta","Talón derecho pegado al suelo","Inclínate hacia la pared 30 segundos","Alterna piernas"],
+variantes:["Rodilla trasera ligeramente flexionada (sóleo)","En escalón (más profundo)","Con rotación del pie"],
+esquema:"🦵 Manos pared · Pierna trasera recta · Talón al suelo · 30s",
+tags:["físico","gemelos","flexibilidad","estabilidad"]},
+
+{id:"fi71",cat:"Físico",nivel:"Intermedio",nombre:"Turkish get-up parcial",icono:"🏅",
+duracion:"10 min",material:"Pesa rusa o mancuerna",series:"3×5 cada lado",
+objetivo:"Estabilidad de hombro y coordinación total del cuerpo.",
+descripcion:"Tumbado, pesa arriba en brazo derecho. Incorporarse hasta sentado manteniendo la pesa arriba. Movimiento complejo de control total.",
+ejecucion:["Tumbado, pesa en brazo derecho (codo recto)","Enrolla hasta sentado usando el codo izquierdo","La pesa siempre apunta al techo","Vuelve a tumbado controlado"],
+variantes:["Sin peso","Solo hasta el codo","Completo (hasta de pie)"],
+esquema:"🏅 Tumbado → Sentado → Pesa arriba siempre · Estabilidad total",
+tags:["físico","turkish get-up","hombro","coordinación"]},
+
+{id:"fi72",cat:"Físico",nivel:"Básico",nombre:"Apertura torácica con rodillo",icono:"🪵",
+duracion:"10 min",material:"Foam roller",series:"3×30s en cada segmento",
+objetivo:"Mejorar la extensión torácica para un mejor backswing.",
+descripcion:"Foam roller perpendicular a la columna en la zona torácica. Extiéndete sobre él con los brazos detrás de la cabeza. Mueve 3-4 vértebras hacia arriba.",
+ejecucion:["Foam roller perpendicular en la zona torácica","Brazos cruzados en el pecho o detrás de la cabeza","Extiéndete hacia atrás sobre el rodillo","Mueve el rodillo hacia arriba (3-4 posiciones)","Siente la apertura del pecho"],
+variantes:["Con los brazos extendidos","Solo en la zona media","Combinado con rotación"],
+esquema:"🪵 Rodillo en torácica · Extiéndete · Mueve hacia arriba · Apertura pecho",
+tags:["físico","torácica","foam roller","extensión"]},
+
+{id:"fi73",cat:"Físico",nivel:"Intermedio",nombre:"Single leg deadlift — Peso muerto unilateral",icono:"🦩",
+duracion:"10 min",material:"Mancuerna o banda",series:"3×10 cada pierna",
+objetivo:"Fuerza de pierna y equilibrio específico del golf.",
+descripcion:"De pie sobre una pierna. Inclínate hacia adelante bajando el peso hacia el suelo (hip hinge unilateral). La pierna trasera se extiende hacia atrás para equilibrar.",
+ejecucion:["De pie sobre pierna derecha","Inclínate hacia adelante con la espalda recta","El peso baja hacia el suelo","La pierna izquierda se extiende hacia atrás","Vuelve a la posición inicial"],
+variantes:["Sin peso","Con dos mancuernas","Con mano en la pared para equilibrio"],
+esquema:"🦩 Una pierna · Hip hinge unilateral · Pierna atrás · Equilibrio",
+tags:["físico","peso muerto","unilateral","equilibrio"]},
+
+{id:"fi74",cat:"Físico",nivel:"Básico",nombre:"Rotación de columna torácica de pie",icono:"↔️",
+duracion:"10 min",material:"Ninguno o palo",series:"3×15 cada lado",
+objetivo:"Movilidad torácica activa específica para el swing.",
+descripcion:"De pie, pies separados. Manos en los hombros (o palo en los hombros). Rota el torso al máximo hacia la derecha y luego izquierda. Las caderas se mueven un poco.",
+ejecucion:["Pies separados ancho de hombros","Manos en los hombros","Rota torso a la derecha (máximo)","Pausa 1 segundo","Rota a la izquierda"],
+variantes:["Solo torso (caderas fijas)","Con palo en los hombros","Con resistencia añadida"],
+esquema:"↔️ Pies separados · Manos hombros · Rota derecha 1s → Izquierda",
+tags:["físico","torácica","rotación activa","swing"]},
+
+{id:"fi75",cat:"Físico",nivel:"Avanzado",nombre:"Battle ropes — Ondas con rotación",icono:"🌊",
+duracion:"10 min",material:"Battle ropes (cuerdas de batalla)",series:"3×30s",
+objetivo:"Potencia y resistencia rotatoria específica del golf.",
+descripcion:"Con las cuerdas de batalla, alterna ondas con rotación del tronco. Simula la acción rotatoria del swing con alta resistencia.",
+ejecucion:["Agarra una cuerda en cada mano","Ondas alternadas (una sube, otra baja)","Añade rotación del tronco con cada onda","Mantén la postura del address durante 30 segundos"],
+variantes:["Ondas simultáneas (más fácil)","Solo rotación sin ondas","Con media sentadilla"],
+esquema:"🌊 Cuerdas · Ondas alternadas + Rotación tronco · 30s · Potencia-resistencia",
+tags:["físico","battle ropes","potencia","resistencia rotatoria"]},
+
+{id:"fi76",cat:"Físico",nivel:"Básico",nombre:"Fortalecimiento de dedos — Extensión",icono:"🖐️",
+duracion:"10 min",material:"Extensor de dedos o banda",series:"3×20 cada mano",
+objetivo:"Fortalecer los extensores de los dedos para equilibrar el agarre.",
+descripcion:"Coloca el extensor de dedos y ábrelos contra la resistencia. Equilibra la musculatura flexora/extensora para un agarre más controlado.",
+ejecucion:["Extensor en los dedos","Abre los dedos contra la resistencia","Aguanta 2 segundos","Cierra controlado","Ambas manos"],
+variantes:["Con banda ancha","Solo 3 dedos","Alternando manos"],
+esquema:"🖐️ Extensor dedos · Abre → 2s → Cierra · Equilibra el agarre",
+tags:["físico","dedos","extensores","agarre equilibrado"]},
+
+{id:"fi77",cat:"Físico",nivel:"Básico",nombre:"Movilidad de cadera — 90/90 activo",icono:"🔃",
+duracion:"10 min",material:"Esterilla",series:"3×10 cada lado",
+objetivo:"Movilidad activa de cadera para la rotación en el swing.",
+descripcion:"Posición 90/90. Desde esta posición, levanta la rodilla delantera del suelo activamente (activación de rotadores externos). Aguanta 3 segundos.",
+ejecucion:["Posición 90/90","Desde el 90/90 estático","Intenta levantar la rodilla delantera del suelo","Aguanta 3 segundos","Baja controlado"],
+variantes:["Más tiempo aguantado","Añadiendo rotación de tronco","Combinado con inclinación"],
+esquema:"🔃 90/90 · Levanta rodilla delantera activamente · 3s · Movilidad activa",
+tags:["físico","cadera","movilidad activa","rotadores"]},
+
+{id:"fi78",cat:"Físico",nivel:"Básico",nombre:"Estiramiento de zona lumbar",icono:"💆",
+duracion:"10 min",material:"Esterilla",series:"3×30s",
+objetivo:"Aliviar la tensión lumbar frecuente en golfistas.",
+descripcion:"Tumbado boca arriba. Rodillas al pecho. Balanceo suave de lado a lado. La lumbar es la zona más lesionada en el golf.",
+ejecucion:["Tumbado boca arriba","Lleva ambas rodillas al pecho","Abraza las rodillas con los brazos","Balanceo suave de lado a lado 30 segundos","Círculos suaves con las rodillas"],
+variantes:["Solo una rodilla (más suave)","Con mayor amplitud","Con respiración profunda"],
+esquema:"💆 Rodillas al pecho · Abraza · Balanceo suave · 30s · Lumbar",
+tags:["físico","lumbar","estiramiento","recuperación"]},
+
+{id:"fi79",cat:"Físico",nivel:"Intermedio",nombre:"Elevación de cadera con banda — Hip thrust",icono:"💥",
+duracion:"10 min",material:"Banda, banco",series:"3×15",
+objetivo:"Máxima activación de glúteos en posición de impacto.",
+descripcion:"Espalda apoyada en banco, banda sobre las caderas. Eleva las caderas explosivamente hasta la posición de puente. Los glúteos son el motor principal del swing.",
+ejecucion:["Espalda en banco, rodillas a 90°","Banda sobre las caderas","Eleva caderas EXPLOSIVO","Aprieta glúteos en la cima 1 segundo","Baja controlado"],
+variantes:["Con barra","A una pierna","Con pausa arriba"],
+esquema:"💥 Espalda en banco · Banda caderas · Eleva EXPLOSIVO · Glúteos 1s",
+tags:["físico","hip thrust","glúteos","explosivo"]},
+
+{id:"fi80",cat:"Físico",nivel:"Básico",nombre:"Rotación cervical con resistencia manual",icono:"👐",
+duracion:"10 min",material:"Mano propia",series:"3×10 cada lado",
+objetivo:"Fortalecer los rotadores del cuello para mantener la cabeza estable.",
+descripcion:"Coloca la mano en la sien. Intenta girar la cabeza contra la resistencia de la mano. La cabeza no se mueve. Isométrico.",
+ejecucion:["Mano derecha en la sien derecha","Intenta girar la cabeza hacia la derecha","La mano resiste: la cabeza no se mueve","Aguanta 5 segundos","Alterna lados"],
+variantes:["Con más resistencia","Con flexión (mentón al pecho)","Con extensión (hacia atrás)"],
+esquema:"👐 Mano en sien · Intenta girar → Resiste · 5s isométrico · Cuello estable",
+tags:["físico","cuello","isométrico","estabilidad"]},
+
+{id:"fi81",cat:"Físico",nivel:"Básico",nombre:"Estiramiento de aductores sentado",icono:"🦋",
+duracion:"10 min",material:"Esterilla",series:"3×30s",
+objetivo:"Mejorar la flexibilidad de la ingle para la postura del swing.",
+descripcion:"Sentado, plantas de los pies juntas. Con los codos empuja suavemente las rodillas hacia el suelo.",
+ejecucion:["Sentado, plantas de los pies juntas","Codos en las rodillas internas","Empuja suavemente hacia el suelo","Mantén la espalda recta 30 segundos"],
+variantes:["Más cerca del cuerpo (más difícil)","Con inclinación hacia adelante","Mariposa dinámica (aletea)"],
+esquema:"🦋 Plantas juntas · Codos empujan rodillas · Espalda recta · 30s",
+tags:["físico","aductores","ingle","flexibilidad"]},
+
+{id:"fi82",cat:"Físico",nivel:"Intermedio",nombre:"Rotación con banda desde el suelo",icono:"🌟",
+duracion:"10 min",material:"Banda elástica",series:"3×12 cada lado",
+objetivo:"Cadena cinética completa desde los pies hasta las manos.",
+descripcion:"Banda anclada abajo. Lleva las manos de abajo hacia arriba-afuera rotando todo el cuerpo. Igual que el follow-through del swing.",
+ejecucion:["Banda anclada abajo-izquierda","Agarra con ambas manos","Lleva de abajo-izq hasta arriba-der rotando","Toda la cadena cinética activa"],
+variantes:["Con polea","Más resistencia","Solo el movimiento de cadera"],
+esquema:"🌟 Banda abajo-izq → Arriba-der · Cadena cinética · Follow-through",
+tags:["físico","cadena cinética","follow-through","total body"]},
+
+{id:"fi83",cat:"Físico",nivel:"Básico",nombre:"Plancha frontal progresiva",icono:"⬛",
+duracion:"10 min",material:"Esterilla",series:"3×30-60s",
+objetivo:"Fortalecer el core en estabilidad isométrica.",
+descripcion:"Plancha frontal clásica. Progresión: sobre rodillas (30s), sobre pies (45s), elevando un pie (60s), sobre un brazo (avanzado).",
+ejecucion:["Posición de plancha sobre los codos","Cuerpo recto de cabeza a talones","Core activo, no hundas las caderas","Mantén 30-60 segundos según nivel"],
+variantes:["Sobre rodillas (principiante)","Elevando un pie","Sobre un brazo (avanzado)"],
+esquema:"⬛ Plancha · Cuerpo recto · Core activo · 30s → 45s → 60s progresión",
+tags:["físico","plancha","core","isométrico"]},
+
+{id:"fi84",cat:"Físico",nivel:"Básico",nombre:"Neck rolls — Movilidad cervical suave",icono:"🌀",
+duracion:"10 min",material:"Ninguno",series:"3×5 cada dirección",
+objetivo:"Mantener la movilidad cervical para el swing.",
+descripcion:"Sentado erguido. Inclina la cabeza a la derecha (oreja al hombro). Vuelve al centro. Inclina a la izquierda. NO hagas círculos completos con la cabeza.",
+ejecucion:["Sentado erguido","Inclina la oreja al hombro derecho","Vuelve al centro","Inclina la oreja al hombro izquierdo","NO hagas círculos completos"],
+variantes:["Con mayor inclinación","Con respiración profunda","Con suave estiramiento manual"],
+esquema:"🌀 Oreja→hombro der · Centro · Oreja→hombro izq · NO círculos completos",
+tags:["físico","cervical","movilidad suave","cuello"]},
+
+{id:"fi85",cat:"Físico",nivel:"Intermedio",nombre:"Press unilateral de hombro",icono:"☝️",
+duracion:"10 min",material:"Mancuerna o banda",series:"3×12 cada brazo",
+objetivo:"Fuerza de hombro unilateral y estabilidad del core.",
+descripcion:"De pie, press con un solo brazo. La asimetría obliga al core a trabajar para mantener el equilibrio y la postura.",
+ejecucion:["De pie, mancuerna en el hombro derecho","Press hacia arriba con el brazo derecho","El core resiste la inclinación lateral","Baja controlado","Alterna brazo"],
+variantes:["De rodillas","Con kettlebell","Con rotación añadida"],
+esquema:"☝️ Un brazo · Press arriba · Core resiste · Postura erecta",
+tags:["físico","hombro","unilateral","core estabilidad"]},
+
+{id:"fi86",cat:"Físico",nivel:"Básico",nombre:"Hip abduction tumbado",icono:"🦾",
+duracion:"10 min",material:"Banda o mancuerna en tobillo",series:"3×15 cada lado",
+objetivo:"Fortalecer los abductores para la estabilidad lateral del swing.",
+descripcion:"Tumbado de lado. Eleva la pierna superior hacia el techo (abducción). Mantén el pie en posición neutra.",
+ejecucion:["Tumbado de lado, piernas extendidas","Eleva la pierna superior hacia el techo","Pie en posición neutra (no rotado)","Baja controlado","Alterna lados"],
+variantes:["Con banda en los tobillos","Con peso en el tobillo","Con rotación del pie hacia arriba"],
+esquema:"🦾 De lado · Eleva pierna superior · Pie neutro · 3×15",
+tags:["físico","abductores","estabilidad lateral","cadera"]},
+
+{id:"fi87",cat:"Físico",nivel:"Avanzado",nombre:"Medicina ball rotational throw",icono:"⚾",
+duracion:"10 min",material:"Pelota medicinal, pared",series:"3×10 cada lado",
+objetivo:"Potencia rotatoria máxima específica del swing.",
+descripcion:"Con pelota medicinal, lanza contra la pared con rotación explosiva del cuerpo. La rotación viene de la cadera, no de los brazos.",
+ejecucion:["Posición lateral a la pared (2-3m)","Pelota en ambas manos","Rotación explosiva de cadera","Lanza la pelota contra la pared","Recoge y repite"],
+variantes:["Sentado (solo torso)","Con pelota más ligera","Con rebote en el suelo"],
+esquema:"⚾ Lateral a pared · Rotación EXPLOSIVA cadera · Lanza · 3×10",
+tags:["físico","potencia rotatoria","pelota medicinal","explosivo"]},
+
+{id:"fi88",cat:"Físico",nivel:"Básico",nombre:"Stretching de pecho y hombros en pared",icono:"🧱",
+duracion:"10 min",material:"Pared",series:"3×30s cada lado",
+objetivo:"Estirar el pecho y el hombro anterior para mejorar el backswing.",
+descripcion:"Mano derecha en la pared (brazo a 90°). Gira el cuerpo hacia la izquierda. Siente el estiramiento en el pecho y la parte anterior del hombro.",
+ejecucion:["Mano derecha en la pared, brazo a 90°","Gira el cuerpo hacia la izquierda","Siente el estiramiento en el pecho","30 segundos","Alterna lados"],
+variantes:["Brazo más arriba o abajo","Con rotación del tronco añadida","Con mayor amplitud"],
+esquema:"🧱 Mano en pared · Gira cuerpo contrario · Pecho+Hombro · 30s",
+tags:["físico","pecho","hombro anterior","backswing"]},
+
+{id:"fi89",cat:"Físico",nivel:"Intermedio",nombre:"Glute kickback con banda — Cable",icono:"🦶",
+duracion:"10 min",material:"Banda elástica",series:"3×15 cada pierna",
+objetivo:"Fortalecer los glúteos para la extensión de cadera del swing.",
+descripcion:"Banda en el tobillo, anclada al frente. Lleva la pierna hacia atrás extendiendo la cadera. Los glúteos son el motor del swing.",
+ejecucion:["Banda en tobillo, ancla al frente","De pie, ligeramente inclinado","Lleva la pierna hacia atrás extendiendo la cadera","Aprieta el glúteo en la extensión","Vuelve controlado"],
+variantes:["Con más resistencia","Con rotación de cadera añadida","Con pausa en la extensión"],
+esquema:"🦶 Banda tobillo → Kickback → Aprieta glúteo → Vuelve · Motor del swing",
+tags:["físico","glúteos","extensión","motor swing"]},
+
+{id:"fi90",cat:"Físico",nivel:"Básico",nombre:"Isometric squat — Sentadilla isométrica",icono:"🏛️",
+duracion:"10 min",material:"Pared",series:"3×30-60s",
+objetivo:"Fortalecer las piernas en la posición específica del stance del golf.",
+descripcion:"Espalda en la pared, caderas y rodillas a 90° (posición de silla). Aguanta. Esta posición es similar al stance del golf.",
+ejecucion:["Espalda en la pared","Caderas y rodillas a 90°","Core activado","Aguanta 30-60 segundos","Progresión: más tiempo"],
+variantes:["Más bajo (90°+)","Con peso adicional","Sobre foam pad"],
+esquema:"🏛️ Pared · 90°-90° · Core activo · 30-60s · Posición stance golf",
+tags:["físico","isométrico","piernas","stance"]},
+
+{id:"fi91",cat:"Físico",nivel:"Básico",nombre:"Hip adduction tumbado",icono:"🤝",
+duracion:"10 min",material:"Pelota entre rodillas o banda",series:"3×15 cada lado",
+objetivo:"Fortalecer los aductores para la estabilidad interna de la cadera.",
+descripcion:"Tumbado de lado. Eleva la pierna inferior hacia la pierna superior (aducción). O con pelota entre las rodillas: aprieta.",
+ejecucion:["Tumbado de lado","Pierna superior doblada por delante para estabilizar","Eleva la pierna inferior hacia la superior","Controla el descenso"],
+variantes:["Con pelota entre rodillas (aprieta)","Con peso en el tobillo","Con banda"],
+esquema:"🤝 De lado · Eleva pierna inferior · Aductores activos · 3×15",
+tags:["físico","aductores","estabilidad cadera","interna"]},
+
+{id:"fi92",cat:"Físico",nivel:"Intermedio",nombre:"Rotación con polea a media altura",icono:"↗️",
+duracion:"10 min",material:"Polea a media altura o banda",series:"3×12 cada lado",
+objetivo:"Fortalecer la rotación a la altura del impacto.",
+descripcion:"Polea a la altura de la cadera. Tira rotando el cuerpo como en el impacto del swing. La cadera inicia el movimiento.",
+ejecucion:["Polea a altura de cadera a la derecha","Agarra con ambas manos","Tira rotando hacia la izquierda (impacto)","La cadera inicia el movimiento","Controla el retorno"],
+variantes:["Con banda","Más resistencia","Solo la rotación de cadera"],
+esquema:"↗️ Polea cadera · Tira rotando izquierda · Cadera primero · Impacto",
+tags:["físico","rotación","impacto","polea"]},
+
+{id:"fi93",cat:"Físico",nivel:"Básico",nombre:"Foam roller IT band",icono:"🪵",
+duracion:"10 min",material:"Foam roller",series:"3×60s cada pierna",
+objetivo:"Aliviar la tensión en la banda iliotibial frecuente en golfistas.",
+descripcion:"Tumbado de lado, foam roller bajo la parte lateral del muslo. Rueda desde la cadera hasta la rodilla con presión moderada.",
+ejecucion:["Tumbado de lado, rodillo bajo el muslo lateral","Apoya en codo y pie del otro lado","Rueda desde cadera hasta justo encima de la rodilla","Pausa en los puntos más tensos","60 segundos cada pierna"],
+variantes:["Con más peso corporal (más presión)","Solo en el punto más tenso","Añadiendo rotación interna/externa"],
+esquema:"🪵 De lado · Rodillo bajo muslo lateral · Cadera→Rodilla · 60s",
+tags:["físico","IT band","foam roller","recuperación"]},
+
+{id:"fi94",cat:"Físico",nivel:"Intermedio",nombre:"Plyo lunge — Zancada explosiva",icono:"⚡",
+duracion:"10 min",material:"Ninguno",series:"3×10 alternos",
+objetivo:"Potencia de piernas para la transferencia de peso explosiva.",
+descripcion:"Zancada abajo, luego salta cambiando las piernas en el aire. Aterriza con la pierna contraria adelante. Desarrolla la potencia necesaria para la transferencia de peso.",
+ejecucion:["Posición de zancada (pierna der adelante)","Baja hacia el suelo","Salta explosivo cambiando piernas en el aire","Aterriza con pierna izq adelante","Repite"],
+variantes:["Sin salto (zancada alternada normal)","Con pausa abajo","Con mancuernas ligeras"],
+esquema:"⚡ Zancada → Salta → Cambia piernas → Aterriza · Potencia",
+tags:["físico","plyo lunge","potencia","explosivo"]},
+
+{id:"fi95",cat:"Físico",nivel:"Básico",nombre:"Estiramiento de trapecio — Cuello lateral",icono:"🧘",
+duracion:"10 min",material:"Silla para apoyo",series:"3×30s cada lado",
+objetivo:"Aliviar la tensión del trapecio frecuente en golfistas.",
+descripcion:"Sentado, mano derecha agarra debajo de la silla. Inclina la cabeza hacia la izquierda. Siente el estiramiento en el lado derecho del cuello/trapecio.",
+ejecucion:["Sentado, mano derecha agarra bajo la silla","Inclina la cabeza hacia la izquierda","Aguanta 30 segundos","Alterna lados"],
+variantes:["Con rotación de cabeza añadida","Sin apoyo (más difícil)","Con suave presión manual"],
+esquema:"🧘 Agarra silla · Inclina cabeza contraria · Trapecio · 30s",
+tags:["físico","trapecio","cuello lateral","recuperación"]},
+
+{id:"fi96",cat:"Físico",nivel:"Avanzado",nombre:"Seated cable rotation",icono:"💺",
+duracion:"10 min",material:"Polea o banda, silla",series:"3×15 cada lado",
+objetivo:"Rotación máxima del tronco con resistencia sentado.",
+descripcion:"Sentado perpendicular a la polea. Rota el tronco alejándote de la polea con la mayor amplitud posible. Las caderas permanecen fijas.",
+ejecucion:["Sentado perpendicular a la polea","Agarra con ambas manos","Rota alejándote de la polea (máxima amplitud)","Caderas fijas en la silla","Controla el retorno"],
+variantes:["Con banda","Más resistencia","Con pausa en la rotación"],
+esquema:"💺 Sentado · Caderas fijas · Rota máxima · Polea · 3×15",
+tags:["físico","rotación sentado","polea","tronco"]},
+
+{id:"fi97",cat:"Físico",nivel:"Básico",nombre:"Estiramiento completo del swing — Reach",icono:"🌅",
+duracion:"10 min",material:"Ninguno",series:"3×10 cada lado",
+objetivo:"Estiramiento dinámico que simula el movimiento completo del swing.",
+descripcion:"De pie. Simula el backswing llegando al máximo de extensión con el brazo derecho. Luego simula el follow-through alcanzando al máximo con el brazo izquierdo.",
+ejecucion:["De pie, posición de address","Backswing: gira y alcanza arriba-atrás con brazo derecho","Pausa 2 segundos en el máximo","Follow-through: gira y alcanza arriba con brazo izquierdo","Pausa 2 segundos"],
+variantes:["Con palo","Más amplitud","Más velocidad (dinámico)"],
+esquema:"🌅 Address → Backswing máximo 2s → Follow-through máximo 2s",
+tags:["físico","estiramiento dinámico","swing completo","movilidad"]},
+
+{id:"fi98",cat:"Físico",nivel:"Intermedio",nombre:"Copenhagen plank — Aductores",icono:"🏙️",
+duracion:"10 min",material:"Banco o silla",series:"3×20s cada lado",
+objetivo:"Fortalecer los aductores en posición funcional.",
+descripcion:"Plancha lateral con el pie superior apoyado en un banco. El pie inferior libre. Eleva la cadera del suelo. Muy difícil: los aductores trabajan al máximo.",
+ejecucion:["Posición de plancha lateral","Pie superior apoyado en banco (a la altura de la cadera)","Eleva la cadera del suelo","Aguanta 20 segundos","Alterna lados"],
+variantes:["Con rodilla en el banco (más fácil)","Con peso adicional","Más tiempo"],
+esquema:"🏙️ Plancha lateral · Pie en banco · Cadera elevada · Aductores · 20s",
+tags:["físico","aductores","plancha","estabilidad"]},
+
+{id:"fi99",cat:"Físico",nivel:"Básico",nombre:"Thoracic rotation con foam roller",icono:"🔵",
+duracion:"10 min",material:"Foam roller",series:"3×10 cada lado",
+objetivo:"Mejorar la rotación torácica usando el rodillo como apoyo.",
+descripcion:"Tumbado de lado sobre el foam roller (perpendicular a la columna en la zona torácica). Rotación del tronco hacia atrás con el brazo libre.",
+ejecucion:["Tumbado de lado, rodillo en la zona torácica","Rodillas a 90° en el suelo","Brazo libre apunta al techo","Rota hacia atrás llevando el brazo al suelo contrario","Vuelve"],
+variantes:["Con pausa al final","Solo el brazo sin el hombro","Más amplitud"],
+esquema:"🔵 De lado · Rodillo torácica · Brazo al techo → Suelo contrario",
+tags:["físico","torácica","foam roller","rotación"]},
+
+{id:"fi100",cat:"Físico",nivel:"Todos",nombre:"Rutina completa de 10 minutos — Pre-ronda",icono:"🏆",
+duracion:"10 min",material:"Ninguno o palo",series:"1 ronda completa",
+objetivo:"Activar todo el cuerpo en 10 minutos antes de jugar.",
+descripcion:"Secuencia de activación completa: 1min rotación cervical, 1min cat-cow, 1min hip circles, 1min hip hinge, 1min rotación torácica, 1min hip flexor stretch, 1min equilibrio un pie, 1min rotación con palo, 2min swing suave progresivo.",
+ejecucion:["1min: rotación cervical","1min: cat-cow","1min: hip circles","1min: hip hinge","1min: rotación torácica","1min: hip flexor stretch","1min: equilibrio un pie","1min: rotación con palo","2min: swing suave progresivo"],
+variantes:["5 minutos (versión rápida)","15 minutos (versión completa)","Con énfasis en área más rígida"],
+esquema:"🏆 10min completos · Cabeza→Cadera→Piernas · Pre-ronda perfecta",
+tags:["físico","pre-ronda","activación","rutina completa"]}
+];
+];
+];
+];
+];
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -5564,24 +7794,6 @@ const CAT_ICONS = {
 // ═══════════════════════════════════════════════════════════════════
 // GRUPOS DE EDAD — Escuela de Golf Ciudad Real 
 // ═══════════════════════════════════════════════════════════════════
-const GRUPOS_EDAD = [
-  // ── Categorías infantiles/juveniles (por edad) ──
-  { id:"prebenjamin", nombre:"Prebenjamín", rango:"5-7 años",   color:"#f5a623", emoji:"🐣", descripcion:"Iniciación lúdica. Juego libre, coordinación básica y amor por el deporte." },
-  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#7b5ea7", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
-  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#3a7abf", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
-  { id:"infantil",    nombre:"Infantil",    rango:"13-14 años", color:"#16a085", emoji:"🦅", descripcion:"Perfeccionamiento técnico y preparación para competición." },
-  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#2e7d3c", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
-  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#c0392b", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
-  { id:"sub21",       nombre:"Sub-21",      rango:"19-21 años", color:"#8e44ad", emoji:"🎓", descripcion:"Categoría juvenil superior. Competición avanzada y desarrollo de élite." },
-  // ── Grupos de adultos / modalidades ──
-  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#2e7d3c", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
-  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#1a5c2a", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
-  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#c8a84b", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
-  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#e67e22", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
-  { id:"bono_5",                 nombre:"Bono 5 Clases",        rango:"Adultos", color:"#3498db", emoji:"🎫", descripcion:"Paquete de 5 clases. Ahorro y continuidad en el aprendizaje." },
-  { id:"bono_10",                nombre:"Bono 10 Clases",       rango:"Adultos", color:"#2980b9", emoji:"🎟️", descripcion:"Paquete de 10 clases. Máximo ahorro y progresión sostenida." },
-  { id:"curso_hcp10",            nombre:"Curso Hándicap (10h)", rango:"Adultos", color:"#9b59b6", emoji:"📊", descripcion:"Curso intensivo de 10 horas para obtener la licencia y el hándicap." },
-];
 
 const EJERCICIOS_CURSO = [
 {id:"p001",grupo:"prebenjamin",trimestre:1,semana:1,categoria:"Coordinación",nombre:"El Globo de Golf",objetivo:"Coordinación ojo-mano y equilibrio.",descripcion:"Golpear globos inflados con palos esponja (pool noodle). Objetivo: mantener el globo en el aire el mayor tiempo posible.",duracion:"15 min",material:"Globos, palos esponja",variantes:["En parejas pasan el globo", "Con la mano izquierda", "Contar cada golpe"],tags:["coordinación", "lúdico"]},
@@ -8832,9 +11044,9 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
         {alumno.tipoEscuela==="adultos"?"Escuela de Adultos":"Escuela Infantil"}
       </div>}
       {rpt.fechaDesde&&<div style={{fontSize:13,opacity:.7}}>
-        Período: {rpt.fechaDesde} → {rpt.fechaHasta}
+        Período: {fmtDate(rpt.fechaDesde)} → {fmtDate(rpt.fechaHasta)}
       </div>}
-      <div style={{fontSize:12,opacity:.6,marginTop:4}}>Informe generado: {rpt.fechaCreacion}</div>
+      <div style={{fontSize:12,opacity:.6,marginTop:4}}>Informe generado: {fmtDate(rpt.fechaCreacion)}</div>
     </div>}
 
     {/* ── RESUMEN ── */}
@@ -9660,7 +11872,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             </div>
           </div>
           <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
-          <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
+          <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
           {ADMIN_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
@@ -10027,7 +12239,7 @@ export default function App(){
   if(!fbReady) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
       display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
-      <img src={LOGO_JCGA} alt="José Caballero Golf Academy" style={{width:200,objectFit:"contain",borderRadius:10,marginBottom:8}}/>
+      <img src={LOGO_GOLFB} alt="Golf B" style={{width:220,objectFit:"contain",background:"white",borderRadius:12,padding:"10px 20px",marginBottom:8}}/>
       <div style={{color:"rgba(255,255,255,.7)",fontSize:14}}>Conectando con el servidor...</div>
       <div style={{width:44,height:44,border:"4px solid rgba(255,255,255,.25)",
         borderTop:"4px solid white",borderRadius:"50%",
