@@ -8601,12 +8601,12 @@ function ModEjerciciosAdmin({ data, setData }) {
           {filtrados.map(e => (
             <Card key={e.id}>
               <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-                <div style={{ fontSize:28, flexShrink:0 }}>{CAT_ICONS[e.categoria]||"📌"}</div>
+                <div style={{ fontSize:28, flexShrink:0 }}>{e.icono||CAT_ICONS[e.cat]||CAT_ICONS[e.categoria]||"📌"}</div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:4 }}>
                     <span style={{ fontWeight:700, color:G.ink, fontSize:15 }}>{e.nombre}</span>
-                    <Badge color={CAT_COLORS[e.categoria]||"gray"}>{e.categoria}</Badge>
-                    <Badge color={e.nivel==="Iniciación"?"green":e.nivel==="Intermedio"?"gold":e.nivel==="Avanzado"?"blue":"gray"}>{e.nivel}</Badge>
+                    <Badge color={CAT_COLORS[e.cat||e.categoria]||"gray"}>{e.cat||e.categoria}</Badge>
+                    <Badge color={e.nivel==="Iniciación"||e.nivel==="Básico"?"green":e.nivel==="Intermedio"?"gold":e.nivel==="Avanzado"?"blue":"gray"}>{e.nivel}</Badge>
                     {e.duracion && <Badge color="gray">⏱ {e.duracion}</Badge>}
                   </div>
                   <div style={{ fontSize:13, color:G.soft, marginBottom:6 }}>{e.objetivo}</div>
@@ -9466,14 +9466,18 @@ const ILUSTRACIONES = {
 
 function EjercicioDetalle({ ej, onClose, onAsignar }) {
   const Ilus = ILUSTRACIONES[ej.id];
+  const catNombre = ej.cat || ej.categoria || "";
+  const nivelColor = (ej.nivel==="Iniciación"||ej.nivel==="Básico")?"green":ej.nivel==="Intermedio"?"gold":ej.nivel==="Avanzado"?"blue":"gray";
   return (
     <Modal title={ej.nombre} onClose={onClose} wide color={G.grass}>
       {Ilus && <div style={{background:"#f0f8f0",borderRadius:12,padding:"12px 8px",marginBottom:16}}><Ilus/></div>}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
-        <Badge color={CAT_COLORS[ej.categoria]||"gray"}>{CAT_ICONS[ej.categoria]} {ej.categoria}</Badge>
-        <Badge color={ej.nivel==="Iniciación"?"green":ej.nivel==="Intermedio"?"gold":"blue"}>{ej.nivel}</Badge>
+        <div style={{fontSize:32}}>{ej.icono||CAT_ICONS[catNombre]||"📌"}</div>
+        <Badge color={CAT_COLORS[catNombre]||"green"}>{CAT_ICONS[catNombre]||""} {catNombre}</Badge>
+        <Badge color={nivelColor}>{ej.nivel}</Badge>
         {ej.duracion && <Badge color="gray">⏱ {ej.duracion}</Badge>}
         {ej.material && <Badge color="gray">🎒 {ej.material}</Badge>}
+        {ej.series && <Badge color="gray">🔁 {ej.series}</Badge>}
       </div>
 
       <div style={{ background:G.mist, borderRadius:10, padding:14, marginBottom:14 }}>
@@ -9485,6 +9489,24 @@ function EjercicioDetalle({ ej, onClose, onAsignar }) {
         <div style={{ fontSize:12, fontWeight:700, color:G.soft, marginBottom:6 }}>📝 DESCRIPCIÓN</div>
         <div style={{ fontSize:14, color:G.ink, lineHeight:1.6 }}>{ej.descripcion}</div>
       </div>
+
+      {ej.ejecucion && ej.ejecucion.length>0 && (
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:G.fairway, marginBottom:6 }}>📋 EJECUCIÓN PASO A PASO</div>
+          {ej.ejecucion.map((paso,i) => (
+            <div key={i} style={{ display:"flex", gap:8, marginBottom:6, alignItems:"flex-start" }}>
+              <div style={{ background:G.fairway, color:"#fff", borderRadius:"50%", width:20, height:20, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0, marginTop:1 }}>{i+1}</div>
+              <div style={{ fontSize:13, color:G.ink }}>{paso}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {ej.esquema && (
+        <div style={{ background:"#f5f5f5", borderRadius:10, padding:"10px 14px", marginBottom:14, fontFamily:"monospace", fontSize:13, color:G.ink }}>
+          {ej.esquema}
+        </div>
+      )}
 
       {ej.variantes && ej.variantes.length>0 && (
         <div style={{ marginBottom:14 }}>
@@ -9540,7 +9562,7 @@ function AsignarModal({ ej, alumnos, onClose, onSave }) {
   return (
     <Modal title={`Asignar: ${ej.nombre}`} onClose={onClose}>
       <div style={{ background:G.mist, borderRadius:10, padding:12, marginBottom:16 }}>
-        <Badge color={CAT_COLORS[ej.categoria]||"gray"}>{CAT_ICONS[ej.categoria]} {ej.categoria}</Badge>
+        <Badge color={CAT_COLORS[ej.cat||ej.categoria]||"green"}>{CAT_ICONS[ej.cat||ej.categoria]||""} {ej.cat||ej.categoria}</Badge>
         <span style={{ marginLeft:8, fontSize:13, color:G.soft }}>{ej.nivel} · {ej.duracion}</span>
       </div>
       <Field label="Alumno *">
