@@ -4590,6 +4590,9 @@ function CambiarPinAlumno({data,setData,alumnoId}){
   const [pinNuevo,setPinNuevo]=useState("");
   const [pinConfirm,setPinConfirm]=useState("");
   const [msg,setMsg]=useState("");
+  const [verActual,setVerActual]=useState(false);
+  const [verNuevo,setVerNuevo]=useState(false);
+  const [verConfirm,setVerConfirm]=useState(false);
   const alumno=(data.alumnos||[]).find(a=>a.id===alumnoId);
 
   function guardar(){
@@ -4607,17 +4610,32 @@ function CambiarPinAlumno({data,setData,alumnoId}){
     {[0,1,2,3,4,5].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<val.length?G.fairway:"#d0e0d0"}}/>)}
   </div>;
 
+  const CampoPin=({label,value,onChange,ver,setVer,placeholder})=>(
+    <Field label={label}>
+      <div style={{position:"relative"}}>
+        <input type={ver?"text":"password"} value={value}
+          onChange={e=>onChange(e.target.value.replace(/\D/g,"").slice(0,6))}
+          placeholder={placeholder}
+          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #d0e0d0",
+            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit",
+            letterSpacing:ver?1:3}}/>
+        <button onClick={()=>setVer(v=>!v)}
+          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
+          {ver?"🙈":"👁️"}
+        </button>
+      </div>
+    </Field>
+  );
+
   return <div>
-    <Field label="PIN actual">
-      <Input type="password" value={pinActual} onChange={v=>setPinActual(v.replace(/\D/g,"").slice(0,6))} placeholder="Tu PIN actual"/>
-    </Field>
-    <Field label="PIN nuevo (mínimo 4 dígitos)">
-      <Input type="password" value={pinNuevo} onChange={v=>setPinNuevo(v.replace(/\D/g,"").slice(0,6))} placeholder="Nuevo PIN"/>
-      <PinDots val={pinNuevo}/>
-    </Field>
-    <Field label="Confirmar PIN nuevo">
-      <Input type="password" value={pinConfirm} onChange={v=>setPinConfirm(v.replace(/\D/g,"").slice(0,6))} placeholder="Repite el nuevo PIN"/>
-    </Field>
+    <CampoPin label="PIN actual" value={pinActual} onChange={setPinActual}
+      ver={verActual} setVer={setVerActual} placeholder="Tu PIN actual"/>
+    <CampoPin label="PIN nuevo (mínimo 4 dígitos)" value={pinNuevo} onChange={setPinNuevo}
+      ver={verNuevo} setVer={setVerNuevo} placeholder="Nuevo PIN"/>
+    <PinDots val={pinNuevo}/>
+    <CampoPin label="Confirmar PIN nuevo" value={pinConfirm} onChange={setPinConfirm}
+      ver={verConfirm} setVer={setVerConfirm} placeholder="Repite el nuevo PIN"/>
     {msg==="error_actual"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN actual no es correcto.</div>}
     {msg==="error_corto"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN nuevo debe tener al menos 4 dígitos.</div>}
     {msg==="error_confirm"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Los PINs nuevos no coinciden.</div>}
@@ -4783,7 +4801,14 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
               </div>
             </div>
           </div>
-          <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {tab!=="inicio"&&<button onClick={()=>setTab("inicio")}
+              style={{background:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.4)",
+                color:"#fff",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+              ← Inicio
+            </button>}
+            <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
+          </div>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
           {ATABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
@@ -5502,6 +5527,189 @@ const EJERCICIOS_BIBLIOTECA = [
     kpis:["Consistencia de la rutina","Mejora bajo presión"],
     erroresComunes:["Saltarse pasos","Rutina demasiado larga"],
     tags:["mental","rutina","concentración"] },
+,
+// ── PUTT PROFESIONAL ──
+
+{id:"pp01",cat:"Putt",nivel:"Básico",nombre:"El reloj del putting",icono:"🕐",
+duracion:"20 min",material:"Putter, 12 bolas, tee markers",
+objetivo:"Consistencia desde todas las direcciones a 1m.",
+descripcion:"Coloca 12 tees alrededor del hoyo formando un reloj, cada uno a 1 metro. Putea desde cada posición. Cuenta cuántos entran. Objetivo: 10/12 antes de aumentar a 1.5m.",
+ejecucion:["Coloca 12 tees a 1m del hoyo en forma de reloj","Putea desde la posición 1 (arriba)","Avanza en sentido horario","Objetivo: 10/12 antes de aumentar distancia"],
+variantes:["A 1.5 metros","A 2 metros","Solo el lado más difícil (cuesta abajo)"],
+esquema:"⭕ 12 posiciones · 1m · Completa el reloj sin fallar 2 seguidos",
+tags:["putt","precisión","rutina","presión"]},
+
+{id:"pp02",cat:"Putt",nivel:"Básico",nombre:"El metro de presión",icono:"🎯",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Automatizar el putt de 1m bajo presión.",
+descripcion:"5 putts seguidos de 1 metro. Si fallas uno, vuelves a empezar desde cero. El objetivo es encadenar 5 consecutivos.",
+ejecucion:["Marca 1 metro del hoyo","Bola tras bola sin pausa","Si fallas: reinicia la serie","Registra en cuántos intentos logras 5 seguidos"],
+variantes:["10 seguidos","Con compañero mirando","Con 30s de descanso entre putts"],
+esquema:"● 1m × 5 seguidos · Si fallas → ¡Reinicia!",
+tags:["putt","presión","automatismo","rutina"]},
+
+{id:"pp03",cat:"Putt",nivel:"Intermedio",nombre:"La escalera de distancias",icono:"📏",
+duracion:"25 min",material:"Putter, 5 bolas, tees a 3/5/7/9/12m",
+objetivo:"Calibrar la fuerza a distintas distancias.",
+descripcion:"Putea desde 3, 5, 7, 9 y 12 metros. El objetivo no es meter sino dejar la bola a menos de 50cm (zona muerta).",
+ejecucion:["Empieza a 3m: 2 bolas","Avanza a 5m, 7m, 9m, 12m","Cuenta cuántas quedan en zona muerta","Objetivo: 8/10"],
+variantes:["Con pendiente lateral","De cuesta abajo","Cuesta arriba"],
+esquema:"3m → 5m → 7m → 9m → 12m · Zona muerta ⭕50cm",
+tags:["putt","distancia","calibración","lag putt"]},
+
+{id:"pp04",cat:"Putt",nivel:"Intermedio",nombre:"El fantasma — Lectura de green",icono:"👻",
+duracion:"20 min",material:"Putter, 3 bolas, 2 tees",
+objetivo:"Aprender a leer la línea del putt con precisión.",
+descripcion:"Antes de putear, determina el punto de entrada al hoyo y el apex (punto más alto de la curva). Marca ambos con un tee y comprueba tu lectura.",
+ejecucion:["Observa el putt desde detrás","Identifica el apex de la curva","Marca con tee el punto de entrada","Putea apuntando al punto de entrada, no al hoyo"],
+variantes:["Putts rectos","Curva moderada derecha","Curva moderada izquierda"],
+esquema:"↗️ Apex → ⬤ Entrada → ⛳ Hoyo · Lee el punto de entrada",
+tags:["putt","lectura","línea","green"]},
+
+{id:"pp05",cat:"Putt",nivel:"Básico",nombre:"El péndulo perfecto",icono:"⏱️",
+duracion:"15 min",material:"Putter, 3 bolas, app de metrónomo",
+objetivo:"Desarrollar ritmo constante 2:1 en el putt.",
+descripcion:"Usa metrónomo a 70bpm. El backswing suena en el 1, el impacto en el 2. Movimiento simétrico y suave.",
+ejecucion:["Activa el metrónomo a 70bpm","Backswing en el primer click","Impacto en el segundo click","Follow-through igual de largo que el backswing"],
+variantes:["60bpm para putts largos","80bpm para cortos","Sin metrónomo (de memoria)"],
+esquema:"◀️ Back (click 1) → ▶️ Through (click 2) · Ritmo 2:1",
+tags:["putt","ritmo","péndulo","metrónomo"]},
+
+{id:"pp06",cat:"Putt",nivel:"Básico",nombre:"El gate drill — La puerta",icono:"🚪",
+duracion:"15 min",material:"Putter, 5 bolas, 2 tees",
+objetivo:"Asegurar el centro de la cara en el impacto.",
+descripcion:"Coloca 2 tees a los lados de la bola con 1mm de margen. Si el putter toca un tee, la cara está rotada. Objetivo: 20 putts sin tocar.",
+ejecucion:["2 tees a los lados de la bola (1mm margen)","Realiza el putt normalmente","Si tocas un tee: cara rotada","Objetivo: 20 putts sin tocar los tees"],
+variantes:["Desde 1m","Desde 3m","Con ojos cerrados"],
+esquema:"│ ● │ → ⛳ · Pasar sin tocar los tees",
+tags:["putt","cara","impacto","técnica"]},
+
+{id:"pp07",cat:"Putt",nivel:"Intermedio",nombre:"Los 100 putts",icono:"💯",
+duracion:"30 min",material:"Putter, 10 bolas",
+objetivo:"Sesión de volumen para automatizar el gesto.",
+descripcion:"100 putts: 40 desde 1m, 30 desde 2m, 20 desde 3m, 10 desde 5m. Registra los resultados cada semana.",
+ejecucion:["40 putts desde 1m (objetivo: 36/40)","30 putts desde 2m (objetivo: 20/30)","20 putts desde 3m (objetivo: 10/20)","10 putts desde 5m (objetivo: 3/10)"],
+variantes:["En greens rápidos","En greens lentos","Con variaciones de pendiente"],
+esquema:"1m×40 → 2m×30 → 3m×20 → 5m×10 = 100 putts · Anota resultados",
+tags:["putt","volumen","rutina","progresión"]},
+
+{id:"pp08",cat:"Putt",nivel:"Avanzado",nombre:"El comeback putt",icono:"🔄",
+duracion:"20 min",material:"Putter, 6 bolas, varilla",
+objetivo:"Entrenar el putt de regreso después de pasarse.",
+descripcion:"Putea desde 6m intentando PASAR el hoyo 60-90cm. Luego haz el putt de vuelta. Reduce el miedo a pasarse y entrena el corto bajo presión.",
+ejecucion:["Putea desde 6m para pasarse 60-90cm","Observa dónde queda","Haz el putt de regreso","Registra cuántos comeback entran"],
+variantes:["Desde 4m","Desde 8m","En pendiente pronunciada"],
+esquema:"● 6m → ⛳ → ● 70cm regreso · Entrena el corto de vuelta",
+tags:["putt","comeback","presión","distancia"]},
+
+{id:"pp09",cat:"Putt",nivel:"Avanzado",nombre:"Sin mirar la bola",icono:"🙈",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Mejorar el feeling de distancia mirando al hoyo.",
+descripcion:"Prepara el putt normalmente, pero en el momento de golpear mantén la mirada fija en el hoyo. Confía en el gesto.",
+ejecucion:["Prepara y alinea normalmente","En el backswing: mira el hoyo","Golpea mirando el hoyo","Observa cómo mejora el control de distancia"],
+variantes:["Solo desde 3m","Desde 6m","Ojos cerrados después del impacto"],
+esquema:"👁️ Mirada al hoyo durante el golpe · No mirar la bola",
+tags:["putt","feeling","distancia","confianza"]},
+
+{id:"pp10",cat:"Putt",nivel:"Básico",nombre:"Varilla de alineación",icono:"📐",
+duracion:"20 min",material:"Putter, 5 bolas, 2 varillas",
+objetivo:"Entrenar la alineación y el camino del putter.",
+descripcion:"Coloca dos varillas paralelas formando un canal. El putter debe moverse sin tocarlas. Realiza 20 putts seguidos.",
+ejecucion:["2 varillas paralelas hacia el hoyo","El putter pasa sin tocar ninguna","Si tocas: error de camino","Objetivo: 20 putts sin tocar"],
+variantes:["Canal más estrecho","Con varilla en la cara","Con alineación del cuerpo"],
+esquema:"║ ═══ Putter ═══ ║ → ⛳ · Sin tocar las varillas",
+tags:["putt","camino","alineación","técnica"]},
+
+{id:"pp11",cat:"Putt",nivel:"Básico",nombre:"Un solo ojo — Visión monocular",icono:"👁️",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Mejorar la alineación usando el ojo dominante.",
+descripcion:"Cierra el ojo no dominante durante la preparación. El ojo dominante alinea directamente sobre la línea del putt.",
+ejecucion:["Identifica tu ojo dominante","Cierra el contrario durante la preparación","Alinea el putter sobre la línea","Abre ambos ojos al golpear"],
+variantes:["Solo en preparación","Durante todo el golpe","Comparando con ambos ojos"],
+esquema:"👁️ Ojo dominante → Alineación perfecta → ⛳",
+tags:["putt","ojo dominante","alineación","técnica"]},
+
+{id:"pp12",cat:"Putt",nivel:"Avanzado",nombre:"3 metros — 10 seguidos",icono:"🏆",
+duracion:"20 min",material:"Putter, 5 bolas",
+objetivo:"El putt de 3m es el más importante. Automatizarlo bajo presión.",
+descripcion:"10 putts seguidos de 3m. Si fallas uno, reseteas. Registra tu mejor racha cada semana.",
+ejecucion:["Marca exactamente 3m","Misma rutina en cada putt","Si fallas: contador a cero","Registra tu mejor racha semanal"],
+variantes:["Recto / curva / cuesta abajo","En greens rápidos (stimp 10+)","Con penalización por fallo"],
+esquema:"● 3m × 10 seguidos · Fallas → Reinicia · Registra la racha",
+tags:["putt","3 metros","presión","scoring"]},
+
+{id:"pp13",cat:"Putt",nivel:"Avanzado",nombre:"Putt en pendiente extrema",icono:"⛰️",
+duracion:"20 min",material:"Putter, 6 bolas",
+objetivo:"Dominar putts con pendientes laterales pronunciadas.",
+descripcion:"Busca la pendiente más pronunciada del green. 3 bolas de derecha a izquierda y 3 de izquierda a derecha desde 4m.",
+ejecucion:["Identifica el putt más difícil del green","Observa la pendiente y la velocidad","Apunta 30-60cm fuera del hoyo","Deja que la pendiente lleve la bola"],
+variantes:["Cuesta abajo + pendiente","Cuesta arriba + pendiente","Con viento"],
+esquema:"↗️ Izquierda → ⛳ · Pendiente máxima · Compensación necesaria",
+tags:["putt","pendiente","lectura","avanzado"]},
+
+{id:"pp14",cat:"Putt",nivel:"Básico",nombre:"Espejo postural",icono:"🪞",
+duracion:"15 min",material:"Putter, espejo grande",
+objetivo:"Conciencia corporal del movimiento del putt.",
+descripcion:"Practica frente a un espejo. Verifica: ojos sobre la línea, hombros en péndulo, brazos como una unidad.",
+ejecucion:["Frente al espejo","Ojos sobre la línea del putt","Hombros rotan alrededor de la columna","Brazos y putter como una unidad"],
+variantes:["Sin bola","Filmando con el móvil","Comparando con vídeo pro"],
+esquema:"🪞 Ojos sobre línea · Hombros péndulo · Sin mirar la bola",
+tags:["putt","espejo","técnica","postura"]},
+
+{id:"pp15",cat:"Putt",nivel:"Avanzado",nombre:"Putt ciego — Feel de distancia",icono:"🤲",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Desarrollar el feel de distancia sin la vista.",
+descripcion:"Elige 8 metros. Cierra los ojos antes del backswing. Antes de abrirlos: ¿la bola quedó corta, larga o perfecta?",
+ejecucion:["Establece 8m","Ojos cerrados en el backswing","Golpea con ritmo natural","Antes de mirar: ¿corta, larga, perfecta?"],
+variantes:["5m","12m","Distancias variadas sin saber cuál"],
+esquema:"👁️❌ Ojos cerrados · Confía en el ritmo · ❓ Adivina la distancia",
+tags:["putt","ciego","feel","distancia"]},
+
+{id:"pp16",cat:"Putt",nivel:"Avanzado",nombre:"Match point competitivo",icono:"⚡",
+duracion:"20 min",material:"Putter, 6 bolas, 2 jugadores",
+objetivo:"Presión de competición real en el green.",
+descripcion:"+1 si metes, -1 si fallas, -2 si el rival mete y tú fallas. El primero en llegar a 10 gana.",
+ejecucion:["Posición de 3m","Turnos alternados","Sistema de puntuación","El primero en 10 puntos gana"],
+variantes:["Desde 2m","Desde 4m","Eliminación con varios jugadores"],
+esquema:"⚡ +1 metes · -1 fallas · -2 rival mete y tú no · Primero en 10",
+tags:["putt","competición","presión","match"]},
+
+{id:"pp17",cat:"Putt",nivel:"Intermedio",nombre:"Speed control — El ladrillo",icono:"🧱",
+duracion:"20 min",material:"Putter, 5 bolas, varilla",
+objetivo:"Controlar la velocidad del putt.",
+descripcion:"Varilla detrás del hoyo a 20cm. La bola debe entrar o pararse antes de la varilla. Si la pasa: demasiada fuerza.",
+ejecucion:["Varilla 20cm detrás del hoyo","Putea desde 5m","Zona permitida: dentro o hasta 20cm detrás","¿Cuántas en zona aceptable?"],
+variantes:["Desde 3m","Desde 8m","En cuesta abajo"],
+esquema:"● 5m → [⛳ zona OK ///20cm/// ❌ pasado]",
+tags:["putt","velocidad","control","speed"]},
+
+{id:"pp18",cat:"Putt",nivel:"Básico",nombre:"Sistema de 3 puntos — Alineación",icono:"📍",
+duracion:"20 min",material:"Putter, 5 bolas, rotulador",
+objetivo:"Rutina de alineación consistente y reproducible.",
+descripcion:"1) Marca en la bola apuntando a la línea. 2) Elige un punto intermedio a 30cm. 3) Alinea el putter al punto intermedio.",
+ejecucion:["Traza línea en la bola con rotulador","Alinea la línea al punto intermedio (30cm)","Coloca el putter perpendicular","Putea sin cambiar la alineación"],
+variantes:["Sin línea en la bola","En curva ajustando el punto","Diferentes tipos de línea"],
+esquema:"● Bola → 📍30cm → ... → ⛳ · 3 puntos de referencia",
+tags:["putt","alineación","rutina","sistema"]},
+
+{id:"pp19",cat:"Putt",nivel:"Básico",nombre:"Fringe — Texas Wedge",icono:"🤠",
+duracion:"15 min",material:"Putter, 5 bolas",
+objetivo:"Usar el putter desde fuera del green.",
+descripcion:"Desde 3m fuera del green (hierba corta), usa el putter. Añade 20-30% de fuerza por la resistencia del fringe.",
+ejecucion:["Posición 3m fuera del green","Putter como si fuera un putt largo","Añade 20-30% de fuerza","Evalúa dónde para la bola"],
+variantes:["5m fuera","Con rough corto","Con pendiente"],
+esquema:"🌿 Fringe 3m → Putter → ⛳ · Fuerza +25%",
+tags:["putt","fringe","texas wedge","fuera green"]},
+
+{id:"pp20",cat:"Putt",nivel:"Intermedio",nombre:"Arco natural — Inside-Square-Inside",icono:"🌈",
+duracion:"20 min",material:"Putter, guía de arco",
+objetivo:"Entrenar el camino natural del putter en arco suave.",
+descripcion:"El putter no va recto sino en arco suave (ISI). Usa una guía de arco para sentir el camino correcto. 20 repeticiones lentas.",
+ejecucion:["Coloca la guía de arco en el suelo","Sigue el arco suavemente sin forzar","Impacto en el punto más bajo del arco","Siente el retorno natural"],
+variantes:["Sin guía (de memoria)","Con chalk en el suelo","Muy despacio para sentirlo"],
+esquema:"↗️ Back (ISI) · ↘️ Through (ISI) · Arco natural del putter",
+tags:["putt","arco","ISI","técnica"]}
+
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -9666,7 +9874,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             </div>
           </div>
           <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
-          <button onClick={onLogout} style={{background:"rgba(255,255,255,.15)",border:"none",color:G.white,borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Salir</button>
+          <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
           {ADMIN_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
