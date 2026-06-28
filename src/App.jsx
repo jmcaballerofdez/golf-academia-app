@@ -324,18 +324,19 @@ async function notificarClaseAlumnoEmail(clase, alumno){
       enlace,
       enviadoAt: serverTimestamp(),
     });
-    // 2. Envío directo con EmailJS como respaldo
+    // 2. Envío directo con EmailJS (template_1npsgx8 — nueva clase)
     try {
       await cargarEmailJS();
       if(window.emailjs){
         await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
           nombre_alumno: alumno.nombre || "",
           email_alumno: alumno.email,
+          mensaje_intro: "Tu instructor ha programado una nueva clase para ti.",
           fecha_clase: fmtDate(clase.fecha) || clase.fecha || "",
-          hora_clase: clase.horaInicio || clase.hora || "",
+          hora_clase: clase.horaInicio || clase.hora || "—",
           duracion_clase: clase.duracion || "60",
-          tipo_clase: clase.tipo || "",
-          zona_clase: clase.zona || "",
+          tipo_clase: clase.tipo || "Individual",
+          zona_clase: clase.zona || "—",
           enlace_portal: enlace,
         }).catch(e=>console.warn("Email clase alumno:",e));
       }
@@ -429,23 +430,17 @@ async function enviarEmailsRegistro(datos){
   try{
     await cargarEmailJS();
     if(!window.emailjs) return;
-    // Email al profesor
-    await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
-      nombre_alumno: datos.nombre||"",
-      email_alumno: datos.email||"",
-      telefono_alumno: datos.telefono||"",
-      tipo_escuela: datos.tipoEscuela||"",
-      dias_preferencia: (datos.diasPreferencia||[]).join(", "),
-      horario_preferencia: datos.horarioPreferencia||"",
-    }).catch(e=>console.warn("Email profesor:",e));
-    // Email de bienvenida al alumno (solo si tiene email)
+
+    // Email de bienvenida al ALUMNO (template_2dwd6gs)
     if(datos.email){
-      await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
+      await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
         nombre_alumno: datos.nombre||"",
-        email_alumno: datos.email,
-      }).catch(e=>console.warn("Email alumno:",e));
+        email_alumno: datos.email||"",
+        telefono_alumno: datos.telefono||"",
+        tipo_escuela: datos.tipoEscuela||"",
+      }).catch(e=>console.warn("Email bienvenida alumno:",e));
     }
-  }catch(e){ console.warn("Error enviando emails:", e); }
+  }catch(e){ console.warn("Error enviando emails registro:", e); }
 }
 
 const firebaseConfig = {
