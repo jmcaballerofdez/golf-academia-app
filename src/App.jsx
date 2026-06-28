@@ -19,6 +19,9 @@ const EMAILJS_CONFIG = {
   publicKey: "_ylIbA5NuK_OsByYY",
 };
 
+// Webhook Make.com para subida de archivos a Google Drive
+const MAKE_WEBHOOK_ARCHIVOS = "PEGA_AQUI_TU_WEBHOOK_DE_MAKE";
+
 // ─── Cargar jsPDF dinámicamente ──────────────────────────────────
 function cargarJsPDF(){
   if(window.jspdf) return Promise.resolve();
@@ -305,13 +308,14 @@ async function generarPDFInforme(rpt, alumnoNombre){
 async function notificarClaseAlumnoEmail(clase, alumno){
   if(!alumno?.email) return;
   try {
-    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
+    const enlace = `https://golfb.es`;
+    // 1. Guardar en Firestore para Make.com (webhook)
     await setDoc(doc(db, "academia_emails", "clase_" + clase.id), {
-      tipo: "clase",
+      tipo: "clase_nueva",
       id: clase.id,
       alumnoNombre: alumno.nombre || "",
       alumnoEmail: alumno.email || "",
-      fecha: clase.fecha || "",
+      fecha: fmtDate(clase.fecha) || clase.fecha || "",
       horaInicio: clase.horaInicio || clase.hora || "",
       duracion: clase.duracion || "60",
       tipoClase: clase.tipo || "",
@@ -320,8 +324,90 @@ async function notificarClaseAlumnoEmail(clase, alumno){
       enlace,
       enviadoAt: serverTimestamp(),
     });
+    // 2. Envío directo con EmailJS como respaldo
+    try {
+      await cargarEmailJS();
+      if(window.emailjs){
+        await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
+          nombre_alumno: alumno.nombre || "",
+          email_alumno: alumno.email,
+          fecha_clase: fmtDate(clase.fecha) || clase.fecha || "",
+          hora_clase: clase.horaInicio || clase.hora || "",
+          duracion_clase: clase.duracion || "60",
+          tipo_clase: clase.tipo || "",
+          zona_clase: clase.zona || "",
+          enlace_portal: enlace,
+        }).catch(e=>console.warn("Email clase alumno:",e));
+      }
+    } catch(e){ console.warn("EmailJS clase:", e); }
   } catch(e){ console.warn("Notify clase email error:", e); }
 }
+
+// ── Exportar una clase concreta a Google Calendar ─────────────────
+async function exportarClaseAGcal(clase, alumno){
+  try {
+    // Cargar GAPI
+    if(!window.gapi){
+      await new Promise((res,rej)=>{
+        const s=document.createElement("script");
+        s.src="https://apis.google.com/js/api.js";
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    await new Promise(res=>window.gapi.load("client",res));
+    await window.gapi.client.init({
+      discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"]
+    });
+    // Cargar GIS
+    if(!window.google?.accounts){
+      await new Promise((res,rej)=>{
+        const s=document.createElement("script");
+        s.src="https://accounts.google.com/gsi/client";
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    const titulo = "🏌️ Clase golf" + (alumno?" — "+alumno.nombre:"");
+    const fecha = clase.fecha || today();
+    const hora = clase.horaInicio || clase.hora || "10:00";
+    const [y,m,d] = fecha.split("-");
+    const [hh,mm] = hora.split(":").map(Number);
+    const ini = new Date(Number(y),Number(m)-1,Number(d),hh,mm);
+    const fin = new Date(ini.getTime()+(Number(clase.duracion||60))*60*1000);
+
+    const tc = window.google.accounts.oauth2.initTokenClient({
+      client_id: GCAL_CLIENT_ID,
+      scope: GCAL_SCOPES,
+      callback: async (resp) => {
+        if(resp.error){ console.warn("GCal auth error:", resp.error); return; }
+        try {
+          await window.gapi.client.calendar.events.insert({
+            calendarId: "primary",
+            resource: {
+              summary: titulo,
+              description: `Academia Golf B\nAlumno: ${alumno?.nombre||""}\nZona: ${clase.zona||""}\nContenido: ${clase.contenido||""}\nDuración: ${clase.duracion||60} min`,
+              start: {dateTime: ini.toISOString(), timeZone: "Europe/Madrid"},
+              end:   {dateTime: fin.toISOString(), timeZone: "Europe/Madrid"},
+              colorId: "2",
+              reminders: {
+                useDefault: false,
+                overrides: [
+                  {method: "email",  minutes: 1440}, // 24h antes
+                  {method: "popup",  minutes: 60},   // 1h antes
+                ]
+              }
+            }
+          });
+          console.log("✅ Clase añadida a Google Calendar");
+        } catch(e){ console.warn("GCal insert error:", e); }
+      }
+    });
+    tc.requestAccessToken({prompt: ""});
+  } catch(e){ console.warn("exportarClaseAGcal error:", e); }
+}
+
+
 
 // Cargar el SDK de EmailJS dinámicamente
 function cargarEmailJS(){
@@ -3005,7 +3091,10 @@ function ModClases({data,setData,profesorId=null,modoAdmin=false}){
     sincronizarClaseFirestore(claseGuardada, alumnos);
     if(modal==="new"){
       const alumno = alumnos.find(a=>a.id===form.alumnoId);
+      // Email automático al alumno
       notificarClaseAlumnoEmail(claseGuardada, alumno);
+      // Añadir automáticamente a Google Calendar
+      exportarClaseAGcal(claseGuardada, alumno);
     }
     setModal(null);
   }
@@ -4903,11 +4992,11 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                     <div style={{fontSize:11,color:G.soft,marginTop:2}}>{fmtDate(a.fecha)}</div>
                   </div>
                   <button onClick={()=>{
-                    const el=document.createElement("a");
-                    el.href=a.datos; el.download=a.fichero||a.nombre; el.click();
+                    if(a.driveLink){ window.open(a.driveLink,"_blank"); }
+                    else if(a.datos){ const el=document.createElement("a"); el.href=a.datos; el.download=a.fichero||a.nombre; el.click(); }
                   }} style={{background:G.fairway,color:"#fff",border:"none",borderRadius:8,
                     padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
-                    ⬇️ Ver
+                    {a.driveLink?"🔗 Abrir":"⬇️ Ver"}
                   </button>
                 </div>
               </Card>
@@ -11918,25 +12007,78 @@ function ModArchivos({data,setData}){
     reader.readAsDataURL(file);
   }
 
-  function guardar(){
+  async function guardar(){
     if(!archivoB64){ alert("Selecciona un archivo."); return; }
     if(!form.nombre.trim()){ alert("Ponle un nombre al archivo."); return; }
+    setSubiendo(true);
+
+    // Determinar destinatarios concretos
+    let alumnosDestino = [];
+    if(form.destinatarios==="todos"){
+      alumnosDestino = alumnos.filter(a=>a.activo&&a.email);
+    } else if(form.destinatarios==="activos"){
+      alumnosDestino = alumnos.filter(a=>a.activo&&a.email);
+    } else {
+      alumnosDestino = alumnos.filter(a=>form.alumnosSelec.includes(a.id)&&a.email);
+    }
+
+    let driveLink = null;
+    let driveId = null;
+
+    // 1. Enviar a Make.com → sube a Google Drive y devuelve el link
+    try{
+      const resp = await fetch(MAKE_WEBHOOK_ARCHIVOS, {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          nombre: form.nombre.trim(),
+          descripcion: form.descripcion.trim(),
+          fichero: nombreFichero,
+          tipo: form.tipo,
+          datos: archivoB64,   // base64 del archivo
+          destinatarios: alumnosDestino.map(a=>({
+            nombre: a.nombre,
+            email: a.email,
+          })),
+          fecha: today(),
+        })
+      });
+      const json = await resp.json();
+      driveLink = json.driveLink || null;
+      driveId   = json.driveId   || null;
+    } catch(err){
+      console.warn("Make.com error:", err);
+    }
+
+    // 2. Guardar en Firebase con el link de Drive (o sin él si falló)
     const nuevo = {
       id: uid(),
       nombre: form.nombre.trim(),
       descripcion: form.descripcion.trim(),
       tipo: form.tipo,
       fichero: nombreFichero,
-      datos: archivoB64,
+      driveLink,
+      driveId,
+      // Solo guardamos base64 si no hay Drive (fallback)
+      datos: driveLink ? null : archivoB64,
       destinatarios: form.destinatarios,
       alumnosSelec: form.destinatarios==="seleccion" ? form.alumnosSelec : [],
       fecha: today(),
     };
+
     setData({...data, archivosProfesor:[nuevo,...archivos]});
     setModal(false);
+    setSubiendo(false);
     setArchivoB64(null);
     setNombreFichero("");
     setForm({nombre:"",descripcion:"",destinatarios:"todos",alumnosSelec:[],tipo:""});
+
+    // Mensaje de confirmación
+    if(driveLink){
+      alert(`✅ Archivo subido a Google Drive y email enviado a ${alumnosDestino.length} alumno${alumnosDestino.length!==1?"s":""}.`);
+    } else {
+      alert(`✅ Archivo guardado localmente. Configura el webhook de Make para activar Drive y email automático.`);
+    }
   }
 
   function eliminar(id){
@@ -12010,7 +12152,16 @@ function ModArchivos({data,setData}){
             </div>
           </div>
           <div style={{display:"flex",gap:6,flexShrink:0}}>
-            <Btn small color="sky" onClick={()=>descargar(a)}>⬇️ Ver</Btn>
+            <Btn small color="sky" onClick={()=>{
+              if(a.driveLink){
+                window.open(a.driveLink,"_blank");
+              } else if(a.datos){
+                const el=document.createElement("a");
+                el.href=a.datos; el.download=a.fichero||a.nombre; el.click();
+              }
+            }}>
+              {a.driveLink?"🔗 Abrir":"⬇️ Descargar"}
+            </Btn>
             <Btn small color="danger" onClick={()=>eliminar(a.id)}>🗑</Btn>
           </div>
         </div>
