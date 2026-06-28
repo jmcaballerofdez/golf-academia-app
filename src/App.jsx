@@ -308,7 +308,7 @@ async function generarPDFInforme(rpt, alumnoNombre){
 async function notificarClaseAlumnoEmail(clase, alumno){
   if(!alumno?.email) return;
   try {
-    const enlace = `https://golfb.es`;
+    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
     // 1. Guardar en Firestore para Make.com (webhook)
     await setDoc(doc(db, "academia_emails", "clase_" + clase.id), {
       tipo: "clase_nueva",
@@ -331,7 +331,7 @@ async function notificarClaseAlumnoEmail(clase, alumno){
         await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
           nombre_alumno: alumno.nombre || "",
           email_alumno: alumno.email,
-          mensaje_intro: "Tu instructor ha programado una nueva clase para ti.",
+          mensaje_intro: "Tu profesor ha programado una nueva clase para ti.",
           fecha_clase: fmtDate(clase.fecha) || clase.fecha || "",
           hora_clase: clase.horaInicio || clase.hora || "—",
           duracion_clase: clase.duracion || "60",
