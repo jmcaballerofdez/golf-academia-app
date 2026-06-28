@@ -2002,9 +2002,6 @@ function ModCalendario({data,setData}){
       </a>
     </div>
 
-    {/* ── PDF Calendario para alumnos ── */}
-    <PanelPdfCalendario esProfesor={true}/>
-
     {/* ── Solicitudes de clase pendientes ── */}
     {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length>0&&<Card style={{marginBottom:16,borderLeft:"4px solid #c8a84b",background:"#fffbf0"}}>
       <div style={{fontWeight:700,color:"#856404",fontSize:14,marginBottom:10}}>
@@ -4547,6 +4544,11 @@ function ModAjustes({data,setData,onLogout}){
 
     {/* ── COPIA DE SEGURIDAD ── */}
     {tabAj==="backup"&&<div>
+      {/* PDF Calendario Academia */}
+      <div style={{marginBottom:20}}>
+        <h4 style={{margin:"0 0 10px",color:G.fairway}}>📄 Calendario de la Academia</h4>
+        <PanelPdfCalendario esProfesor={true}/>
+      </div>
       <Card style={{marginBottom:16}}>
         <h3 style={{margin:"0 0 12px",color:G.fairway}}>📊 Resumen de datos</h3>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -4872,6 +4874,45 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
             <div style={{fontSize:16,fontWeight:800,color:G.fairway}}>{fmtDate(r.slot.fecha)} — {r.slot.hora}</div>
             <div style={{fontSize:13,color:G.soft,marginTop:4}}>{r.slot.tipo} · {r.slot.zona} · {r.slot.duracion}min</div>
           </Card>;
+        })()}
+
+        {/* PDF Calendario Academia */}
+        <div style={{marginTop:14}}>
+          <PanelPdfCalendario esProfesor={false}/>
+        </div>
+
+        {/* Archivos del profesor */}
+        {(()=>{
+          const misArchivos = (data.archivosProfesor||[]).filter(a=>
+            a.destinatarios==="todos" ||
+            a.destinatarios==="activos" ||
+            (a.destinatarios==="seleccion" && (a.alumnosSelec||[]).includes(alumnoId))
+          );
+          if(misArchivos.length===0) return null;
+          const iconoTipo = t=>({pdf:"📄",docx:"📝",doc:"📝",xlsx:"📊",xls:"📊",
+            jpg:"🖼️",jpeg:"🖼️",png:"🖼️",mp4:"🎬",mov:"🎬",mp3:"🎵",zip:"🗜️"}[t]||"📁");
+          return <div style={{marginTop:14}}>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>📁 Archivos de tu profesor</div>
+            {misArchivos.map(a=>(
+              <Card key={a.id} style={{marginBottom:10,borderLeft:`3px solid ${G.fairway}`}}>
+                <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                  <div style={{fontSize:26}}>{iconoTipo(a.tipo)}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,color:G.ink,fontSize:13}}>{a.nombre}</div>
+                    {a.descripcion&&<div style={{fontSize:12,color:G.soft,marginTop:1}}>{a.descripcion}</div>}
+                    <div style={{fontSize:11,color:G.soft,marginTop:2}}>{fmtDate(a.fecha)}</div>
+                  </div>
+                  <button onClick={()=>{
+                    const el=document.createElement("a");
+                    el.href=a.datos; el.download=a.fichero||a.nombre; el.click();
+                  }} style={{background:G.fairway,color:"#fff",border:"none",borderRadius:8,
+                    padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+                    ⬇️ Ver
+                  </button>
+                </div>
+              </Card>
+            ))}
+          </div>;
         })()}
       </div>}
 
@@ -11471,6 +11512,7 @@ const ADMIN_TABS=[
   {id:"analisis",label:"Vídeo Análisis",icon:"🎬"},
   {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️"},
   {id:"informes",label:"Informes",icon:"📑"},
+  {id:"archivos",label:"Archivos",icon:"📁"},
   {id:"mensajes",label:"Mensajes",icon:"✉️"},
   {id:"tareas",label:"Tareas",icon:"📋"},
   {id:"pagos",label:"Pagos",icon:"💶"},
@@ -11851,6 +11893,194 @@ function ModRegistrosPendientes({data, setData, notifs}){
   </div>;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MOD ARCHIVOS — El profesor sube archivos y los asigna a alumnos
+// ═══════════════════════════════════════════════════════════════════
+function ModArchivos({data,setData}){
+  const alumnos = data.alumnos||[];
+  const archivos = data.archivosProfesor||[];
+  const [modal,setModal] = useState(false);
+  const [subiendo,setSubiendo] = useState(false);
+  const [form,setForm] = useState({nombre:"",descripcion:"",destinatarios:"todos",alumnosSelec:[],tipo:""});
+  const [archivoB64,setArchivoB64] = useState(null);
+  const [nombreFichero,setNombreFichero] = useState("");
+  const [filtro,setFiltro] = useState("todos");
+
+  function leerArchivo(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    if(file.size > 5*1024*1024){ alert("⚠️ El archivo no puede superar 5 MB."); return; }
+    const ext = file.name.split(".").pop().toLowerCase();
+    setNombreFichero(file.name);
+    setForm(f=>({...f,nombre:f.nombre||file.name,tipo:ext}));
+    const reader = new FileReader();
+    reader.onload = ev => setArchivoB64(ev.target.result);
+    reader.readAsDataURL(file);
+  }
+
+  function guardar(){
+    if(!archivoB64){ alert("Selecciona un archivo."); return; }
+    if(!form.nombre.trim()){ alert("Ponle un nombre al archivo."); return; }
+    const nuevo = {
+      id: uid(),
+      nombre: form.nombre.trim(),
+      descripcion: form.descripcion.trim(),
+      tipo: form.tipo,
+      fichero: nombreFichero,
+      datos: archivoB64,
+      destinatarios: form.destinatarios,
+      alumnosSelec: form.destinatarios==="seleccion" ? form.alumnosSelec : [],
+      fecha: today(),
+    };
+    setData({...data, archivosProfesor:[nuevo,...archivos]});
+    setModal(false);
+    setArchivoB64(null);
+    setNombreFichero("");
+    setForm({nombre:"",descripcion:"",destinatarios:"todos",alumnosSelec:[],tipo:""});
+  }
+
+  function eliminar(id){
+    if(!window.confirm("¿Eliminar este archivo?")) return;
+    setData({...data, archivosProfesor:archivos.filter(a=>a.id!==id)});
+  }
+
+  function descargar(a){
+    const el = document.createElement("a");
+    el.href = a.datos;
+    el.download = a.fichero||a.nombre;
+    el.click();
+  }
+
+  const iconoTipo = t => ({
+    pdf:"📄",docx:"📝",doc:"📝",xlsx:"📊",xls:"📊",
+    pptx:"📊",ppt:"📊",jpg:"🖼️",jpeg:"🖼️",png:"🖼️",
+    mp4:"🎬",mov:"🎬",mp3:"🎵",zip:"🗜️"
+  }[t]||"📁");
+
+  const archivosFiltrados = filtro==="todos" ? archivos
+    : archivos.filter(a=>a.destinatarios==="todos"||a.alumnosSelec.includes(filtro));
+
+  return <div>
+    {/* Cabecera */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+      <div>
+        <div style={{fontSize:13,color:G.soft}}>Sube documentos, PDFs o vídeos y asígnalos a alumnos concretos o a todos.</div>
+      </div>
+      <Btn onClick={()=>setModal(true)}>📎 Subir archivo</Btn>
+    </div>
+
+    {/* Filtro por alumno */}
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+      <button onClick={()=>setFiltro("todos")}
+        style={{background:filtro==="todos"?G.fairway:"#f0f0f0",color:filtro==="todos"?"#fff":G.ink,
+          border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+        Todos los archivos
+      </button>
+      {alumnos.filter(a=>a.activo).map(a=>(
+        <button key={a.id} onClick={()=>setFiltro(a.id)}
+          style={{background:filtro===a.id?G.fairway:"#f0f0f0",color:filtro===a.id?"#fff":G.ink,
+            border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+          {a.nombre.split(" ")[0]}
+        </button>
+      ))}
+    </div>
+
+    {/* Lista de archivos */}
+    {archivosFiltrados.length===0&&<div style={{textAlign:"center",padding:40,color:G.soft,
+      background:G.mist,borderRadius:12}}>
+      <div style={{fontSize:36,marginBottom:8}}>📁</div>
+      <div>No hay archivos todavía.</div>
+    </div>}
+
+    {archivosFiltrados.map(a=>{
+      const destinoLabel = a.destinatarios==="todos" ? "Todos los alumnos"
+        : a.alumnosSelec.map(id=>alumnos.find(al=>al.id===id)?.nombre||id).join(", ");
+      return <Card key={a.id} style={{marginBottom:12}}>
+        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+          <div style={{fontSize:32,flexShrink:0}}>{iconoTipo(a.tipo)}</div>
+          <div style={{flex:1,minWidth:160}}>
+            <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{a.nombre}</div>
+            {a.descripcion&&<div style={{fontSize:12,color:G.soft,marginTop:2}}>{a.descripcion}</div>}
+            <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,background:"#e8f5eb",color:G.fairway,borderRadius:4,padding:"2px 7px",fontWeight:600}}>
+                👤 {destinoLabel}
+              </span>
+              <span style={{fontSize:11,color:G.soft}}>{fmtDate(a.fecha)}</span>
+              <span style={{fontSize:11,color:G.soft}}>{a.fichero}</span>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
+            <Btn small color="sky" onClick={()=>descargar(a)}>⬇️ Ver</Btn>
+            <Btn small color="danger" onClick={()=>eliminar(a.id)}>🗑</Btn>
+          </div>
+        </div>
+      </Card>;
+    })}
+
+    {/* Modal subir archivo */}
+    {modal&&<Modal title="📎 Subir nuevo archivo" onClose={()=>setModal(false)} wide>
+      <Field label="Archivo *">
+        <label style={{display:"inline-flex",alignItems:"center",gap:8,background:G.fairway,
+          color:"#fff",borderRadius:8,padding:"10px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          📂 {nombreFichero||"Seleccionar archivo"}
+          <input type="file" onChange={leerArchivo}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.zip"
+            style={{display:"none"}}/>
+        </label>
+        <div style={{fontSize:11,color:G.soft,marginTop:4}}>Máx. 5 MB · PDF, Word, Excel, imágenes, vídeo...</div>
+      </Field>
+
+      <Field label="Nombre del archivo *">
+        <Input value={form.nombre} onChange={v=>setForm(f=>({...f,nombre:v}))}
+          placeholder="Ej: Ejercicios de putt — Semana 3"/>
+      </Field>
+
+      <Field label="Descripción (opcional)">
+        <Textarea value={form.descripcion} onChange={v=>setForm(f=>({...f,descripcion:v}))}
+          rows={2} placeholder="Breve descripción para el alumno..."/>
+      </Field>
+
+      <Field label="¿A quién va dirigido?">
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {[
+            ["todos","🌐 Todos los alumnos"],
+            ["activos","✅ Solo alumnos activos"],
+            ["seleccion","👤 Alumnos específicos"],
+          ].map(([val,lbl])=>(
+            <label key={val} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+              <input type="radio" checked={form.destinatarios===val}
+                onChange={()=>setForm(f=>({...f,destinatarios:val,alumnosSelec:[]}))}/>
+              {lbl}
+            </label>
+          ))}
+        </div>
+      </Field>
+
+      {form.destinatarios==="seleccion"&&<Field label="Selecciona los alumnos">
+        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:200,overflowY:"auto",
+          border:"1px solid #e0e0e0",borderRadius:8,padding:10}}>
+          {alumnos.filter(a=>a.activo).map(a=>(
+            <label key={a.id} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+              <input type="checkbox" checked={form.alumnosSelec.includes(a.id)}
+                onChange={e=>setForm(f=>({...f,
+                  alumnosSelec:e.target.checked
+                    ?[...f.alumnosSelec,a.id]
+                    :f.alumnosSelec.filter(id=>id!==a.id)
+                }))}/>
+              {a.nombre} {a.nivel&&<span style={{fontSize:11,color:G.soft}}>· {a.nivel}</span>}
+            </label>
+          ))}
+        </div>
+      </Field>}
+
+      <div style={{display:"flex",gap:10,marginTop:4}}>
+        <Btn onClick={guardar} disabled={!archivoB64||!form.nombre.trim()}>✅ Guardar</Btn>
+        <Btn color="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
   const [tab,setTab]=useState("calendario");
 
@@ -11931,6 +12161,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
       {tab==="ejercicios"&&<ModEjerciciosAdmin data={data} setData={setData}/>}
       {tab==="informes"&&<ModInformes data={data} setData={setData}/>}
+      {tab==="archivos"&&<ModArchivos data={data} setData={setData}/>}
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
