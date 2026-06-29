@@ -2599,18 +2599,18 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
         placeholder="🔍 Buscar alumno..."
         style={{flex:1,minWidth:150,border:"1.5px solid #d0e0d0",borderRadius:8,
           padding:"8px 12px",fontSize:14,fontFamily:"inherit"}}/>
-      {tabTipo==="infantil"&&<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
+      {<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
         {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
       </Btn>}
       <Btn onClick={openNew}>+ Nuevo alumno</Btn>
     </div>
 
     {/* Vista de estructura de grupos */}
-    {tabTipo==="infantil"&&vistaEstructura&&<EstructuraInfantil
-      data={data} setData={setData} alumnos={alumnosInfantil}/>}
+    {vistaEstructura&&<EstructuraInfantil
+      data={data} setData={setData} alumnos={alumnos.filter(a=>a.activo)}/>}
 
     {/* Info de la escuela seleccionada */}
-    {!(tabTipo==="infantil"&&vistaEstructura)&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
+    {!vistaEstructura&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
       padding:"8px 14px",marginBottom:14,fontSize:12,
       color:tabTipo==="infantil"?"#3a7abf":G.fairway,fontWeight:600}}>
       {tabTipo==="infantil"
@@ -2619,7 +2619,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
     </div>}
 
     {/* Lista de alumnos */}
-    {!(tabTipo==="infantil"&&vistaEstructura)&&(alumnosMostrar.length===0
+    {!vistaEstructura&&(alumnosMostrar.length===0
       ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
           <div style={{fontSize:28,marginBottom:8}}>{tabTipo==="infantil"?"🧒":"🏌️"}</div>
           <div style={{fontWeight:700}}>Sin alumnos en {tabTipo==="infantil"?"la Escuela Infantil":"la Escuela de Adultos"}</div>
@@ -4891,7 +4891,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
     {id:"stats",label:"Estadísticas",icon:"📊"},
     {id:"informes",label:"Informes",icon:"📋"},
     {id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
-    {id:"mensajes",label:"Mensajes",icon:"✉️"},
+    {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
     {id:"miperfil",label:"Mi PIN",icon:"🔐"},
   ];
   const permisos = data.permisosPortal || {};
@@ -8250,6 +8250,13 @@ function ModMensajeria({data,setData}){
     setData({...data,mensajes:mensajes.filter(m=>m.id!==id)});
   }
 
+  function eliminarEnvio(asunto, fecha){
+    // Borra todas las copias del mismo envío (mismo asunto + misma fecha de envío)
+    if(!confirm("¿Eliminar este mensaje enviado a todos los destinatarios?")) return;
+    const fechaBase = fecha?.slice(0,16);
+    setData({...data,mensajes:mensajes.filter(m=>!(m.de==="profesor"&&m.asunto===asunto&&m.fecha?.slice(0,16)===fechaBase))});
+  }
+
   function openNuevo(){
     setForm({destinatario:"alumno",alumnoIds:[],grupoId:"",asunto:"",cuerpo:"",tipo:"mensaje"});
     setModal("nuevo");
@@ -8314,7 +8321,7 @@ function ModMensajeria({data,setData}){
           <div style={{fontSize:13,color:"#555",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.cuerpo}</div>
           {m.adjuntoNombre&&<div style={{fontSize:12,color:G.sky,marginTop:4}}>📎 {m.adjuntoNombre}</div>}
         </div>
-        <Btn small color="danger" onClick={e=>{e.stopPropagation();eliminarMsg(m.id);}}>✕</Btn>
+        <Btn small color="danger" onClick={e=>{e.stopPropagation();tipo==="enviado"?eliminarEnvio(m.asunto,m.fecha):eliminarMsg(m.id);}}>✕</Btn>
       </div>
     </div>;
   };
@@ -10814,7 +10821,7 @@ function ModInformes({data,setData}){
                 <div style={{display:"flex",gap:6,flexDirection:"column",flexShrink:0}}>
                   <Btn small onClick={()=>{setInforme(r.id);setVista("editor");}}>✎ Editar</Btn>
                   <Btn small color="sky" onClick={()=>{setInforme(r.id);setVista("preview");}}>👁 Ver</Btn>
-                  <Btn small color="danger" onClick={()=>{if(golfConfirm("¿Eliminar este informe?"))eliminarInforme(r.id);}}>🗑</Btn>
+                  <Btn small color="danger" onClick={()=>{if(window.confirm("¿Eliminar este informe? Esta acción no se puede deshacer."))eliminarInforme(r.id);}}>🗑</Btn>
                 </div>
               </div>
             </Card>;
@@ -11630,7 +11637,7 @@ const ADMIN_TABS=[
   {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️"},
   {id:"informes",label:"Informes",icon:"📑"},
   {id:"archivos",label:"Archivos",icon:"📁"},
-  {id:"mensajes",label:"Mensajes",icon:"✉️"},
+  {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
   {id:"tareas",label:"Tareas",icon:"📋"},
   {id:"pagos",label:"Pagos",icon:"💶"},
   {id:"ajustes",label:"Ajustes",icon:"⚙️"},
@@ -11775,9 +11782,9 @@ const ADMIN_TABS=[
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENTE: CAMPANA DE NOTIFICACIONES
 // ═══════════════════════════════════════════════════════════════════
-function NotifBell({notifs, pendientesCount=0}){
+function NotifBell({notifs, pendientesCount=0, mensajesNoLeidos=0}){
   const [open, setOpen] = useState(false);
-  const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount);
+  const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount) + mensajesNoLeidos;
 
   async function marcarLeida(id){
     try {
@@ -12298,14 +12305,19 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>{nombrePanel}</div>
             </div>
           </div>
-          <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
+          <NotifBell notifs={notifs} pendientesCount={pendientesCount} mensajesNoLeidos={(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length}/>
           <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
-          {ADMIN_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
-            style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
-            {t.icon} {t.label}{t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
-          </button>)}
+          {ADMIN_TABS.map(t=>{
+            const mensajesNoLeidos = t.id==="mensajes" ? (data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length : 0;
+            return <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
+              {t.icon} {t.label}
+              {t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
+              {t.id==="mensajes"&&mensajesNoLeidos>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{mensajesNoLeidos}</span>}
+            </button>;
+          })}
         </div>
       </div>
     </div>
