@@ -2301,10 +2301,12 @@ function EstructuraInfantil({data, setData, alumnos}){
   const porCat = {};
   CATS_INF.forEach(c=>{ porCat[c.id]=[]; });
   porCat["sin"]=[];
-  alumnos.forEach(a=>{
-    if(porCat[a.nivel]!==undefined) porCat[a.nivel].push(a);
-    else porCat["sin"].push(a);
+  (alumnos||[]).forEach(a=>{
+    if(a && porCat[a.nivel]!==undefined) porCat[a.nivel].push(a);
+    else if(a) porCat["sin"].push(a);
   });
+
+  if(!CATS_INF || CATS_INF.length===0) return <div style={{padding:20,color:"#c00"}}>Error: categorías no cargadas.</div>;
 
   return <div>
     {/* Pestañas */}
@@ -2339,10 +2341,11 @@ function EstructuraInfantil({data, setData, alumnos}){
             ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                 {lista.map(a=>(
                   <span key={a.id} style={{display:"flex",alignItems:"center",gap:6,
-                    background:"#f5f5f5",borderRadius:16,padding:"4px 10px 4px 5px",fontSize:12}}>
-                    <FotoAlumno foto={a.foto} nombre={a.nombre} size={24}/>
+                    background:"#f5f5f5",borderRadius:16,padding:"4px 10px",fontSize:12}}>
                     <span style={{fontWeight:600}}>{a.nombre}</span>
-                    {a.fechaNacimiento&&<span style={{color:G.soft}}>{calcularEdad(a.fechaNacimiento)}a</span>}
+                    {a.fechaNacimiento&&<span style={{color:G.soft}}>
+                      {(()=>{ try { return calcularEdad(a.fechaNacimiento)+"a"; } catch(e){ return ""; } })()}
+                    </span>}
                   </span>
                 ))}
               </div>
@@ -8247,13 +8250,19 @@ function ModMensajeria({data,setData}){
 
   function eliminarMsg(id){
     if(!confirm("¿Eliminar este mensaje?")) return;
+    // Borrar de Firebase
+    const fbMsg = fbMensajes.find(m=>m.id===id);
+    if(fbMsg?._fbId) deleteDoc(doc(db,"mensajes",fbMsg._fbId)).catch(e=>console.warn(e));
     setData({...data,mensajes:mensajes.filter(m=>m.id!==id)});
   }
 
   function eliminarEnvio(asunto, fecha){
-    // Borra todas las copias del mismo envío (mismo asunto + misma fecha de envío)
-    if(!confirm("¿Eliminar este mensaje enviado a todos los destinatarios?")) return;
+    if(!confirm("¿Eliminar este mensaje enviado?")) return;
     const fechaBase = fecha?.slice(0,16);
+    // Borrar todas las copias de Firebase
+    fbMensajes
+      .filter(m=>m.de==="profesor"&&m.asunto===asunto&&m.fecha?.slice(0,16)===fechaBase)
+      .forEach(m=>{ if(m._fbId) deleteDoc(doc(db,"mensajes",m._fbId)).catch(e=>console.warn(e)); });
     setData({...data,mensajes:mensajes.filter(m=>!(m.de==="profesor"&&m.asunto===asunto&&m.fecha?.slice(0,16)===fechaBase))});
   }
 
