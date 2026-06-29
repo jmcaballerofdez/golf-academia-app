@@ -3407,7 +3407,7 @@ function ModEstadisticas({data,setData}){
                       ["Hcp Exacto", s.handicapExacto,                                     G.danger],
                       ["Hcp Juego",  s.handicapJuego,                                      "#e67e22"],
                       ["Palo Tee",   s.paloTee,                                             G.sky],
-                      ["Fallo Tee",  s.falloTee ? s.falloTee+"%" : "—",                    G.flag],
+                      ["Fallo Tee",  s.falloTee ? (s.falloTee==="izquierda"?"↩️ Izquierda":s.falloTee==="derecha"?"↪️ Derecha":s.falloTee==="recto"?"⬆️ Recto":s.falloTee==="corto"?"⬇️ Corto":s.falloTee==="largo"?"⬆️⬆️ Largo":s.falloTee) : "—", G.flag],
                     ].map(([k,v,c])=>(
                       <div key={k} style={{textAlign:"center",minWidth:44}}>
                         <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
@@ -3476,8 +3476,26 @@ function ModEstadisticas({data,setData}){
               <option key={p} value={p}>{p}</option>)}
           </select>
         </Field>
-        <Field label="Fallo desde el tee (%)">
-          <Input type="number" value={form.falloTee||""} onChange={v=>setForm(f=>({...f,falloTee:v}))} placeholder="0-100"/>
+        <Field label="Fallo desde el tee">
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[
+              {val:"izquierda", icon:"↩️", label:"Izq"},
+              {val:"recto",     icon:"⬆️", label:"Recto"},
+              {val:"derecha",   icon:"↪️", label:"Der"},
+              {val:"corto",     icon:"⬇️", label:"Corto"},
+              {val:"largo",     icon:"⬆️⬆️", label:"Largo"},
+            ].map(({val,icon,label})=>(
+              <button key={val} type="button"
+                onClick={()=>setForm(f=>({...f,falloTee:f.falloTee===val?"":val}))}
+                style={{flex:1,minWidth:52,background:form.falloTee===val?G.fairway:"#f0f0f0",
+                  color:form.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
+                  padding:"8px 4px",fontSize:11,fontWeight:700,cursor:"pointer",
+                  display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                <span style={{fontSize:18}}>{icon}</span>
+                {label}
+              </button>
+            ))}
+          </div>
         </Field>
       </div>
 
