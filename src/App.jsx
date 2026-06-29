@@ -3265,247 +3265,622 @@ function ModClases({data,setData,profesorId=null,modoAdmin=false}){
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN: ESTADÍSTICAS
 // ═══════════════════════════════════════════════════════════════════
+// ── Helpers estadísticas ──────────────────────────────────────────
+const PARES_CAMPO = [4,3,5,4,4,3,4,5,4, 4,3,5,4,4,3,4,5,4]; // par por defecto 72
+const FALLO_TEE_OPTS = [
+  {val:"izquierda",icon:"↩️",label:"Izq"},
+  {val:"recto",    icon:"⬆️", label:"Recto"},
+  {val:"derecha",  icon:"↪️", label:"Der"},
+  {val:"corto",    icon:"⬇️", label:"Corto"},
+  {val:"largo",    icon:"⬆️⬆️",label:"Largo"},
+];
+function falloTeeLabel(v){
+  const o=FALLO_TEE_OPTS.find(x=>x.val===v);
+  return o?`${o.icon} ${o.label}`:v||"—";
+}
+function hoyoVacio(n){
+  return {n,golpes:"",putts:"",fairway:"",gir:"",penalizaciones:"",falloTee:""};
+}
+function initHoyos(num){
+  return Array.from({length:num},(_,i)=>hoyoVacio(i+1));
+}
+
+function Spark({values,color}){
+  const nums=(values||[]).map(Number).filter(v=>!isNaN(v));
+  if(nums.length<2) return null;
+  const mx=Math.max(...nums),mn=Math.min(...nums),rng=mx-mn||1;
+  const w=100,h=28,p=3;
+  const pts=nums.map((v,i)=>`${p+(i/(nums.length-1))*(w-p*2)},${p+(1-(v-mn)/rng)*(h-p*2)}`).join(" ");
+  const last=pts.split(" ").at(-1).split(",");
+  return <svg width={w} height={h} style={{display:"block"}}>
+    <polyline fill="none" stroke={color} strokeWidth="2" points={pts}/>
+    <circle cx={last[0]} cy={last[1]} r="3" fill={color}/>
+  </svg>;
+}
+
+function BarChart({pct,color,label}){
+  const v=Math.min(100,Math.max(0,Number(pct)||0));
+  return <div style={{marginBottom:6}}>
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:G.soft,marginBottom:2}}>
+      <span>{label}</span><span style={{fontWeight:700,color}}>{v}%</span>
+    </div>
+    <div style={{background:"#eee",borderRadius:6,height:8}}>
+      <div style={{background:color,width:`${v}%`,height:8,borderRadius:6,transition:"width .3s"}}/>
+    </div>
+  </div>;
+}
+
 function ModEstadisticas({data,setData}){
-  const alumnos = (data.alumnos||[]).filter(a=>a.activo);
-  const stats   = data.estadisticas||[];
+  const alumnos=(data.alumnos||[]).filter(a=>a.activo);
+  const stats=data.estadisticas||[];
+  const [alumnoSel,setAlumnoSel]=useState("");
+  const [vista,setVista]=useState("rondas"); // rondas | informe
+  const [modal,setModal]=useState(null); // null | "nueva" | "editar" | "hoyo"
+  const [form,setForm]=useState({});
+  const [hoyos,setHoyos]=useState([]); // array de 9 o 18 hoyos
+  const [hoyoActual,setHoyoActual]=useState(0); // índice hoyo activo
+  const [modoEntrada,setModoEntrada]=useState("resumen"); // resumen | hoyo
+  const [periodoInforme,setPeriodoInforme]=useState("rondas"); // rondas | mensual
+  const [verDetalle,setVerDetalle]=useState(null);
 
-  const [alumnoSel, setAlumnoSel] = useState("");
-  const [modal,     setModal]     = useState(false);
-  const [form,      setForm]      = useState({});
+  useEffect(()=>{ if(alumnos.length>0&&!alumnoSel) setAlumnoSel(alumnos[0].id); },[alumnos.length]);
 
-  // Auto-select first alumno
-  useEffect(()=>{
-    if(alumnos.length>0 && !alumnoSel){
-      setAlumnoSel(alumnos[0].id);
-    }
-  },[alumnos.length]);
-
-  const alumnoActual = alumnos.find(a=>a.id===alumnoSel);
-  const alumnoStats  = stats
-    .filter(s=>s.alumnoId===alumnoSel)
-    .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  const alumnoActual=alumnos.find(a=>a.id===alumnoSel);
+  const alumnoStats=stats.filter(s=>s.alumnoId===alumnoSel).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  const últimas10=alumnoStats.slice(0,10).reverse();
 
   function abrirNueva(){
-    setForm({
-      alumnoId: alumnoSel,
-      fecha:    today(),
-      hoyos:    "18",
-      golpes:   "",
-      fairwaysPorcentaje: "",
-      greensRegulacion:   "",
-      putts:    "",
-      bunkers:  "",
-      handicap: "",
-      handicapExacto: "",
-      handicapJuego:  "",
-      paloTee: "Driver",
-      falloTee: "",
-      notas:    "",
-    });
-    setModal(true);
+    const numH=18;
+    setForm({alumnoId:alumnoSel,fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:"",handicapExacto:"",handicapJuego:"",notas:"",campo:""});
+    setHoyos(initHoyos(numH));
+    setHoyoActual(0);
+    setModoEntrada("hoyo");
+    setModal("nueva");
+  }
+
+  function cambiarNumHoyos(n){
+    setForm(f=>({...f,hoyos:String(n)}));
+    setHoyos(initHoyos(n));
+    setHoyoActual(0);
+  }
+
+  function actualizarHoyo(idx,campo,val){
+    setHoyos(h=>h.map((hh,i)=>i===idx?{...hh,[campo]:val}:hh));
+  }
+
+  function calcularTotalesHoyos(){
+    const golpesTot=hoyos.reduce((s,h)=>s+(Number(h.golpes)||0),0);
+    const puttsTot=hoyos.reduce((s,h)=>s+(Number(h.putts)||0),0);
+    const fairwaysOk=hoyos.filter(h=>h.fairway==="si").length;
+    const girOk=hoyos.filter(h=>h.gir==="si").length;
+    const penTot=hoyos.reduce((s,h)=>s+(Number(h.penalizaciones)||0),0);
+    const numH=hoyos.length;
+    return {
+      golpes:golpesTot||"",
+      putts:puttsTot||"",
+      fairwaysPorcentaje:numH>0?Math.round((fairwaysOk/numH)*100):"",
+      greensRegulacion:numH>0?Math.round((girOk/numH)*100):"",
+      bunkers:penTot||"",
+    };
   }
 
   function guardar(){
     if(!form.fecha) return;
-    const reg = {...form, alumnoId: alumnoSel, id: form.id||uid()};
-    const updated = stats.some(s=>s.id===reg.id)
-      ? stats.map(s=>s.id===reg.id ? reg : s)
-      : [...stats, reg];
-    setData({...data, estadisticas: updated});
-    setModal(false);
+    const totales=modoEntrada==="hoyo"?calcularTotalesHoyos():{};
+    const reg={...form,...totales,alumnoId:alumnoSel,id:form.id||uid(),hoyosDetalle:modoEntrada==="hoyo"?hoyos:[]};
+    const updated=stats.some(s=>s.id===reg.id)?stats.map(s=>s.id===reg.id?reg:s):[...stats,reg];
+    setData({...data,estadisticas:updated});
+    setModal(null);
   }
 
-  function editar(s){ setForm({...s}); setModal(true); }
+  function editar(s){
+    setForm({...s});
+    setHoyos(s.hoyosDetalle&&s.hoyosDetalle.length>0?s.hoyosDetalle:initHoyos(Number(s.hoyos)||18));
+    setModoEntrada(s.hoyosDetalle&&s.hoyosDetalle.length>0?"hoyo":"resumen");
+    setHoyoActual(0);
+    setModal("editar");
+  }
 
   function eliminar(id){
-    if(golfConfirm("¿Eliminar esta ronda?"))
-      setData({...data, estadisticas: stats.filter(s=>s.id!==id)});
+    if(window.confirm("¿Eliminar esta ronda?")) setData({...data,estadisticas:stats.filter(s=>s.id!==id)});
   }
 
-  // Mini sparkline chart
-  function Spark({values, color}){
-    if(!values||values.length<2) return null;
-    const nums = values.map(Number).filter(v=>!isNaN(v));
-    if(nums.length<2) return null;
-    const mx=Math.max(...nums), mn=Math.min(...nums), rng=mx-mn||1;
-    const w=100, h=28, p=3;
-    const pts=nums.map((v,i)=>`${p+(i/(nums.length-1))*(w-p*2)},${p+(1-(v-mn)/rng)*(h-p*2)}`).join(" ");
-    const [lx,ly]=pts.split(" ").at(-1).split(",");
-    return <svg width={w} height={h} style={{display:"block"}}>
-      <polyline fill="none" stroke={color} strokeWidth="2" points={pts}/>
-      <circle cx={lx} cy={ly} r="3" fill={color}/>
-    </svg>;
+  // ── Cálculo informe acumulado ──
+  function calcInforme(){
+    const rondasOrd=[...alumnoStats].reverse();
+    // Por ronda
+    const porRonda=rondasOrd.map(s=>({
+      fecha:s.fecha,
+      golpes:Number(s.golpes)||0,
+      putts:Number(s.putts)||0,
+      fairways:Number(s.fairwaysPorcentaje)||0,
+      gir:Number(s.greensRegulacion)||0,
+      hcp:Number(s.handicapJuego)||0,
+    }));
+    // Por mes
+    const porMes={};
+    rondasOrd.forEach(s=>{
+      const mes=(s.fecha||"").slice(0,7);
+      if(!mes) return;
+      if(!porMes[mes]) porMes[mes]={mes,golpes:[],putts:[],fairways:[],gir:[],count:0};
+      if(s.golpes) porMes[mes].golpes.push(Number(s.golpes));
+      if(s.putts) porMes[mes].putts.push(Number(s.putts));
+      if(s.fairwaysPorcentaje) porMes[mes].fairways.push(Number(s.fairwaysPorcentaje));
+      if(s.greensRegulacion) porMes[mes].gir.push(Number(s.greensRegulacion));
+      porMes[mes].count++;
+    });
+    const avg=arr=>arr.length>0?Math.round(arr.reduce((a,b)=>a+b,0)/arr.length):0;
+    const meses=Object.values(porMes).map(m=>({mes:m.mes,golpes:avg(m.golpes),putts:avg(m.putts),fairways:avg(m.fairways),gir:avg(m.gir),rondas:m.count}));
+    return {porRonda,meses};
   }
 
-  // Stats summary for selected alumno
-  const últimas10 = alumnoStats.slice(0,10).reverse();
+  const informe=calcInforme();
 
-  if(alumnos.length===0) return (
-    <div style={{textAlign:"center",padding:40,color:G.soft}}>
-      <div style={{fontSize:32,marginBottom:12}}>📊</div>
-      <div style={{fontWeight:700,marginBottom:8}}>Sin alumnos registrados</div>
-      <div style={{fontSize:13}}>Añade alumnos en la pestaña <b>Alumnos</b> para poder registrar estadísticas.</div>
-    </div>
-  );
+  if(alumnos.length===0) return <div style={{textAlign:"center",padding:40,color:G.soft}}>
+    <div style={{fontSize:32,marginBottom:12}}>📊</div>
+    <div style={{fontWeight:700}}>Sin alumnos registrados</div>
+  </div>;
 
   return <div>
-    {/* Selector alumno + botón */}
-    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
-      <div style={{flex:1,minWidth:180}}>
-        <select value={alumnoSel} onChange={e=>setAlumnoSel(e.target.value)}
-          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
-            padding:"9px 12px",fontSize:15,background:"#fff",fontFamily:"inherit",fontWeight:600,color:G.fairway}}>
-          {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
-        </select>
-      </div>
-      <Btn onClick={abrirNueva} color="primary">+ Registrar ronda</Btn>
-    </div>
-
-    {/* Gráficas resumen */}
-    {alumnoStats.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
-      {[
-        ["Golpes",     últimas10.map(s=>s.golpes),        G.fairway],
-        ["Hcp Exacto", últimas10.map(s=>s.handicapExacto), G.flag],
-        ["Hcp Juego",  últimas10.map(s=>s.handicapJuego),  G.danger],
-        ["Putts",      últimas10.map(s=>s.putts),           G.sky],
-        ["GIR %",      últimas10.map(s=>s.greensRegulacion),G.grass],
-      ].map(([label,vals,color])=>(
-        <Card key={label} style={{padding:10}}>
-          <div style={{fontSize:11,color:G.soft,marginBottom:4}}>{label}</div>
-          <Spark values={vals} color={color}/>
-          <div style={{fontSize:14,fontWeight:700,color,marginTop:2}}>
-            {vals.filter(Boolean).length>0
-              ? vals.filter(Boolean).at(-1)
-              : "—"}
-          </div>
-        </Card>
-      ))}
-    </div>}
-
-    {/* Lista de rondas */}
-    {alumnoStats.length===0
-      ? <div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
-          <div style={{fontSize:28,marginBottom:8}}>⛳</div>
-          <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Sin rondas registradas</div>
-          <div style={{fontSize:13}}>Pulsa <b>"+ Registrar ronda"</b> para añadir la primera ronda de <b>{alumnoActual?.nombre}</b>.</div>
-        </div>
-      : <div style={{display:"grid",gap:10}}>
-          {alumnoStats.map(s=>(
-            <Card key={s.id}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
-                <div>
-                  <div style={{fontWeight:700,color:G.ink,fontSize:15,marginBottom:6}}>
-                    📅 {s.fecha} · {s.hoyos} hoyos
-                  </div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
-                    {[
-                      ["Golpes",     s.golpes,                                              G.fairway],
-                      ["Fairways",   s.fairwaysPorcentaje ? s.fairwaysPorcentaje+"%" : "—", G.grass],
-                      ["GIR",        s.greensRegulacion   ? s.greensRegulacion+"%"   : "—", G.sky],
-                      ["Putts",      s.putts,                                               G.flag],
-                      ["Bunkers",    s.bunkers,                                             G.purple],
-                      ["Hcp Exacto", s.handicapExacto,                                     G.danger],
-                      ["Hcp Juego",  s.handicapJuego,                                      "#e67e22"],
-                      ["Palo Tee",   s.paloTee,                                             G.sky],
-                      ["Fallo Tee",  s.falloTee ? (s.falloTee==="izquierda"?"↩️ Izquierda":s.falloTee==="derecha"?"↪️ Derecha":s.falloTee==="recto"?"⬆️ Recto":s.falloTee==="corto"?"⬇️ Corto":s.falloTee==="largo"?"⬆️⬆️ Largo":s.falloTee) : "—", G.flag],
-                    ].map(([k,v,c])=>(
-                      <div key={k} style={{textAlign:"center",minWidth:44}}>
-                        <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
-                        <div style={{fontSize:10,color:G.soft}}>{k}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:8,fontStyle:"italic"}}>"{s.notas}"</div>}
-                </div>
-                <div style={{display:"flex",gap:6,flexShrink:0}}>
-                  <Btn small color="secondary" onClick={()=>editar(s)}>✎</Btn>
-                  <Btn small color="danger"    onClick={()=>eliminar(s.id)}>✕</Btn>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-    }
-
-    {/* Modal registrar / editar ronda */}
-    {modal&&<Modal title={form.id?"Editar ronda":"Registrar nueva ronda"} onClose={()=>setModal(false)} wide>
-      {/* Alumno y fecha */}
-      <div style={{background:G.mist,borderRadius:10,padding:"10px 14px",marginBottom:14,
-        fontSize:14,fontWeight:600,color:G.fairway}}>
-        👤 {alumnoActual?.nombre||"Alumno"}
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
-        <Field label="Fecha *">
-          <Input type="date" value={form.fecha||today()} onChange={v=>setForm(f=>({...f,fecha:v}))}/>
-        </Field>
-        <Field label="Hoyos jugados">
-          <select value={form.hoyos||"18"} onChange={e=>setForm(f=>({...f,hoyos:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
-              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-            <option value="9">9 hoyos</option>
-            <option value="18">18 hoyos</option>
-          </select>
-        </Field>
-      </div>
-
-      {/* Stats principales */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:4}}>
-        {[
-          ["golpes",             "Golpes totales",  "number"],
-          ["fairwaysPorcentaje", "Fairways %",      "number"],
-          ["greensRegulacion",   "GIR %",           "number"],
-          ["putts",              "Putts",           "number"],
-          ["bunkers",            "Bunkers",         "number"],
-          ["handicapExacto",     "Hándicap exacto", "number"],
-          ["handicapJuego",      "Hándicap juego",  "number"],
-        ].map(([key,label,type])=>(
-          <Field key={key} label={label}>
-            <Input type={type} value={form[key]||""}
-              onChange={v=>setForm(f=>({...f,[key]:v}))}
-              placeholder="—"/>
-          </Field>
+    {/* Cabecera */}
+    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+      <select value={alumnoSel} onChange={e=>setAlumnoSel(e.target.value)}
+        style={{flex:1,minWidth:180,border:"1.5px solid #d0e0d0",borderRadius:8,
+          padding:"9px 12px",fontSize:15,background:"#fff",fontFamily:"inherit",fontWeight:600,color:G.fairway}}>
+        {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+      </select>
+      <div style={{display:"flex",gap:6}}>
+        {[["rondas","📋 Rondas"],["informe","📊 Informe"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setVista(id)}
+            style={{background:vista===id?G.fairway:"#f0f0f0",color:vista===id?"#fff":"#555",
+              border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {label}
+          </button>
         ))}
       </div>
+      <Btn onClick={abrirNueva}>+ Nueva ronda</Btn>
+    </div>
 
-      {/* Palo desde el tee y fallo */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
-        <Field label="Palo usado desde el tee">
-          <select value={form.paloTee||"Driver"} onChange={e=>setForm(f=>({...f,paloTee:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-            {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>
-              <option key={p} value={p}>{p}</option>)}
-          </select>
-        </Field>
-        <Field label="Fallo desde el tee">
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {[
-              {val:"izquierda", icon:"↩️", label:"Izq"},
-              {val:"recto",     icon:"⬆️", label:"Recto"},
-              {val:"derecha",   icon:"↪️", label:"Der"},
-              {val:"corto",     icon:"⬇️", label:"Corto"},
-              {val:"largo",     icon:"⬆️⬆️", label:"Largo"},
-            ].map(({val,icon,label})=>(
-              <button key={val} type="button"
-                onClick={()=>setForm(f=>({...f,falloTee:f.falloTee===val?"":val}))}
-                style={{flex:1,minWidth:52,background:form.falloTee===val?G.fairway:"#f0f0f0",
-                  color:form.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
-                  padding:"8px 4px",fontSize:11,fontWeight:700,cursor:"pointer",
-                  display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                <span style={{fontSize:18}}>{icon}</span>
+    {/* ── VISTA RONDAS ── */}
+    {vista==="rondas"&&<div>
+      {/* Sparklines resumen */}
+      {últimas10.length>1&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8,marginBottom:14}}>
+        {[
+          ["Golpes",últimas10.map(s=>s.golpes),G.fairway],
+          ["Putts",últimas10.map(s=>s.putts),G.sky],
+          ["Fairways %",últimas10.map(s=>s.fairwaysPorcentaje),G.grass],
+          ["GIR %",últimas10.map(s=>s.greensRegulacion),G.flag],
+          ["Hcp",últimas10.map(s=>s.handicapJuego),G.danger],
+        ].map(([label,vals,color])=>(
+          <Card key={label} style={{padding:10}}>
+            <div style={{fontSize:10,color:G.soft,marginBottom:3}}>{label}</div>
+            <Spark values={vals} color={color}/>
+            <div style={{fontSize:15,fontWeight:800,color,marginTop:2}}>{vals.filter(Boolean).at(-1)||"—"}</div>
+          </Card>
+        ))}
+      </div>}
+
+      {/* Lista rondas */}
+      {alumnoStats.length===0
+        ?<div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:28,marginBottom:8}}>⛳</div>
+          <div style={{fontWeight:700}}>Sin rondas · Pulsa "+ Nueva ronda"</div>
+        </div>
+        :alumnoStats.map(s=>(
+          <Card key={s.id} style={{marginBottom:10,cursor:"pointer"}} onClick={()=>setVerDetalle(verDetalle===s.id?null:s.id)}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14,marginBottom:6}}>
+                  📅 {fmtDate(s.fecha)} · {s.hoyos} hoyos {s.campo&&`· ${s.campo}`}
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                  {[
+                    ["Golpes",s.golpes,G.fairway],
+                    ["Putts",s.putts,G.sky],
+                    ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
+                    ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
+                    ["Hcp",s.handicapJuego,G.danger],
+                    ["Palo Tee",s.paloTee,"#555"],
+                    ["Fallo Tee",falloTeeLabel(s.falloTee),G.flag],
+                  ].map(([k,v,c])=>(
+                    <div key={k} style={{textAlign:"center",minWidth:50}}>
+                      <div style={{fontSize:16,fontWeight:800,color:c}}>{v||"—"}</div>
+                      <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+                {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>"{s.notas}"</div>}
+
+                {/* Detalle hoyo a hoyo */}
+                {verDetalle===s.id&&s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{background:G.mist}}>
+                        {["Hoyo","Par","Golpes","Putts","FW","GIR","Pen.","Fallo Tee"].map(h=>(
+                          <th key={h} style={{padding:"4px 6px",textAlign:"center",color:G.soft,fontWeight:600}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {s.hoyosDetalle.map((h,i)=>{
+                        const par=PARES_CAMPO[i]||4;
+                        const golpes=Number(h.golpes)||0;
+                        const diff=golpes-par;
+                        const bgGolpe=golpes===0?"":diff<=-2?"#gold":diff===-1?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0";
+                        return <tr key={i} style={{borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa"}}>
+                          <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:G.fairway}}>{h.n}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center",color:G.soft}}>{par}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,
+                            background:golpes>0?(diff<0?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0"):"",
+                            borderRadius:4,color:diff<0?G.grass:diff>0?"#c0392b":G.ink}}>
+                            {h.golpes||"—"}{golpes>0&&diff!==0&&<span style={{fontSize:9}}>{diff>0?`+${diff}`:diff}</span>}
+                          </td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.putts||"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.fairway==="si"?"✅":h.fairway==="no"?"❌":"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.gir==="si"?"✅":h.gir==="no"?"❌":"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.penalizaciones||"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{falloTeeLabel(h.falloTee)}</td>
+                        </tr>;
+                      })}
+                      {/* Totales */}
+                      <tr style={{background:G.mist,fontWeight:700}}>
+                        <td colSpan={2} style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>TOTAL</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>{s.golpes||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{s.putts||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.grass}}>{s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.flag}}>{s.greensRegulacion?s.greensRegulacion+"%":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{s.bunkers||"—"}</td>
+                        <td/>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>}
+                {s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{fontSize:11,color:G.sky,marginTop:4}}>
+                  {verDetalle===s.id?"▲ Ocultar detalle":"▼ Ver hoyo a hoyo"}
+                </div>}
+              </div>
+              <div style={{display:"flex",gap:5,flexShrink:0}}>
+                <Btn small color="secondary" onClick={e=>{e.stopPropagation();editar(s);}}>✎</Btn>
+                <Btn small color="danger" onClick={e=>{e.stopPropagation();eliminar(s.id);}}>✕</Btn>
+              </div>
+            </div>
+          </Card>
+        ))
+      }
+    </div>}
+
+    {/* ── VISTA INFORME ── */}
+    {vista==="informe"&&<div>
+      {alumnoStats.length<2
+        ?<div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:28,marginBottom:8}}>📊</div>
+          <div style={{fontWeight:700}}>Necesitas al menos 2 rondas para generar el informe</div>
+        </div>
+        :<div>
+          {/* Selector periodo */}
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            {[["rondas","📋 Por ronda"],["mensual","📅 Por mes"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setPeriodoInforme(id)}
+                style={{background:periodoInforme===id?G.fairway:"#f0f0f0",color:periodoInforme===id?"#fff":"#555",
+                  border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
                 {label}
               </button>
             ))}
           </div>
+
+          {/* KPIs acumulados */}
+          {(()=>{
+            const vals=alumnoStats;
+            const avg=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; };
+            const best=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?Math.min(...v):"—"; };
+            return <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:8,marginBottom:16}}>
+              {[
+                ["Media Golpes",avg("golpes"),G.fairway,"⛳"],
+                ["Mejor Ronda",best("golpes"),G.grass,"🏆"],
+                ["Media Putts",avg("putts"),G.sky,"🎯"],
+                ["Media FW %",avg("fairwaysPorcentaje")+"%",G.grass,"↑"],
+                ["Media GIR %",avg("greensRegulacion")+"%",G.flag,"🟢"],
+                ["Hcp Actual",vals[0]?.handicapJuego||"—",G.danger,"📉"],
+                ["Rondas",vals.length,G.ink,"📋"],
+              ].map(([label,val,color,icon])=>(
+                <Card key={label} style={{textAlign:"center",padding:10}}>
+                  <div style={{fontSize:16,marginBottom:2}}>{icon}</div>
+                  <div style={{fontSize:18,fontWeight:800,color}}>{val}</div>
+                  <div style={{fontSize:10,color:G.soft,marginTop:2}}>{label}</div>
+                </Card>
+              ))}
+            </div>;
+          })()}
+
+          {/* Gráfico por ronda */}
+          {periodoInforme==="rondas"&&<div>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>📈 Evolución por ronda</div>
+            {/* Golpes */}
+            <Card style={{marginBottom:10}}>
+              <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:8}}>GOLPES POR RONDA</div>
+              <div style={{display:"flex",alignItems:"flex-end",gap:4,height:80,paddingBottom:4}}>
+                {informe.porRonda.map((r,i)=>{
+                  const mx=Math.max(...informe.porRonda.map(x=>x.golpes));
+                  const mn=Math.min(...informe.porRonda.filter(x=>x.golpes).map(x=>x.golpes));
+                  const h=r.golpes>0?Math.round(20+((r.golpes-mn)/(mx-mn||1))*60):4;
+                  return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <div style={{fontSize:9,color:G.fairway,fontWeight:700}}>{r.golpes||""}</div>
+                    <div style={{width:"100%",background:G.fairway,height:h,borderRadius:"3px 3px 0 0",opacity:0.8+i*0.02}}/>
+                    <div style={{fontSize:8,color:G.soft,transform:"rotate(-45deg)",transformOrigin:"left",marginTop:2,whiteSpace:"nowrap"}}>
+                      {r.fecha?.slice(5)}
+                    </div>
+                  </div>;
+                })}
+              </div>
+            </Card>
+            {/* Barras de porcentajes */}
+            <Card style={{marginBottom:10}}>
+              <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:10}}>PORCENTAJES POR RONDA</div>
+              {informe.porRonda.map((r,i)=>(
+                <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<informe.porRonda.length-1?"1px solid #f0f0f0":"none"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:G.ink,marginBottom:6}}>
+                    📅 {r.fecha} — {r.golpes||"—"} golpes
+                  </div>
+                  <BarChart pct={r.fairways} color={G.grass} label="Fairways"/>
+                  <BarChart pct={r.gir} color={G.flag} label="GIR"/>
+                </div>
+              ))}
+            </Card>
+            {/* Putts */}
+            <Card>
+              <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:8}}>PUTTS POR RONDA</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {informe.porRonda.map((r,i)=>(
+                  <div key={i} style={{textAlign:"center",minWidth:48}}>
+                    <div style={{fontSize:18,fontWeight:800,color:G.sky}}>{r.putts||"—"}</div>
+                    <div style={{fontSize:9,color:G.soft}}>{r.fecha?.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>}
+
+          {/* Gráfico mensual */}
+          {periodoInforme==="mensual"&&<div>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>📅 Tendencia mensual</div>
+            {informe.meses.map((m,i)=>(
+              <Card key={i} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontWeight:700,color:G.ink}}>{m.mes}</div>
+                  <span style={{background:G.mist,borderRadius:8,padding:"2px 8px",fontSize:11,color:G.soft}}>{m.rondas} ronda{m.rondas!==1?"s":""}</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:10}}>
+                  {[["Media Golpes",m.golpes,G.fairway],["Media Putts",m.putts,G.sky],["FW %",m.fairways+"%",G.grass],["GIR %",m.gir+"%",G.flag]].map(([k,v,c])=>(
+                    <div key={k} style={{textAlign:"center"}}>
+                      <div style={{fontSize:20,fontWeight:800,color:c}}>{v||"—"}</div>
+                      <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+                <BarChart pct={m.fairways} color={G.grass} label="Media Fairways"/>
+                <BarChart pct={m.gir} color={G.flag} label="Media GIR"/>
+              </Card>
+            ))}
+          </div>}
+        </div>
+      }
+    </div>}
+
+    {/* ── MODAL NUEVA/EDITAR RONDA ── */}
+    {(modal==="nueva"||modal==="editar")&&<Modal
+      title={modal==="nueva"?"Nueva ronda":"Editar ronda"}
+      onClose={()=>setModal(null)} wide>
+
+      {/* Cabecera */}
+      <div style={{background:G.mist,borderRadius:10,padding:"8px 14px",marginBottom:12,
+        fontSize:14,fontWeight:600,color:G.fairway}}>
+        👤 {alumnoActual?.nombre}
+      </div>
+
+      {/* Fecha, hoyos, campo */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+        <Field label="Fecha *">
+          <Input type="date" value={form.fecha||today()} onChange={v=>setForm(f=>({...f,fecha:v}))}/>
+        </Field>
+        <Field label="Hoyos">
+          <div style={{display:"flex",gap:6}}>
+            {[9,18].map(n=>(
+              <button key={n} type="button" onClick={()=>cambiarNumHoyos(n)}
+                style={{flex:1,background:form.hoyos===String(n)?G.fairway:"#f0f0f0",
+                  color:form.hoyos===String(n)?"#fff":"#555",border:"none",
+                  borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                {n}H
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Campo (opcional)">
+          <Input value={form.campo||""} onChange={v=>setForm(f=>({...f,campo:v}))} placeholder="Nombre del campo"/>
         </Field>
       </div>
 
-      <Field label="Notas de la ronda">
-        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))}
-          rows={2} placeholder="Observaciones, condiciones del campo, sensaciones..."/>
+      {/* Modo entrada */}
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {[["hoyo","⛳ Hoyo a hoyo"],["resumen","📊 Resumen total"]].map(([id,label])=>(
+          <button key={id} type="button" onClick={()=>setModoEntrada(id)}
+            style={{flex:1,background:modoEntrada===id?G.fairway:"#f0f0f0",
+              color:modoEntrada===id?"#fff":"#555",border:"none",borderRadius:8,
+              padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Entrada hoyo a hoyo ── */}
+      {modoEntrada==="hoyo"&&<div>
+        {/* Navegación hoyos */}
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+          {hoyos.map((h,i)=>{
+            const ok=h.golpes&&h.putts;
+            const par=PARES_CAMPO[i]||4;
+            const diff=Number(h.golpes)-par;
+            const color=!h.golpes?"#e0e0e0":diff<0?G.grass:diff===0?G.fairway:diff===1?"#e67e22":"#c0392b";
+            return <button key={i} type="button" onClick={()=>setHoyoActual(i)}
+              style={{minWidth:34,height:34,background:hoyoActual===i?G.fairway:ok?color:"#f0f0f0",
+                color:hoyoActual===i||ok?"#fff":"#888",border:"none",borderRadius:8,
+                fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              {i+1}
+            </button>;
+          })}
+        </div>
+
+        {/* Formulario hoyo activo */}
+        {(()=>{
+          const h=hoyos[hoyoActual];
+          const par=PARES_CAMPO[hoyoActual]||4;
+          return <div style={{background:"#f8fdf8",borderRadius:12,padding:14,marginBottom:10,
+            border:`2px solid ${G.grass}`}}>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:15,marginBottom:12}}>
+              Hoyo {hoyoActual+1} · Par {par}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Golpes">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"golpes",Math.max(1,Number(h.golpes||par)-1))}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:28,fontWeight:800,
+                    color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#c0392b"}}>
+                    {h.golpes||par}
+                  </div>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"golpes",Number(h.golpes||par)+1)}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                </div>
+                {h.golpes&&<div style={{textAlign:"center",fontSize:11,color:Number(h.golpes)-par<0?G.grass:Number(h.golpes)-par>0?"#c0392b":G.soft,marginTop:2,fontWeight:700}}>
+                  {Number(h.golpes)-par===0?"Par":Number(h.golpes)-par>0?"+"+( Number(h.golpes)-par):Number(h.golpes)-par}
+                </div>}
+              </Field>
+              <Field label="Putts">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"putts",Math.max(0,Number(h.putts||2)-1))}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:28,fontWeight:800,color:G.sky}}>
+                    {h.putts||"—"}
+                  </div>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"putts",Number(h.putts||1)+1)}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                </div>
+              </Field>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Fairway">
+                <div style={{display:"flex",gap:6}}>
+                  {[["si","✅ Sí"],["no","❌ No"],["","-"]].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>actualizarHoyo(hoyoActual,"fairway",v)}
+                      style={{flex:1,background:h.fairway===v?G.fairway:"#f0f0f0",
+                        color:h.fairway===v?"#fff":"#555",border:"none",borderRadius:8,
+                        padding:"7px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="GIR (Green en Regulación)">
+                <div style={{display:"flex",gap:6}}>
+                  {[["si","✅ Sí"],["no","❌ No"],["","-"]].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>actualizarHoyo(hoyoActual,"gir",v)}
+                      style={{flex:1,background:h.gir===v?G.fairway:"#f0f0f0",
+                        color:h.gir===v?"#fff":"#555",border:"none",borderRadius:8,
+                        padding:"7px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Penalizaciones">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"penalizaciones",Math.max(0,Number(h.penalizaciones||0)-1))}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:24,fontWeight:800,color:"#c0392b"}}>{h.penalizaciones||0}</div>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"penalizaciones",Number(h.penalizaciones||0)+1)}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                </div>
+              </Field>
+              <Field label="Fallo tee">
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {FALLO_TEE_OPTS.map(({val,icon,label})=>(
+                    <button key={val} type="button"
+                      onClick={()=>actualizarHoyo(hoyoActual,"falloTee",h.falloTee===val?"":val)}
+                      style={{flex:1,minWidth:40,background:h.falloTee===val?G.fairway:"#f0f0f0",
+                        color:h.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
+                        padding:"5px 2px",fontSize:10,fontWeight:700,cursor:"pointer",
+                        display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                      <span style={{fontSize:14}}>{icon}</span>{label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+
+            {/* Navegación siguiente/anterior */}
+            <div style={{display:"flex",gap:8,justifyContent:"space-between",marginTop:8}}>
+              <Btn color="secondary" onClick={()=>setHoyoActual(Math.max(0,hoyoActual-1))} disabled={hoyoActual===0}>← Anterior</Btn>
+              <div style={{fontSize:12,color:G.soft,alignSelf:"center"}}>
+                {hoyos.filter(h=>h.golpes).length}/{hoyos.length} completados
+              </div>
+              <Btn color="primary" onClick={()=>setHoyoActual(Math.min(hoyos.length-1,hoyoActual+1))} disabled={hoyoActual===hoyos.length-1}>Siguiente →</Btn>
+            </div>
+          </div>;
+        })()}
+
+        {/* Resumen parcial */}
+        {hoyos.some(h=>h.golpes)&&(()=>{
+          const tot=calcularTotalesHoyos();
+          return <div style={{background:G.mist,borderRadius:10,padding:"8px 12px",marginBottom:10}}>
+            <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:6}}>PARCIAL</div>
+            <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+              {[["Golpes",tot.golpes,G.fairway],["Putts",tot.putts,G.sky],["FW",tot.fairwaysPorcentaje?tot.fairwaysPorcentaje+"%":"—",G.grass],["GIR",tot.greensRegulacion?tot.greensRegulacion+"%":"—",G.flag]].map(([k,v,c])=>(
+                <div key={k} style={{textAlign:"center"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
+                  <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                </div>
+              ))}
+            </div>
+          </div>;
+        })()}
+      </div>}
+
+      {/* ── Entrada resumen total ── */}
+      {modoEntrada==="resumen"&&<div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
+          {[["golpes","Golpes totales"],["putts","Putts totales"],["fairwaysPorcentaje","Fairways %"],
+            ["greensRegulacion","GIR %"],["bunkers","Penalizaciones"],["handicapExacto","Hcp exacto"],["handicapJuego","Hcp juego"]].map(([key,label])=>(
+            <Field key={key} label={label}>
+              <Input type="number" value={form[key]||""} onChange={v=>setForm(f=>({...f,[key]:v}))} placeholder="—"/>
+            </Field>
+          ))}
+        </div>
+      </div>}
+
+      {/* Campos comunes */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <Field label="Palo desde el tee">
+          <select value={form.paloTee||"Driver"} onChange={e=>setForm(f=>({...f,paloTee:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>(
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Hcp exacto">
+          <Input type="number" value={form.handicapExacto||""} onChange={v=>setForm(f=>({...f,handicapExacto:v}))} placeholder="—"/>
+        </Field>
+      </div>
+      <Field label="Notas">
+        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} rows={2} placeholder="Observaciones, condiciones, sensaciones..."/>
       </Field>
 
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
-        <Btn color="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:14}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
         <Btn onClick={guardar} disabled={!form.fecha}>💾 Guardar ronda</Btn>
       </div>
     </Modal>}
