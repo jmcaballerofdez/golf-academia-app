@@ -7,7 +7,7 @@ import { getAuth, signInAnonymously } from "firebase/auth";
 
 // ─── Firebase Config ──────────────────────────────────────────────
 // ── Google Calendar Configuración ────────────────────────────────
-const GCAL_CLIENT_ID = "532891287117-do4egt1ssit9eqmfg6ugtvfkal361d1o.apps.googleusercontent.com";
+const GCAL_CLIENT_ID = "234350222482-4l7ore116950lcr5bnbbf3b60pdrojj6.apps.googleusercontent.com";
 const GCAL_SCOPES = "https://www.googleapis.com/auth/calendar";
 const GCAL_DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
 
