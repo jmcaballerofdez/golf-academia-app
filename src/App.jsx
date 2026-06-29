@@ -2388,8 +2388,12 @@ function EstructuraInfantil({data, setData, alumnos}){
                 ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                     {alumnosG.map(a=>(
                       <span key={a.id} style={{display:"flex",alignItems:"center",gap:5,
-                        background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 5px",fontSize:12}}>
-                        <FotoAlumno foto={a.foto} nombre={a.nombre} size={22}/>
+                        background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 6px",fontSize:12}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:G.fairway,
+                          color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                          fontSize:10,fontWeight:700,flexShrink:0}}>
+                          {(a.nombre||"?")[0].toUpperCase()}
+                        </div>
                         {a.nombre}
                       </span>
                     ))}
@@ -2454,20 +2458,25 @@ function EstructuraInfantil({data, setData, alumnos}){
       <div style={{maxHeight:220,overflowY:"auto",border:"1px solid #eee",borderRadius:10,padding:8}}>
         {alumnos.length===0
           ? <div style={{textAlign:"center",color:G.soft,padding:20,fontSize:13}}>
-              No hay alumnos infantiles todavía
+              No hay alumnos todavía
             </div>
           : alumnos.map(a=>{
               const sel=(formGrupo.alumnoIds||[]).includes(a.id);
               const catA=GRUPOS_EDAD.find(c=>c.id===a.nivel);
+              const edad = (()=>{ try{ return a.fechaNacimiento ? calcularEdad(a.fechaNacimiento)+"a" : ""; }catch(e){ return ""; }})();
               return <label key={a.id} style={{display:"flex",alignItems:"center",gap:10,
                 background:sel?"#e8f5eb":"#fff",borderRadius:8,padding:"8px 10px",
                 marginBottom:4,cursor:"pointer",
                 border:sel?"2px solid #1a5c2a":"2px solid #f0f0f0"}}>
                 <input type="checkbox" checked={sel} onChange={()=>toggleAlumno(a.id)}
                   style={{width:16,height:16}}/>
-                <FotoAlumno foto={a.foto} nombre={a.nombre} size={26}/>
+                <div style={{width:26,height:26,borderRadius:"50%",background:G.fairway,
+                  color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:11,fontWeight:700,flexShrink:0}}>
+                  {(a.nombre||"?")[0].toUpperCase()}
+                </div>
                 <span style={{fontWeight:600,fontSize:13,flex:1}}>{a.nombre}</span>
-                {a.fechaNacimiento&&<span style={{fontSize:11,color:G.soft}}>{calcularEdad(a.fechaNacimiento)}a</span>}
+                {edad&&<span style={{fontSize:11,color:G.soft}}>{edad}</span>}
                 {catA&&<span style={{fontSize:10,background:catA.color,color:"#fff",
                   borderRadius:6,padding:"1px 6px"}}>{catA.emoji} {catA.nombre}</span>}
               </label>;
