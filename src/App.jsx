@@ -347,7 +347,26 @@ async function notificarClaseAlumnoEmail(clase, alumno){
 // ── Exportar una clase concreta a Google Calendar ─────────────────
 async function exportarClaseAGcal(clase, alumno){
   try {
-    // Cargar GAPI
+    // ── Email automático al profesor ──────────────────────────────
+    try {
+      await cargarEmailJS();
+      if(window.emailjs){
+        await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
+          nombre_alumno: alumno?.nombre || "Sin nombre",
+          email_alumno:  alumno?.email  || "—",
+          fecha_clase:   fmtDate(clase.fecha) || clase.fecha || "—",
+          hora_clase:    clase.horaInicio || clase.hora || "—",
+          duracion_clase: clase.duracion || "60",
+          tipo_clase:    clase.tipo || "Individual",
+          zona_clase:    clase.zona || "—",
+          contenido:     clase.contenido || "—",
+          enlace_portal: "https://jmcaballerofdez.github.io/golf-academia-app/",
+          // El To Email de la plantilla templateProfesor va a jmcaballerofdez@gmail.com
+        }).catch(e=>console.warn("Email profesor clase:",e));
+      }
+    } catch(e){ console.warn("EmailJS profesor:", e); }
+
+    // ── Google Calendar ───────────────────────────────────────────
     if(!window.gapi){
       await new Promise((res,rej)=>{
         const s=document.createElement("script");
@@ -360,7 +379,6 @@ async function exportarClaseAGcal(clase, alumno){
     await window.gapi.client.init({
       discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"]
     });
-    // Cargar GIS
     if(!window.google?.accounts){
       await new Promise((res,rej)=>{
         const s=document.createElement("script");
@@ -369,7 +387,7 @@ async function exportarClaseAGcal(clase, alumno){
         document.head.appendChild(s);
       });
     }
-    const titulo = "🏌️ Clase golf" + (alumno?" — "+alumno.nombre:"");
+    const titulo = "🏌️ Clase — " + (alumno?.nombre||"Alumno") + " · " + (clase.tipo||"Individual");
     const fecha = clase.fecha || today();
     const hora = clase.horaInicio || clase.hora || "10:00";
     const [y,m,d] = fecha.split("-");
@@ -387,15 +405,15 @@ async function exportarClaseAGcal(clase, alumno){
             calendarId: "primary",
             resource: {
               summary: titulo,
-              description: `Academia Golf B\nAlumno: ${alumno?.nombre||""}\nZona: ${clase.zona||""}\nContenido: ${clase.contenido||""}\nDuración: ${clase.duracion||60} min`,
+              description: `Golf Ciudad Real C.D. — José Caballero Golf Academy\n\n👤 Alumno: ${alumno?.nombre||""}\n📍 Zona: ${clase.zona||""}\n📝 Contenido: ${clase.contenido||""}\n⏱️ Duración: ${clase.duracion||60} min`,
               start: {dateTime: ini.toISOString(), timeZone: "Europe/Madrid"},
               end:   {dateTime: fin.toISOString(), timeZone: "Europe/Madrid"},
               colorId: "2",
               reminders: {
                 useDefault: false,
                 overrides: [
-                  {method: "email",  minutes: 1440}, // 24h antes
-                  {method: "popup",  minutes: 60},   // 1h antes
+                  {method: "email",  minutes: 1440},
+                  {method: "popup",  minutes: 60},
                 ]
               }
             }
