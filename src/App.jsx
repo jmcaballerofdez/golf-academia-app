@@ -8378,6 +8378,104 @@ ejecucion:["1min: rotación cervical","1min: cat-cow","1min: hip circles","1min:
 variantes:["5 minutos (versión rápida)","15 minutos (versión completa)","Con énfasis en área más rígida"],
 esquema:"🏆 10min completos · Cabeza→Cadera→Piernas · Pre-ronda perfecta",
 tags:["físico","pre-ronda","activación","rutina completa"]}
+
+,
+// ── EJERCICIOS HABITUALES ADICIONALES ──
+{id:"hab01",cat:"Físico",nivel:"Todos",nombre:"Calentamiento físico de golf — 5 minutos",icono:"🔥",
+duracion:"5 min",material:"Palo de golf",series:"1 ronda completa",
+objetivo:"Activar todo el cuerpo antes de jugar o entrenar en solo 5 minutos.",
+descripcion:"Secuencia rápida y eficaz para calentar las principales cadenas musculares del golf. Imprescindible antes de cualquier sesión o ronda.",
+ejecucion:[
+  "1min — Rotaciones de cuello (5 der + 5 izq) + hombros (10 círculos cada brazo)",
+  "1min — Hip circles: 10 círculos de cadera horario + 10 antihorario",
+  "1min — Cat-cow: 10 repeticiones lentas en el suelo o de pie",
+  "1min — Rotación de tronco con palo en hombros: 15 repeticiones lentas",
+  "1min — Swings progresivos: 5 al 40%, 5 al 70%, 5 al 90%"
+],
+variantes:["10 minutos (doble repetición)","Solo en verde de prácticas (sin suelo)","Con banda elástica añadida"],
+esquema:"🔥 1'Cuello+Hombros → 1'Caderas → 1'Columna → 1'Rotación → 1'Swings prog.",
+tags:["físico","calentamiento","5 minutos","pre-ronda","activación"]},
+
+{id:"hab02",cat:"Juego Largo",nivel:"Todos",nombre:"Valoración inicial — Swing de juego largo",icono:"📋",
+duracion:"30 min",material:"Set completo, campo de prácticas, vídeo",
+objetivo:"Evaluar el nivel actual del swing de juego largo y establecer la línea de trabajo.",
+descripcion:"Sesión de diagnóstico completo del swing con hierros y maderas. Se evalúa la postura, el grip, el plano del swing, el impacto y el follow-through. Se graba en vídeo para el análisis posterior.",
+ejecucion:[
+  "5 bolas con hierro 7 — evaluar postura y grip de partida",
+  "5 bolas con hierro 7 — evaluar el plano del backswing (vídeo lateral)",
+  "5 bolas con hierro 7 — evaluar la posición de impacto (vídeo frontal)",
+  "5 bolas con madera de calle — evaluar la transición",
+  "5 bolas con driver — evaluar el swing completo",
+  "Análisis de vídeo con el alumno: identificar los 2-3 puntos prioritarios"
+],
+variantes:["Solo con hierro 7","Con sensor de swing (Garmin, Trackman)","Comparativa inicio/fin de temporada"],
+esquema:"📋 Hierro 7(postura+plano+impacto) → Madera → Driver → Análisis vídeo → Plan",
+tags:["valoración","swing","juego largo","diagnóstico","inicial"]},
+
+{id:"hab03",cat:"Approach Bajo",nivel:"Todos",nombre:"Valoración inicial — Juego corto",icono:"📋",
+duracion:"30 min",material:"Wedges completos, pelotas, zona de chipping y bunker",
+objetivo:"Evaluar el nivel actual del juego corto y establecer las prioridades de mejora.",
+descripcion:"Sesión de diagnóstico del juego corto: chip, pitch, bunker y sensibilidad. Se evalúa la técnica, la selección de palo y el control de distancias.",
+ejecucion:[
+  "10 chips desde 5m con hierro 8 — evaluar técnica básica y bola primero",
+  "10 pitches desde 20m con 56° — evaluar control de distancia",
+  "10 pitches desde 40m con PW — evaluar la trayectoria",
+  "5 salidas de bunker greenside — evaluar técnica de arena",
+  "5 flops desde hierba alta junto al green — evaluar lob shot",
+  "Análisis con el alumno: up & down % estimado y puntos a mejorar"
+],
+variantes:["Solo chips y pitches (sin bunker)","Con medición de distancias","Comparativa con estadísticas de ronda"],
+esquema:"📋 Chip(5m) → Pitch(20m) → Pitch(40m) → Bunker → Flop → Análisis up&down",
+tags:["valoración","juego corto","chip","pitch","bunker","diagnóstico","inicial"]},
+
+{id:"hab04",cat:"Putt",nivel:"Todos",nombre:"Valoración inicial — Putt",icono:"📋",
+duracion:"25 min",material:"Putter, 6 bolas, tees",
+objetivo:"Evaluar el nivel actual del putting y establecer las prioridades de mejora.",
+descripcion:"Sesión de diagnóstico completo del putting: técnica, lectura de greens, distancias y presión. Se identifican los puntos débiles y se establece el plan de mejora.",
+ejecucion:[
+  "Evaluación técnica: observar el grip, la postura y la posición de los ojos sobre la bola",
+  "10 putts desde 1m — evaluar la consistencia en corto y la cara del putter",
+  "10 putts desde 3m — evaluar la línea y el ritmo",
+  "10 putts desde 6m — evaluar el control de distancia (zona muerta)",
+  "5 putts desde 10m — evaluar el lag putt",
+  "Análisis: número de putts por hoyo estimado y puntos prioritarios"
+],
+variantes:["Solo distancias cortas","Con gate drill (2 tees)","Midiendo el stimpmeter del green"],
+esquema:"📋 Técnica → 1m(consistencia) → 3m(línea) → 6m(distancia) → 10m(lag) → Plan",
+tags:["valoración","putt","diagnóstico","inicial","green"]},
+
+{id:"hab05",cat:"Estrategia",nivel:"Todos",nombre:"Estrategia de juego en el campo",icono:"🗺️",
+duracion:"45 min",material:"Yardage book o app GPS, libreta",
+objetivo:"Diseñar y aplicar un plan estratégico personalizado para una ronda real.",
+descripcion:"Sesión de análisis estratégico del campo hoyo a hoyo. Se trabaja la toma de decisiones, la gestión del riesgo y la selección de objetivos según el nivel del jugador. Puede hacerse en el campo o en sala antes de la ronda.",
+ejecucion:[
+  "Revisar el scorecard: identificar par de cada hoyo, índice de dificultad y distancias",
+  "Hoyo a hoyo: definir la zona objetivo del tee shot según el viento y el OB",
+  "Identificar el mejor ángulo de ataque al green en cada hoyo",
+  "Definir la estrategia en los par 3 (¿centro del green o atacar el hoyo?)",
+  "Identificar los 3 hoyos clave donde se pueden ganar o perder más golpes",
+  "Establecer el par personal según el handicap del jugador"
+],
+variantes:["Solo 9 hoyos","Para competición específica","Con análisis de estadísticas previas en ese campo"],
+esquema:"🗺️ Scorecard → Tee shots → Ángulos green → Par 3 → Hoyos clave → Par personal",
+tags:["estrategia","campo","plan de juego","toma de decisiones","pre-ronda"]},
+
+{id:"hab06",cat:"Juego Largo",nivel:"Intermedio",nombre:"Trabajo de efectos de bola",icono:"↩️",
+duracion:"45 min",material:"Hierro 6 o 7, 20 bolas, campo de prácticas",
+objetivo:"Dominar los efectos de draw y fade de forma controlada y reproducible.",
+descripcion:"Sesión progresiva para aprender a curvar la bola intencionalmente. Primero se entiende el concepto (cara vs camino del swing), luego se practica cada efecto de forma aislada y finalmente se integran en situaciones de juego.",
+ejecucion:[
+  "5 bolas rectas: establecer el golpe de referencia neutro",
+  "5 bolas draw: pies 10° cerrados, cara cuadrada al objetivo, camino inside-out",
+  "5 bolas draw: observar la cantidad de curva y ajustar",
+  "5 bolas fade: pies 10° abiertos, cara cuadrada al objetivo, camino outside-in",
+  "5 bolas fade: observar y ajustar la cantidad de curva",
+  "5 bolas: alternar draw y fade a voluntad sobre el mismo objetivo"
+],
+variantes:["Solo draw","Solo fade","Con hierro 5 o madera","Sobre objetivo a 150m con obstáculo lateral"],
+esquema:"↩️ Neutro×5 → Draw×10(ajustar) → Fade×10(ajustar) → Alternado×5 · Cara vs Camino",
+tags:["juego largo","draw","fade","efectos","curva","control"]}
+];
 ];
 
 // ═══════════════════════════════════════════════════════════════════
