@@ -361,12 +361,12 @@ async function exportarClaseAGcal(clase, alumno){
           zona_clase:    clase.zona || "—",
           contenido:     clase.contenido || "—",
           enlace_portal: "https://jmcaballerofdez.github.io/golf-academia-app/",
-          // El To Email de la plantilla templateProfesor va a jmcaballerofdez@gmail.com
         }).catch(e=>console.warn("Email profesor clase:",e));
       }
     } catch(e){ console.warn("EmailJS profesor:", e); }
 
     // ── Google Calendar ───────────────────────────────────────────
+    // Cargar GAPI
     if(!window.gapi){
       await new Promise((res,rej)=>{
         const s=document.createElement("script");
@@ -379,7 +379,9 @@ async function exportarClaseAGcal(clase, alumno){
     await window.gapi.client.init({
       discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"]
     });
-    if(!window.google?.accounts){
+
+    // Cargar GIS
+    if(!window.google?.accounts?.oauth2){
       await new Promise((res,rej)=>{
         const s=document.createElement("script");
         s.src="https://accounts.google.com/gsi/client";
@@ -387,6 +389,7 @@ async function exportarClaseAGcal(clase, alumno){
         document.head.appendChild(s);
       });
     }
+
     const titulo = "🏌️ Clase — " + (alumno?.nombre||"Alumno") + " · " + (clase.tipo||"Individual");
     const fecha = clase.fecha || today();
     const hora = clase.horaInicio || clase.hora || "10:00";
@@ -395,34 +398,46 @@ async function exportarClaseAGcal(clase, alumno){
     const ini = new Date(Number(y),Number(m)-1,Number(d),hh,mm);
     const fin = new Date(ini.getTime()+(Number(clase.duracion||60))*60*1000);
 
-    const tc = window.google.accounts.oauth2.initTokenClient({
-      client_id: GCAL_CLIENT_ID,
-      scope: GCAL_SCOPES,
-      callback: async (resp) => {
-        if(resp.error){ console.warn("GCal auth error:", resp.error); return; }
-        try {
-          await window.gapi.client.calendar.events.insert({
-            calendarId: "primary",
-            resource: {
-              summary: titulo,
-              description: `Golf Ciudad Real C.D. — José Caballero Golf Academy\n\n👤 Alumno: ${alumno?.nombre||""}\n📍 Zona: ${clase.zona||""}\n📝 Contenido: ${clase.contenido||""}\n⏱️ Duración: ${clase.duracion||60} min`,
-              start: {dateTime: ini.toISOString(), timeZone: "Europe/Madrid"},
-              end:   {dateTime: fin.toISOString(), timeZone: "Europe/Madrid"},
-              colorId: "2",
-              reminders: {
-                useDefault: false,
-                overrides: [
-                  {method: "email",  minutes: 1440},
-                  {method: "popup",  minutes: 60},
-                ]
+    await new Promise((resolve, reject)=>{
+      const tc = window.google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPES,
+        callback: async (resp) => {
+          if(resp.error){
+            console.warn("GCal auth error:", resp.error);
+            reject(new Error(resp.error));
+            return;
+          }
+          try {
+            await window.gapi.client.calendar.events.insert({
+              calendarId: "primary",
+              resource: {
+                summary: titulo,
+                description: `Golf Ciudad Real C.D. — José Caballero Golf Academy\n\n👤 Alumno: ${alumno?.nombre||""}\n📍 Zona: ${clase.zona||""}\n📝 Contenido: ${clase.contenido||""}\n⏱️ Duración: ${clase.duracion||60} min`,
+                start: {dateTime: ini.toISOString(), timeZone: "Europe/Madrid"},
+                end:   {dateTime: fin.toISOString(), timeZone: "Europe/Madrid"},
+                colorId: "2",
+                reminders: {
+                  useDefault: false,
+                  overrides: [
+                    {method: "email",  minutes: 1440},
+                    {method: "popup",  minutes: 60},
+                  ]
+                }
               }
-            }
-          });
-          console.log("✅ Clase añadida a Google Calendar");
-        } catch(e){ console.warn("GCal insert error:", e); }
-      }
+            });
+            console.log("✅ Clase añadida a Google Calendar");
+            resolve();
+          } catch(e){
+            console.warn("GCal insert error:", e);
+            reject(e);
+          }
+        }
+      });
+      // Solicitar token — siempre renueva para evitar caducidad
+      tc.requestAccessToken({prompt: "consent"});
     });
-    tc.requestAccessToken({prompt: ""});
+
   } catch(e){ console.warn("exportarClaseAGcal error:", e); }
 }
 
