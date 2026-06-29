@@ -3851,10 +3851,11 @@ function ModEstadisticas({data,setData}){
       {/* ── Entrada resumen total ── */}
       {modoEntrada==="resumen"&&<div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
-          {[["golpes","Golpes totales"],["putts","Putts totales"],["fairwaysPorcentaje","Fairways %"],
-            ["greensRegulacion","GIR %"],["bunkers","Penalizaciones"],["handicapExacto","Hcp exacto"],["handicapJuego","Hcp juego"]].map(([key,label])=>(
+          {[["golpes","Golpes totales","number"],["putts","Putts totales","number"],
+            ["fairwaysPorcentaje","Fairways %","number"],["greensRegulacion","GIR %","number"],
+            ["bunkers","Penalizaciones","number"]].map(([key,label,type])=>(
             <Field key={key} label={label}>
-              <Input type="number" value={form[key]||""} onChange={v=>setForm(f=>({...f,[key]:v}))} placeholder="—"/>
+              <Input type={type} value={form[key]||""} onChange={v=>setForm(f=>({...f,[key]:v}))} placeholder="—"/>
             </Field>
           ))}
         </div>
@@ -3871,8 +3872,11 @@ function ModEstadisticas({data,setData}){
             ))}
           </select>
         </Field>
-        <Field label="Hcp exacto">
-          <Input type="number" value={form.handicapExacto||""} onChange={v=>setForm(f=>({...f,handicapExacto:v}))} placeholder="—"/>
+        <Field label="Hcp exacto (ej: 14,3)">
+          <Input type="text" value={form.handicapExacto||""} onChange={v=>setForm(f=>({...f,handicapExacto:v}))} placeholder="Ej: 14,3"/>
+        </Field>
+        <Field label="Hcp de juego (-8 a 60)">
+          <Input type="number" value={form.handicapJuego||""} onChange={v=>setForm(f=>({...f,handicapJuego:v}))} placeholder="0" min="-8" max="60" step="1"/>
         </Field>
       </div>
       <Field label="Notas">
@@ -5212,6 +5216,8 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const [modalSolicitud,setModalSolicitud]=useState(false);
   const [formSolicitud,setFormSolicitud]=useState({fecha:"",hora:"10:00",tipo:"Individual",zona:"Campo de prácticas",notas:""});
   const [solicitudEnviada,setSolicitudEnviada]=useState(false);
+  const [verModalStat,setVerModalStat]=useState(false);
+  const [statForm,setStatForm]=useState({fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:""});
   const alumno=data.alumnos.find(a=>a.id===alumnoId);
   const analisis=(data.analisis||[]).filter(a=>a.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const estadisticas=(data.estadisticas||[]).filter(s=>s.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -5609,20 +5615,127 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
       {/* STATS */}
       {tab==="stats"&&<div>
-        <h3 style={{margin:"0 0 14px",color:G.fairway}}>📊 Mis estadísticas</h3>
-        {estadisticas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Sin rondas registradas todavía.</div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <h3 style={{margin:0,color:G.fairway}}>📊 Mis estadísticas</h3>
+          <Btn onClick={()=>setVerModalStat(true)}>+ Nueva ronda</Btn>
+        </div>
+        {estadisticas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>
+          Sin rondas registradas todavía. ¡Pulsa "+ Nueva ronda" para añadir la primera!
+        </div>}
         {estadisticas.map(s=>(
           <Card key={s.id} style={{marginBottom:10}}>
-            <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {s.fecha} · {s.hoyos} hoyos</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
-              {[["Golpes",s.golpes,G.fairway],["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.sky],["Putts",s.putts,G.flag],["Hcp",s.handicap,G.danger]].map(([k,v,c])=>(
-                <div key={k} style={{textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div><div style={{fontSize:11,color:G.soft}}>{k}</div></div>
+            <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {fmtDate(s.fecha)} · {s.hoyos} hoyos</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+              {[["Golpes",s.golpes,G.fairway],["Putts",s.putts,G.sky],
+                ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
+                ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
+                ["Hcp Exacto",s.handicapExacto,G.danger],["Hcp Juego",s.handicapJuego,"#e67e22"]
+              ].map(([k,v,c])=>(
+                <div key={k} style={{textAlign:"center",minWidth:50}}>
+                  <div style={{fontSize:16,fontWeight:800,color:c}}>{v||"—"}</div>
+                  <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                </div>
               ))}
             </div>
-            {s.palo&&s.distancia&&<div style={{fontSize:12,color:G.soft,marginTop:6}}>🏌️ {s.palo}: {s.distancia}m</div>}
-            {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:4}}>{s.notas}</div>}
+            {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>"{s.notas}"</div>}
+            {!s.enviadoProfesor&&<div style={{marginTop:8}}>
+              <Btn small color="sky" onClick={()=>{
+                const updated=(data.estadisticas||[]).map(x=>x.id===s.id?{...x,enviadoProfesor:true,fechaEnvio:new Date().toISOString()}:x);
+                setData({...data,estadisticas:updated});
+                // Notificación al profesor
+                const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(s.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
+                setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
+                alert("✅ Estadísticas enviadas a tu profesor.");
+              }}>📤 Enviar al profesor</Btn>
+            </div>}
+            {s.enviadoProfesor&&<div style={{fontSize:11,color:G.grass,marginTop:6,fontWeight:600}}>✅ Enviadas al profesor el {fmtDate(s.fechaEnvio?.slice(0,10)||"")}</div>}
           </Card>
         ))}
+
+        {/* Modal nueva ronda alumno */}
+        {verModalStat&&<Modal title="📊 Registrar nueva ronda" onClose={()=>setVerModalStat(false)} wide>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Field label="Fecha *">
+              <Input type="date" value={statForm.fecha||today()} onChange={v=>setStatForm(f=>({...f,fecha:v}))}/>
+            </Field>
+            <Field label="Hoyos">
+              <div style={{display:"flex",gap:6}}>
+                {[9,18].map(n=>(
+                  <button key={n} type="button" onClick={()=>setStatForm(f=>({...f,hoyos:String(n)}))}
+                    style={{flex:1,background:statForm.hoyos===String(n)?G.fairway:"#f0f0f0",
+                      color:statForm.hoyos===String(n)?"#fff":"#555",border:"none",
+                      borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                    {n}H
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+          <Field label="Campo (opcional)">
+            <Input value={statForm.campo||""} onChange={v=>setStatForm(f=>({...f,campo:v}))} placeholder="Nombre del campo"/>
+          </Field>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
+            {[["golpes","Golpes totales"],["putts","Putts"],["fairwaysPorcentaje","Fairways %"],
+              ["greensRegulacion","GIR %"],["bunkers","Penalizaciones"]].map(([key,label])=>(
+              <Field key={key} label={label}>
+                <Input type="number" value={statForm[key]||""} onChange={v=>setStatForm(f=>({...f,[key]:v}))} placeholder="—"/>
+              </Field>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Field label="Hcp exacto (ej: 14,3)">
+              <Input type="text" value={statForm.handicapExacto||""} onChange={v=>setStatForm(f=>({...f,handicapExacto:v}))} placeholder="Ej: 14,3"/>
+            </Field>
+            <Field label="Hcp de juego (-8 a 60)">
+              <Input type="number" value={statForm.handicapJuego||""} onChange={v=>setStatForm(f=>({...f,handicapJuego:v}))} placeholder="0" min="-8" max="60" step="1"/>
+            </Field>
+          </div>
+          <Field label="Palo desde el tee">
+            <select value={statForm.paloTee||"Driver"} onChange={e=>setStatForm(f=>({...f,paloTee:e.target.value}))}
+              style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+              {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>(
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Fallo desde el tee">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {FALLO_TEE_OPTS.map(({val,icon,label})=>(
+                <button key={val} type="button"
+                  onClick={()=>setStatForm(f=>({...f,falloTee:f.falloTee===val?"":val}))}
+                  style={{flex:1,minWidth:52,background:statForm.falloTee===val?G.fairway:"#f0f0f0",
+                    color:statForm.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
+                    padding:"7px 4px",fontSize:11,fontWeight:700,cursor:"pointer",
+                    display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  <span style={{fontSize:16}}>{icon}</span>{label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Notas">
+            <Textarea value={statForm.notas||""} onChange={v=>setStatForm(f=>({...f,notas:v}))} rows={2} placeholder="Condiciones, sensaciones..."/>
+          </Field>
+          <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap"}}>
+            <Btn color="secondary" onClick={()=>setVerModalStat(false)}>Cancelar</Btn>
+            <Btn color="secondary" onClick={()=>{
+              if(!statForm.fecha) return;
+              const nueva={...statForm,alumnoId,id:uid(),enviadoProfesor:false};
+              setData({...data,estadisticas:[...(data.estadisticas||[]),nueva]});
+              setVerModalStat(false);
+              setStatForm({fecha:today(),hoyos:"18"});
+            }}>💾 Guardar</Btn>
+            <Btn onClick={()=>{
+              if(!statForm.fecha) return;
+              const nueva={...statForm,alumnoId,id:uid(),enviadoProfesor:true,fechaEnvio:new Date().toISOString()};
+              setData({...data,estadisticas:[...(data.estadisticas||[]),nueva]});
+              const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(statForm.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
+              setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
+              setVerModalStat(false);
+              setStatForm({fecha:today(),hoyos:"18"});
+              alert("✅ Ronda guardada y enviada a tu profesor.");
+            }}>📤 Guardar y enviar al profesor</Btn>
+          </div>
+        </Modal>}
       </div>}
     </div>
   </div>;
@@ -12716,7 +12829,10 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>{nombrePanel}</div>
             </div>
           </div>
-          <NotifBell notifs={notifs} pendientesCount={pendientesCount} mensajesNoLeidos={(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length}/>
+          <NotifBell 
+            notifs={[...notifs,...(data.notificacionesAlumno||[]).filter(n=>!n.leida)]} 
+            pendientesCount={pendientesCount} 
+            mensajesNoLeidos={(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length}/>
           <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
