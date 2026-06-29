@@ -8377,9 +8377,7 @@ descripcion:"Secuencia de activación completa: 1min rotación cervical, 1min ca
 ejecucion:["1min: rotación cervical","1min: cat-cow","1min: hip circles","1min: hip hinge","1min: rotación torácica","1min: hip flexor stretch","1min: equilibrio un pie","1min: rotación con palo","2min: swing suave progresivo"],
 variantes:["5 minutos (versión rápida)","15 minutos (versión completa)","Con énfasis en área más rígida"],
 esquema:"🏆 10min completos · Cabeza→Cadera→Piernas · Pre-ronda perfecta",
-tags:["físico","pre-ronda","activación","rutina completa"]}
-
-,
+tags:["físico","pre-ronda","activación","rutina completa"]},
 // ── EJERCICIOS HABITUALES ADICIONALES ──
 {id:"hab01",cat:"Físico",nivel:"Todos",nombre:"Calentamiento físico de golf — 5 minutos",icono:"🔥",
 duracion:"5 min",material:"Palo de golf",series:"1 ronda completa",
@@ -8475,7 +8473,6 @@ ejecucion:[
 variantes:["Solo draw","Solo fade","Con hierro 5 o madera","Sobre objetivo a 150m con obstáculo lateral"],
 esquema:"↩️ Neutro×5 → Draw×10(ajustar) → Fade×10(ajustar) → Alternado×5 · Cara vs Camino",
 tags:["juego largo","draw","fade","efectos","curva","control"]}
-];
 ];
 
 // ═══════════════════════════════════════════════════════════════════
