@@ -5297,7 +5297,7 @@ function InformePreviewAlumno({rpt, data}){
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8}}>
             {(rpt.imagenesData||[]).map((img,i)=>(
               <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
-                <img src={img.base64} alt={img.caption||""} style={{width:"100%",height:120,objectFit:"cover"}}/>
+                <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
                 {img.caption&&<div style={{padding:"5px 8px",fontSize:11,color:"#555",background:"#fafafa"}}>
                   {img.caption}
                 </div>}
@@ -12120,7 +12120,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
             {(rpt.imagenesData||[]).map((img,i)=>(
               <div key={i} style={{background:"#fff",borderRadius:12,overflow:"hidden",
                 boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>
-                <img src={img.base64} alt="" style={{width:"100%",height:160,objectFit:"cover"}}/>
+                <img src={img.base64} alt="" style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
                 <div style={{padding:10}}>
                   <Input value={img.caption||""} onChange={v=>updCaption(i,v)}
                     placeholder="Descripción de la foto..."/>
@@ -12369,7 +12369,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
           {(rpt.imagenesData||[]).map((img,i)=>(
             <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
-              <img src={img.base64} alt={img.caption||""} style={{width:"100%",height:140,objectFit:"cover"}}/>
+              <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
               {img.caption&&<div style={{padding:"6px 10px",fontSize:12,color:"#555",background:"#fafafa"}}>
                 {img.caption}
               </div>}
