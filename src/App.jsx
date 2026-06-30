@@ -5401,6 +5401,11 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const [solicitudEnviada,setSolicitudEnviada]=useState(false);
   const [verModalStat,setVerModalStat]=useState(false);
   const [statForm,setStatForm]=useState({fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:""});
+  const [vistaStatAlumno,setVistaStatAlumno]=useState("lista");
+  const [verDetalleAlumno,setVerDetalleAlumno]=useState(null);
+  const [hoyosAlumno,setHoyosAlumno]=useState(initHoyos(18));
+  const [hoyoActualAlumno,setHoyoActualAlumno]=useState(0);
+  const [modoEntradaAlumno,setModoEntradaAlumno]=useState("hoyo");
   const alumno=data.alumnos.find(a=>a.id===alumnoId);
   const analisis=(data.analisis||[]).filter(a=>a.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const estadisticas=(data.estadisticas||[]).filter(s=>s.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -5798,42 +5803,173 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
       {/* STATS */}
       {tab==="stats"&&<div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
           <h3 style={{margin:0,color:G.fairway}}>📊 Mis estadísticas</h3>
-          <Btn onClick={()=>setVerModalStat(true)}>+ Nueva ronda</Btn>
+          <div style={{display:"flex",gap:6}}>
+            {[["lista","📋 Rondas"],["informe","📊 Informe"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setVistaStatAlumno(id)}
+                style={{background:vistaStatAlumno===id?G.fairway:"#f0f0f0",color:vistaStatAlumno===id?"#fff":"#555",
+                  border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                {label}
+              </button>
+            ))}
+            <Btn small onClick={()=>{setStatForm({fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:""});setHoyosAlumno(initHoyos(18));setHoyoActualAlumno(0);setModoEntradaAlumno("hoyo");setVerModalStat(true);}}>+ Nueva ronda</Btn>
+          </div>
         </div>
+
         {estadisticas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>
           Sin rondas registradas todavía. ¡Pulsa "+ Nueva ronda" para añadir la primera!
         </div>}
-        {estadisticas.map(s=>(
-          <Card key={s.id} style={{marginBottom:10}}>
-            <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {fmtDate(s.fecha)} · {s.hoyos} hoyos</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
-              {[["Golpes",s.golpes,G.fairway],["Putts",s.putts,G.sky],
-                ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
-                ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
-                ["Hcp Exacto",s.handicapExacto,G.danger],["Hcp Juego",s.handicapJuego,"#e67e22"]
-              ].map(([k,v,c])=>(
-                <div key={k} style={{textAlign:"center",minWidth:50}}>
-                  <div style={{fontSize:16,fontWeight:800,color:c}}>{v||"—"}</div>
-                  <div style={{fontSize:10,color:G.soft}}>{k}</div>
-                </div>
-              ))}
+
+        {/* ── VISTA LISTA ── */}
+        {vistaStatAlumno==="lista"&&estadisticas.length>0&&<div>
+          {/* Sparklines */}
+          {estadisticas.length>1&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:8,marginBottom:14}}>
+            {[
+              ["Golpes",estadisticas.slice(0,10).reverse().map(s=>s.golpes),G.fairway],
+              ["Putts",estadisticas.slice(0,10).reverse().map(s=>s.putts),G.sky],
+              ["Fairways %",estadisticas.slice(0,10).reverse().map(s=>s.fairwaysPorcentaje),G.grass],
+              ["GIR %",estadisticas.slice(0,10).reverse().map(s=>s.greensRegulacion),G.flag],
+            ].map(([label,vals,color])=>(
+              <Card key={label} style={{padding:8}}>
+                <div style={{fontSize:9,color:G.soft,marginBottom:2}}>{label}</div>
+                <Spark values={vals} color={color}/>
+                <div style={{fontSize:13,fontWeight:800,color,marginTop:2}}>{vals.filter(Boolean).at(-1)||"—"}</div>
+              </Card>
+            ))}
+          </div>}
+
+          {estadisticas.map(s=>(
+            <Card key={s.id} style={{marginBottom:10,cursor:"pointer"}} onClick={()=>setVerDetalleAlumno(verDetalleAlumno===s.id?null:s.id)}>
+              <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {fmtDate(s.fecha)} · {s.hoyos} hoyos {s.campo&&`· ${s.campo}`}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                {[["Golpes",s.golpes,G.fairway],["Putts",s.putts,G.sky],
+                  ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
+                  ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
+                  ["Hcp Exacto",s.handicapExacto,G.danger],["Hcp Juego",s.handicapJuego,"#e67e22"],
+                  ["Fallo Tee",falloTeeLabel(s.falloTee),G.flag],
+                ].map(([k,v,c])=>(
+                  <div key={k} style={{textAlign:"center",minWidth:50}}>
+                    <div style={{fontSize:16,fontWeight:800,color:c}}>{v||"—"}</div>
+                    <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                  </div>
+                ))}
+              </div>
+              {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>"{s.notas}"</div>}
+
+              {/* Detalle hoyo a hoyo */}
+              {verDetalleAlumno===s.id&&s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{marginTop:12,overflowX:"auto"}} onClick={e=>e.stopPropagation()}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead>
+                    <tr style={{background:G.mist}}>
+                      {["Hoyo","Par","Golpes","Putts","FW","GIR","Pen.","Fallo Tee"].map(h=>(
+                        <th key={h} style={{padding:"4px 6px",textAlign:"center",color:G.soft,fontWeight:600}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.hoyosDetalle.map((h,i)=>{
+                      const par=PARES_CAMPO[i]||4;
+                      const golpes=Number(h.golpes)||0;
+                      const diff=golpes-par;
+                      return <tr key={i} style={{borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa"}}>
+                        <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:G.fairway}}>{h.n}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.soft}}>{par}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,
+                          background:golpes>0?(diff<0?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0"):"",
+                          borderRadius:4,color:diff<0?G.grass:diff>0?"#c0392b":G.ink}}>
+                          {h.golpes||"—"}{golpes>0&&diff!==0&&<span style={{fontSize:9}}>{diff>0?`+${diff}`:diff}</span>}
+                        </td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.putts||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.fairway==="si"?"✅":h.fairway==="no"?"❌":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.gir==="si"?"✅":h.gir==="no"?"❌":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.penalizaciones||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{falloTeeLabel(h.falloTee)}</td>
+                      </tr>;
+                    })}
+                    <tr style={{background:G.mist,fontWeight:700}}>
+                      <td colSpan={2} style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>TOTAL</td>
+                      <td style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>{s.golpes||"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center"}}>{s.putts||"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center",color:G.grass}}>{s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center",color:G.flag}}>{s.greensRegulacion?s.greensRegulacion+"%":"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center"}}>{s.bunkers||"—"}</td>
+                      <td/>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>}
+              {s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{fontSize:11,color:G.sky,marginTop:4}}>
+                {verDetalleAlumno===s.id?"▲ Ocultar detalle":"▼ Ver hoyo a hoyo"}
+              </div>}
+
+              {!s.enviadoProfesor&&<div style={{marginTop:8}} onClick={e=>e.stopPropagation()}>
+                <Btn small color="sky" onClick={()=>{
+                  const updated=(data.estadisticas||[]).map(x=>x.id===s.id?{...x,enviadoProfesor:true,fechaEnvio:new Date().toISOString()}:x);
+                  setData({...data,estadisticas:updated});
+                  const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(s.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
+                  setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
+                  alert("✅ Estadísticas enviadas a tu profesor.");
+                }}>📤 Enviar al profesor</Btn>
+              </div>}
+              {s.enviadoProfesor&&<div style={{fontSize:11,color:G.grass,marginTop:6,fontWeight:600}}>✅ Enviadas al profesor el {fmtDate(s.fechaEnvio?.slice(0,10)||"")}</div>}
+            </Card>
+          ))}
+        </div>}
+
+        {/* ── VISTA INFORME ── */}
+        {vistaStatAlumno==="informe"&&<div>
+          {estadisticas.length<2
+            ?<div style={{textAlign:"center",padding:30,background:G.mist,borderRadius:10,color:G.soft}}>
+              Necesitas al menos 2 rondas para generar el informe.
             </div>
-            {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>"{s.notas}"</div>}
-            {!s.enviadoProfesor&&<div style={{marginTop:8}}>
-              <Btn small color="sky" onClick={()=>{
-                const updated=(data.estadisticas||[]).map(x=>x.id===s.id?{...x,enviadoProfesor:true,fechaEnvio:new Date().toISOString()}:x);
-                setData({...data,estadisticas:updated});
-                // Notificación al profesor
-                const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(s.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
-                setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
-                alert("✅ Estadísticas enviadas a tu profesor.");
-              }}>📤 Enviar al profesor</Btn>
-            </div>}
-            {s.enviadoProfesor&&<div style={{fontSize:11,color:G.grass,marginTop:6,fontWeight:600}}>✅ Enviadas al profesor el {fmtDate(s.fechaEnvio?.slice(0,10)||"")}</div>}
-          </Card>
-        ))}
+            :(()=>{
+              const vals=estadisticas;
+              const avg=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; };
+              const best=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?Math.min(...v):"—"; };
+              const porRonda=[...vals].reverse().map(s=>({fecha:s.fecha,golpes:Number(s.golpes)||0,putts:Number(s.putts)||0,fairways:Number(s.fairwaysPorcentaje)||0,gir:Number(s.greensRegulacion)||0}));
+              return <div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:8,marginBottom:16}}>
+                  {[["Media Golpes",avg("golpes"),G.fairway,"⛳"],["Mejor Ronda",best("golpes"),G.grass,"🏆"],
+                    ["Media Putts",avg("putts"),G.sky,"🎯"],["Media FW %",avg("fairwaysPorcentaje")+"%",G.grass,"↑"],
+                    ["Media GIR %",avg("greensRegulacion")+"%",G.flag,"🟢"],["Rondas",vals.length,G.ink,"📋"],
+                  ].map(([label,val,color,icon])=>(
+                    <Card key={label} style={{textAlign:"center",padding:8}}>
+                      <div style={{fontSize:14}}>{icon}</div>
+                      <div style={{fontSize:16,fontWeight:800,color}}>{val}</div>
+                      <div style={{fontSize:9,color:G.soft,marginTop:2}}>{label}</div>
+                    </Card>
+                  ))}
+                </div>
+                <Card style={{marginBottom:10}}>
+                  <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:8}}>GOLPES POR RONDA</div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:4,height:70,paddingBottom:4}}>
+                    {porRonda.map((r,i)=>{
+                      const mx=Math.max(...porRonda.map(x=>x.golpes));
+                      const mn=Math.min(...porRonda.filter(x=>x.golpes).map(x=>x.golpes));
+                      const h=r.golpes>0?Math.round(16+((r.golpes-mn)/(mx-mn||1))*50):4;
+                      return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                        <div style={{fontSize:8,color:G.fairway,fontWeight:700}}>{r.golpes||""}</div>
+                        <div style={{width:"100%",background:G.fairway,height:h,borderRadius:"3px 3px 0 0"}}/>
+                        <div style={{fontSize:7,color:G.soft}}>{r.fecha?.slice(5)}</div>
+                      </div>;
+                    })}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:10}}>PORCENTAJES POR RONDA</div>
+                  {porRonda.map((r,i)=>(
+                    <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<porRonda.length-1?"1px solid #f0f0f0":"none"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:G.ink,marginBottom:6}}>📅 {r.fecha}</div>
+                      <BarChart pct={r.fairways} color={G.grass} label="Fairways"/>
+                      <BarChart pct={r.gir} color={G.flag} label="GIR"/>
+                    </div>
+                  ))}
+                </Card>
+              </div>;
+            })()
+          }
+        </div>}
 
         {/* Modal nueva ronda alumno */}
         {verModalStat&&<Modal title="📊 Registrar nueva ronda" onClose={()=>setVerModalStat(false)} wide>
@@ -5844,7 +5980,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
             <Field label="Hoyos">
               <div style={{display:"flex",gap:6}}>
                 {[9,18].map(n=>(
-                  <button key={n} type="button" onClick={()=>setStatForm(f=>({...f,hoyos:String(n)}))}
+                  <button key={n} type="button" onClick={()=>{setStatForm(f=>({...f,hoyos:String(n)}));setHoyosAlumno(initHoyos(n));setHoyoActualAlumno(0);}}
                     style={{flex:1,background:statForm.hoyos===String(n)?G.fairway:"#f0f0f0",
                       color:statForm.hoyos===String(n)?"#fff":"#555",border:"none",
                       borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
@@ -5857,14 +5993,121 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           <Field label="Campo (opcional)">
             <Input value={statForm.campo||""} onChange={v=>setStatForm(f=>({...f,campo:v}))} placeholder="Nombre del campo"/>
           </Field>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
+
+          {/* Modo entrada */}
+          <div style={{display:"flex",gap:6,marginBottom:14}}>
+            {[["hoyo","⛳ Hoyo a hoyo"],["resumen","📊 Resumen total"]].map(([id,label])=>(
+              <button key={id} type="button" onClick={()=>setModoEntradaAlumno(id)}
+                style={{flex:1,background:modoEntradaAlumno===id?G.fairway:"#f0f0f0",
+                  color:modoEntradaAlumno===id?"#fff":"#555",border:"none",borderRadius:8,
+                  padding:"9px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Entrada hoyo a hoyo ── */}
+          {modoEntradaAlumno==="hoyo"&&<div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+              {hoyosAlumno.map((h,i)=>{
+                const ok=h.golpes&&h.putts;
+                const par=PARES_CAMPO[i]||4;
+                const diff=Number(h.golpes)-par;
+                const color=!h.golpes?"#e0e0e0":diff<0?G.grass:diff===0?G.fairway:diff===1?"#e67e22":"#c0392b";
+                return <button key={i} type="button" onClick={()=>setHoyoActualAlumno(i)}
+                  style={{minWidth:32,height:32,background:hoyoActualAlumno===i?G.fairway:ok?color:"#f0f0f0",
+                    color:hoyoActualAlumno===i||ok?"#fff":"#888",border:"none",borderRadius:8,
+                    fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  {i+1}
+                </button>;
+              })}
+            </div>
+
+            {(()=>{
+              const h=hoyosAlumno[hoyoActualAlumno];
+              const par=PARES_CAMPO[hoyoActualAlumno]||4;
+              return <div style={{background:"#f8fdf8",borderRadius:12,padding:12,marginBottom:10,border:`2px solid ${G.grass}`}}>
+                <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>Hoyo {hoyoActualAlumno+1} · Par {par}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <Field label="Golpes">
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,golpes:Math.max(1,Number(x.golpes||par)-1)}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#c0392b"}}>{h.golpes||par}</div>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,golpes:Number(x.golpes||par)+1}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                    </div>
+                  </Field>
+                  <Field label="Putts">
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,putts:Math.max(0,Number(x.putts||2)-1)}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:G.sky}}>{h.putts||"—"}</div>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,putts:Number(x.putts||1)+1}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                    </div>
+                  </Field>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <Field label="Fairway">
+                    <div style={{display:"flex",gap:5}}>
+                      {[["si","✅"],["no","❌"],["","-"]].map(([v,l])=>(
+                        <button key={v} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,fairway:v}:x))}
+                          style={{flex:1,background:h.fairway===v?G.fairway:"#f0f0f0",color:h.fairway===v?"#fff":"#555",
+                            border:"none",borderRadius:8,padding:"6px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label="GIR">
+                    <div style={{display:"flex",gap:5}}>
+                      {[["si","✅"],["no","❌"],["","-"]].map(([v,l])=>(
+                        <button key={v} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,gir:v}:x))}
+                          style={{flex:1,background:h.gir===v?G.fairway:"#f0f0f0",color:h.gir===v?"#fff":"#555",
+                            border:"none",borderRadius:8,padding:"6px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                  <Field label="Penalizaciones">
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,penalizaciones:Math.max(0,Number(x.penalizaciones||0)-1)}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:18,fontWeight:800,color:"#c0392b"}}>{h.penalizaciones||0}</div>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,penalizaciones:Number(x.penalizaciones||0)+1}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                    </div>
+                  </Field>
+                  <Field label="Fallo tee">
+                    <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                      {FALLO_TEE_OPTS.map(({val,icon})=>(
+                        <button key={val} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,falloTee:x.falloTee===val?"":val}:x))}
+                          style={{flex:1,minWidth:30,background:h.falloTee===val?G.fairway:"#f0f0f0",
+                            color:h.falloTee===val?"#fff":"#555",border:"none",borderRadius:6,
+                            padding:"5px 2px",fontSize:13,cursor:"pointer"}}>{icon}</button>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
+                  <Btn small color="secondary" onClick={()=>setHoyoActualAlumno(Math.max(0,hoyoActualAlumno-1))} disabled={hoyoActualAlumno===0}>← Ant</Btn>
+                  <div style={{fontSize:11,color:G.soft,alignSelf:"center"}}>{hoyosAlumno.filter(h=>h.golpes).length}/{hoyosAlumno.length}</div>
+                  <Btn small onClick={()=>setHoyoActualAlumno(Math.min(hoyosAlumno.length-1,hoyoActualAlumno+1))} disabled={hoyoActualAlumno===hoyosAlumno.length-1}>Sig →</Btn>
+                </div>
+              </div>;
+            })()}
+          </div>}
+
+          {/* ── Entrada resumen ── */}
+          {modoEntradaAlumno==="resumen"&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
             {[["golpes","Golpes totales"],["putts","Putts"],["fairwaysPorcentaje","Fairways %"],
               ["greensRegulacion","GIR %"],["bunkers","Penalizaciones"]].map(([key,label])=>(
               <Field key={key} label={label}>
                 <Input type="number" value={statForm[key]||""} onChange={v=>setStatForm(f=>({...f,[key]:v}))} placeholder="—"/>
               </Field>
             ))}
-          </div>
+          </div>}
+
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <Field label="Hcp exacto (ej: 14,3)">
               <Input type="text" value={statForm.handicapExacto||""} onChange={v=>setStatForm(f=>({...f,handicapExacto:v}))} placeholder="Ej: 14,3"/>
@@ -5881,7 +6124,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
               ))}
             </select>
           </Field>
-          <Field label="Fallo desde el tee">
+          {modoEntradaAlumno==="resumen"&&<Field label="Fallo desde el tee">
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               {FALLO_TEE_OPTS.map(({val,icon,label})=>(
                 <button key={val} type="button"
@@ -5894,7 +6137,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                 </button>
               ))}
             </div>
-          </Field>
+          </Field>}
           <Field label="Notas">
             <Textarea value={statForm.notas||""} onChange={v=>setStatForm(f=>({...f,notas:v}))} rows={2} placeholder="Condiciones, sensaciones..."/>
           </Field>
@@ -5902,14 +6145,32 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
             <Btn color="secondary" onClick={()=>setVerModalStat(false)}>Cancelar</Btn>
             <Btn color="secondary" onClick={()=>{
               if(!statForm.fecha) return;
-              const nueva={...statForm,alumnoId,id:uid(),enviadoProfesor:false};
+              const totales=modoEntradaAlumno==="hoyo"?(()=>{
+                const golpesTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.golpes)||0),0);
+                const puttsTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.putts)||0),0);
+                const fwOk=hoyosAlumno.filter(h=>h.fairway==="si").length;
+                const girOk=hoyosAlumno.filter(h=>h.gir==="si").length;
+                const penTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.penalizaciones)||0),0);
+                const numH=hoyosAlumno.length;
+                return {golpes:golpesTot||"",putts:puttsTot||"",fairwaysPorcentaje:numH>0?Math.round((fwOk/numH)*100):"",greensRegulacion:numH>0?Math.round((girOk/numH)*100):"",bunkers:penTot||""};
+              })():{};
+              const nueva={...statForm,...totales,alumnoId,id:uid(),enviadoProfesor:false,hoyosDetalle:modoEntradaAlumno==="hoyo"?hoyosAlumno:[]};
               setData({...data,estadisticas:[...(data.estadisticas||[]),nueva]});
               setVerModalStat(false);
               setStatForm({fecha:today(),hoyos:"18"});
             }}>💾 Guardar</Btn>
             <Btn onClick={()=>{
               if(!statForm.fecha) return;
-              const nueva={...statForm,alumnoId,id:uid(),enviadoProfesor:true,fechaEnvio:new Date().toISOString()};
+              const totales=modoEntradaAlumno==="hoyo"?(()=>{
+                const golpesTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.golpes)||0),0);
+                const puttsTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.putts)||0),0);
+                const fwOk=hoyosAlumno.filter(h=>h.fairway==="si").length;
+                const girOk=hoyosAlumno.filter(h=>h.gir==="si").length;
+                const penTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.penalizaciones)||0),0);
+                const numH=hoyosAlumno.length;
+                return {golpes:golpesTot||"",putts:puttsTot||"",fairwaysPorcentaje:numH>0?Math.round((fwOk/numH)*100):"",greensRegulacion:numH>0?Math.round((girOk/numH)*100):"",bunkers:penTot||""};
+              })():{};
+              const nueva={...statForm,...totales,alumnoId,id:uid(),enviadoProfesor:true,fechaEnvio:new Date().toISOString(),hoyosDetalle:modoEntradaAlumno==="hoyo"?hoyosAlumno:[]};
               setData({...data,estadisticas:[...(data.estadisticas||[]),nueva]});
               const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(statForm.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
               setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
