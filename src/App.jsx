@@ -5175,38 +5175,221 @@ function CambiarPinAlumno({data,setData,alumnoId}){
 // ── Vista simplificada del informe para el alumno ────────────────
 function InformePreviewAlumno({rpt, data}){
   const [abierto, setAbierto] = useState(false);
+  const alumno = (data.alumnos||[]).find(a=>a.id===rpt.alumnoId);
+  const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
+    (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
+  const secs = rpt.secciones||[];
 
   function descargarPDF(){
-    const alumno = (data.alumnos||[]).find(a=>a.id===rpt.alumnoId);
     generarPDFInforme(rpt, alumno?.nombre||"alumno");
   }
+
+  const SecTitle=({children,color=G.fairway})=><div style={{
+    background:`linear-gradient(135deg,${color},${color}dd)`,
+    color:"#fff",borderRadius:"10px 10px 0 0",padding:"10px 18px",
+    fontWeight:800,fontSize:14,marginTop:16}}>
+    {children}
+  </div>;
+
+  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #e0eee0",
+    borderTop:"none",borderRadius:"0 0 10px 10px",padding:14,marginBottom:4}}>
+    {children}
+  </div>;
 
   return <div>
     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
       <Btn small color="sky" onClick={()=>setAbierto(!abierto)}>{abierto?"▲ Cerrar":"👁 Ver informe"}</Btn>
       <Btn small color="secondary" onClick={descargarPDF}>⬇️ Descargar PDF</Btn>
     </div>
-    {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12,padding:16,background:G.mist,borderRadius:10,fontSize:13}}>
-      <div style={{fontWeight:800,fontSize:16,color:G.fairway,marginBottom:8}}>{rpt.titulo}</div>
-      {rpt.resumenTexto&&<div style={{marginBottom:10}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📝 Resumen</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.resumenTexto}</p>
+
+    {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12}}>
+
+      {/* ── PORTADA ── */}
+      {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
+        borderRadius:14,padding:"24px 20px",marginBottom:4,textAlign:"center",color:"#fff"}}>
+        <div style={{display:"flex",justifyContent:"center",gap:14,marginBottom:14,alignItems:"center"}}>
+          <img src={LOGO_GCR} alt="GCR" style={{height:48,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
+          <img src={LOGO_PGA} alt="PGA" style={{height:44,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
+        </div>
+        <div style={{fontSize:19,fontWeight:800,marginBottom:5}}>{rpt.titulo}</div>
+        <div style={{fontSize:14,opacity:.85,marginBottom:4}}>{alumno?.nombre}</div>
+        {alumno&&<div style={{fontSize:12,opacity:.7,marginBottom:6}}>
+          {alumno.nivel&&`Grupo: ${GRUPOS_EDAD.find(g=>g.id===alumno.nivel)?.nombre||alumno.nivel} · `}
+          {alumno.tipoEscuela==="adultos"?"Escuela de Adultos":"Escuela Infantil"}
+        </div>}
+        {rpt.fechaDesde&&<div style={{fontSize:12,opacity:.7}}>
+          Período: {fmtDate(rpt.fechaDesde)} → {fmtDate(rpt.fechaHasta)}
+        </div>}
+        <div style={{fontSize:11,opacity:.6,marginTop:4}}>Informe generado: {fmtDate(rpt.fechaCreacion)}</div>
       </div>}
-      {rpt.objetivosLogrados&&<div style={{marginBottom:8}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>✅ Objetivos logrados</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
-      </div>}
-      {rpt.objetivosProximos&&<div style={{marginBottom:8}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>🎯 Próximos objetivos</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
-      </div>}
-      {rpt.planTrabajo&&<div style={{marginBottom:8}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📋 Plan de trabajo</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
-      </div>}
-      <div style={{marginTop:12,borderTop:"1px solid #ccc",paddingTop:8,fontSize:12,color:G.soft}}>
-        {rpt.firmaTexto?.split("\n").map((l,i)=><div key={i}>{l}</div>)}
-      </div>
+
+      {/* ── RESUMEN ── */}
+      {secs.includes("resumen")&&rpt.resumenTexto&&<>
+        <SecTitle>📝 Resumen ejecutivo</SecTitle>
+        <SecBody><p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap",fontSize:13}}>{rpt.resumenTexto}</p></SecBody>
+      </>}
+
+      {/* ── HCP ── */}
+      {secs.includes("hcp")&&<>
+        <SecTitle color="#2e7d3c">📈 Evolución del hándicap</SecTitle>
+        <SecBody><HcpChart stats={stats}/></SecBody>
+      </>}
+
+      {/* ── ESTADÍSTICAS ── */}
+      {secs.includes("estadisticas")&&<>
+        <SecTitle color="#3a7abf">📊 Estadísticas del período</SecTitle>
+        <SecBody>
+          <StatsResumen stats={stats}/>
+          {stats.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead>
+                <tr style={{background:G.fairway,color:"#fff"}}>
+                  {["Fecha","Hoyos","Golpes","FW%","GIR%","Putts","Hcp"].map(h=>(
+                    <th key={h} style={{padding:"5px 6px",textAlign:"center"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {stats.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map((s,i)=>(
+                  <tr key={i} style={{background:i%2?"#f9f9f9":"#fff"}}>
+                    {[s.fecha,s.hoyos,s.golpes,s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",
+                      s.greensRegulacion?s.greensRegulacion+"%":"—",s.putts,s.handicapJuego||s.handicap||"—"].map((v,j)=>(
+                      <td key={j} style={{padding:"4px 6px",textAlign:"center",borderBottom:"1px solid #eee"}}>{v||"—"}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>}
+        </SecBody>
+      </>}
+
+      {/* ── TÉCNICO ── */}
+      {secs.includes("tecnico")&&Object.keys(rpt.areasEval||{}).length>0&&<>
+        <SecTitle color="#7b5ea7">🏌️ Análisis técnico</SecTitle>
+        <SecBody>
+          <div style={{display:"grid",gap:8}}>
+            {AREAS_TECNICAS.filter(a=>rpt.areasEval?.[a]?.val).map(area=>{
+              const ev=rpt.areasEval[area];
+              const vi=VALORACIONES.find(v=>v.id===ev.val);
+              return <div key={area} style={{display:"flex",gap:12,alignItems:"center",
+                background:"#f9f9f9",borderRadius:8,padding:"7px 10px",
+                borderLeft:`4px solid ${vi?.color||"#ddd"}`}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:12}}>{area}</div>
+                  {ev.notas&&<div style={{fontSize:11,color:"#555",marginTop:2}}>{ev.notas}</div>}
+                </div>
+                <div style={{fontWeight:700,color:vi?.color,fontSize:12,flexShrink:0}}>{vi?.label}</div>
+              </div>;
+            })}
+          </div>
+        </SecBody>
+      </>}
+
+      {/* ── IMÁGENES ── */}
+      {secs.includes("imagenes")&&(rpt.imagenesData||[]).length>0&&<>
+        <SecTitle color="#c8a84b">📷 Imágenes</SecTitle>
+        <SecBody>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8}}>
+            {(rpt.imagenesData||[]).map((img,i)=>(
+              <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
+                <img src={img.base64} alt={img.caption||""} style={{width:"100%",height:120,objectFit:"cover"}}/>
+                {img.caption&&<div style={{padding:"5px 8px",fontSize:11,color:"#555",background:"#fafafa"}}>
+                  {img.caption}
+                </div>}
+              </div>
+            ))}
+          </div>
+        </SecBody>
+      </>}
+
+      {/* ── VÍDEOS ── */}
+      {secs.includes("videos")&&(rpt.videosNotas||[]).length>0&&<>
+        <SecTitle color="#c0392b">🎬 Vídeos de análisis</SecTitle>
+        <SecBody>
+          {(rpt.videosNotas||[]).map((vid,i)=>(
+            <div key={i} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid #eee"}}>
+              <div style={{fontWeight:700,color:G.ink,marginBottom:4,fontSize:13}}>
+                {vid.titulo||"Vídeo "+(i+1)} {vid.fecha&&`· ${vid.fecha}`}
+              </div>
+              {vid.url&&<a href={vid.url} target="_blank" rel="noopener noreferrer"
+                style={{fontSize:12,color:G.sky,display:"block",marginBottom:6,
+                  wordBreak:"break-all"}}>🔗 {vid.url}</a>}
+              {vid.url&&vid.url.includes("youtube")&&<div style={{marginBottom:6,borderRadius:8,overflow:"hidden"}}>
+                <iframe src={vid.url.replace("watch?v=","embed/").replace("youtu.be/","youtube.com/embed/")}
+                  width="100%" height="180" frameBorder="0" allowFullScreen style={{borderRadius:8,display:"block"}}/>
+              </div>}
+              {vid.notas&&<div style={{fontSize:12,color:"#555",lineHeight:1.6,
+                background:"#f9f9f9",borderRadius:8,padding:"7px 10px",whiteSpace:"pre-wrap"}}>
+                {vid.notas}
+              </div>}
+            </div>
+          ))}
+        </SecBody>
+      </>}
+
+      {/* ── EJERCICIOS ── */}
+      {secs.includes("ejercicios")&&<>
+        <SecTitle color="#d4651a">🏋️ Ejercicios del período</SecTitle>
+        <SecBody>
+          {(data.asignaciones||[]).filter(a=>a.alumnoId===rpt.alumnoId&&a.completado).length===0
+            ? <div style={{color:G.soft,fontSize:12}}>Sin ejercicios completados en este período.</div>
+            : <div style={{display:"grid",gap:6}}>
+                {(data.asignaciones||[])
+                  .filter(a=>a.alumnoId===rpt.alumnoId&&a.completado)
+                  .map((a,i)=>{
+                    const ej=(data.ejerciciosCurso||EJERCICIOS_CURSO||[]).find(e=>e.id===a.ejId)||
+                              (EJERCICIOS_BIBLIOTECA||[]).find(e=>e.id===a.ejId);
+                    return ej?<div key={i} style={{background:G.mist,borderRadius:8,
+                      padding:"5px 10px",fontSize:12}}>
+                      ✅ {ej.nombre} <span style={{color:G.soft,fontSize:10}}>— {a.fecha}</span>
+                    </div>:null;
+                  }).filter(Boolean)}
+              </div>
+          }
+        </SecBody>
+      </>}
+
+      {/* ── OBJETIVOS ── */}
+      {secs.includes("objetivos")&&(rpt.objetivosLogrados||rpt.objetivosProximos||rpt.planTrabajo)&&<>
+        <SecTitle>🎯 Objetivos y plan de trabajo</SecTitle>
+        <SecBody>
+          {rpt.objetivosLogrados&&<div style={{marginBottom:12}}>
+            <div style={{fontWeight:700,color:G.grass,marginBottom:5,fontSize:13}}>✅ Logros conseguidos</div>
+            <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
+          </div>}
+          {rpt.objetivosProximos&&<div style={{marginBottom:12}}>
+            <div style={{fontWeight:700,color:G.sky,marginBottom:5,fontSize:13}}>🚀 Próximos objetivos</div>
+            <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
+          </div>}
+          {rpt.planTrabajo&&<div>
+            <div style={{fontWeight:700,color:"#7b5ea7",marginBottom:5,fontSize:13}}>📋 Plan de trabajo</div>
+            <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
+          </div>}
+        </SecBody>
+      </>}
+
+      {/* ── FIRMA ── */}
+      {secs.includes("firma")&&<>
+        <SecTitle>✍️ Firma del profesor</SecTitle>
+        <SecBody>
+          <div style={{display:"flex",alignItems:"center",gap:14,padding:"6px 0"}}>
+            <img src={LOGO_GCR} alt="GCR" style={{height:44,objectFit:"contain"}}/>
+            <div>
+              <div style={{fontWeight:700,color:G.fairway,fontSize:14}}>
+                {rpt.firmaTexto?.split("\n")[0]||"José Manuel Caballero Fernández"}
+              </div>
+              {rpt.firmaTexto?.split("\n").slice(1).map((l,i)=>(
+                <div key={i} style={{fontSize:12,color:"#555",marginTop:2}}>{l}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{fontSize:11,color:G.soft,marginTop:8,borderTop:"1px solid #eee",paddingTop:8}}>
+            Fecha del informe: {fmtDate(rpt.fechaCreacion)}
+          </div>
+        </SecBody>
+      </>}
+
     </div>}
   </div>;
 }
