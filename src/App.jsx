@@ -1034,8 +1034,12 @@ function PantallaRegistro({onVolver}){
         setLoading(false);
         return;
       }
-      // Comprobar en alumnos ya activos (datos de la app)
-      const alumnosActivos = data?.alumnos||[];
+      // Comprobar en alumnos ya activos (Firebase, no estado local)
+      let alumnosActivos = [];
+      try {
+        const dataSnap = await getDoc(doc(db,"academia","datos"));
+        alumnosActivos = dataSnap.exists() ? (dataSnap.data()?.alumnos||[]) : [];
+      } catch(e2){ console.warn("Error leyendo alumnos activos:", e2); }
       const yaActivo = alumnosActivos.some(a=>
         (form.email&&a.email&&a.email.toLowerCase()===form.email.toLowerCase()) ||
         (form.telefono&&a.telefono&&a.telefono.replace(/\s/g,"")===form.telefono.replace(/\s/g,"")) ||
