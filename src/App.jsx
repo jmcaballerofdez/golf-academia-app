@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
 } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 // ─── Firebase Config ──────────────────────────────────────────────
 // ── Google Calendar Configuración ────────────────────────────────
@@ -486,8 +487,9 @@ const firebaseConfig = {
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
-const db  = getFirestore(firebaseApp);
-const auth = getAuth(firebaseApp);
+const db      = getFirestore(firebaseApp);
+const auth    = getAuth(firebaseApp);
+const storage = getStorage(firebaseApp);
 
 // ─── Firestore helpers ────────────────────────────────────────────
 const DB_DOC = "academia/datos";
@@ -1004,8 +1006,6 @@ function PantallaRegistro({onVolver}){
     if(!form.telefono.trim()){setError("El teléfono es obligatorio.");return;}
     if(!form.email.trim()){setError("El email es obligatorio.");return;}
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)){setError("El email no es válido. Revísalo, por favor.");return;}
-    if(!form.diasPreferencia||form.diasPreferencia.length===0){setError("Selecciona al menos un día de clase preferido.");return;}
-    if(!form.horarioPreferencia){setError("Selecciona un horario preferido.");return;}
     if(form.pinElegido.length<6){setError("La clave debe tener al menos 6 caracteres.");return;}
     if(!form.rgpdAceptado){setError("Debes aceptar la política de protección de datos.");return;}
     if(esMenor){
@@ -2595,6 +2595,43 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
   const edadForm = calcularEdad(form.fechaNacimiento);
   const menorForm = edadForm!==null && edadForm<18;
 
+  function exportarCSV(){
+    const listaExportar = tabTipo==="infantil" ? alumnosInfantil : alumnosAdultos;
+    const cabecera = [
+      "Nombre","Tipo escuela","Fecha nacimiento","Edad","Nivel/Grupo","Activo",
+      "Teléfono","Email","Fecha alta","RGPD","Imagen autorizada","Autorización legal",
+      "Alergias","Intolerancias","Lesiones","Equipo",
+      "Tutor 1 nombre","Tutor 1 relación","Tutor 1 teléfono","Tutor 1 email",
+      "Tutor 2 nombre","Tutor 2 relación","Tutor 2 teléfono","Tutor 2 email",
+      "Notas"
+    ];
+    function esc(v){ const s=String(v||""); return s.includes(",")||s.includes("\n")||s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s; }
+    const filas = listaExportar.map(a=>{
+      const edad = calcularEdad(a.fechaNacimiento);
+      const t1 = (a.tutores||[])[0]||{};
+      const t2 = (a.tutores||[])[1]||{};
+      return [
+        a.nombre, a.tipoEscuela==="adultos"?"Adultos":"Infantil",
+        a.fechaNacimiento||"", edad!==null?edad:"",
+        a.nivel||a.grupo||"", a.activo?"Sí":"No",
+        a.telefono||"", a.email||"", a.fechaAlta||"",
+        a.rgpdAceptado?"Sí":"No", a.imagenAutorizada?"Sí":"No", a.firmaLegal?"Sí":"No",
+        a.alergias||"", a.intolerancias||"", a.lesiones||"", a.equipo||"",
+        t1.nombre||"", t1.relacion||"", t1.telefono||"", t1.email||"",
+        t2.nombre||"", t2.relacion||"", t2.telefono||"", t2.email||"",
+        a.notas||""
+      ].map(esc).join(",");
+    });
+    const csv = "\uFEFF" + [cabecera.join(","), ...filas].join("\r\n");
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `alumnos_${tabTipo}_${today()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return <div>
     {/* Header con tipo de escuela */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
@@ -2618,6 +2655,9 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       {<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
         {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
       </Btn>}
+      <Btn color="secondary" onClick={exportarCSV} title="Exportar listado a CSV (Excel)">
+        📥 Exportar CSV
+      </Btn>
       <Btn onClick={openNew}>+ Nuevo alumno</Btn>
     </div>
 
@@ -3434,7 +3474,7 @@ function ModEstadisticas({data,setData}){
         {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
       </select>
       <div style={{display:"flex",gap:6}}>
-        {[["rondas","📋 Rondas"],["informe","📊 Informe"]].map(([id,label])=>(
+        {[["rondas","📋 Rondas"],["informe","📊 Informe"],["asistencia","📅 Asistencia"]].map(([id,label])=>(
           <button key={id} onClick={()=>setVista(id)}
             style={{background:vista===id?G.fairway:"#f0f0f0",color:vista===id?"#fff":"#555",
               border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
@@ -3670,6 +3710,154 @@ function ModEstadisticas({data,setData}){
       }
     </div>}
 
+    {/* ── VISTA ASISTENCIA ── */}
+    {vista==="asistencia"&&(()=>{
+      const todasClases = data.clases||[];
+      const clasesAlumno = alumnoSel
+        ? todasClases.filter(c=>c.alumnoId===alumnoSel)
+        : todasClases;
+
+      // Obtener últimos 12 meses
+      const hoy = today();
+      const meses12 = [];
+      for(let i=11;i>=0;i--){
+        const d = new Date(hoy);
+        d.setDate(1);
+        d.setMonth(d.getMonth()-i);
+        meses12.push(d.toISOString().slice(0,7));
+      }
+
+      // Agrupar clases por mes
+      const porMes = meses12.map(mes=>{
+        const del_mes = clasesAlumno.filter(c=>(c.fecha||"").startsWith(mes));
+        const realizadas = del_mes.filter(c=>c.asistio).length;
+        const programadas = del_mes.length;
+        const pct = programadas>0 ? Math.round((realizadas/programadas)*100) : null;
+        return {mes, programadas, realizadas, pct};
+      });
+
+      const maxProg = Math.max(...porMes.map(m=>m.programadas), 1);
+      const totalRealizadas = porMes.reduce((s,m)=>s+m.realizadas,0);
+      const totalProgramadas = porMes.reduce((s,m)=>s+m.programadas,0);
+      const pctGlobal = totalProgramadas>0 ? Math.round((totalRealizadas/totalProgramadas)*100) : 0;
+
+      // Clases próximas (futuras)
+      const proximas = clasesAlumno.filter(c=>c.fecha>hoy).length;
+      // Clases pendientes de cobro (pasadas, sin asistio)
+      const pendCobro = clasesAlumno.filter(c=>c.fecha<=hoy&&!c.asistio).length;
+
+      return <div>
+        {/* KPIs */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
+          {[
+            [totalRealizadas,"Clases realizadas",G.grass,"✅"],
+            [totalProgramadas,"Total programadas",G.fairway,"📋"],
+            [pctGlobal+"%","Asistencia global",pctGlobal>=80?G.grass:pctGlobal>=60?"#e67e22":G.danger,"📊"],
+            [proximas,"Próximas clases",G.sky,"📅"],
+            [pendCobro,"Pendientes de cobro",G.danger,"⏳"],
+          ].map(([v,l,c,ico])=>(
+            <Card key={l} style={{textAlign:"center",borderTop:`3px solid ${c}`}}>
+              <div style={{fontSize:20,marginBottom:4}}>{ico}</div>
+              <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+              <div style={{fontSize:11,color:G.soft,marginTop:2}}>{l}</div>
+            </Card>
+          ))}
+        </div>
+
+        {/* Gráfico de barras */}
+        <Card style={{marginBottom:16}}>
+          <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:4}}>
+            📊 Clases realizadas vs. programadas — últimos 12 meses
+          </div>
+          <div style={{fontSize:11,color:G.soft,marginBottom:14,display:"flex",gap:16}}>
+            <span><span style={{display:"inline-block",width:12,height:12,background:G.fairway,borderRadius:2,marginRight:4,verticalAlign:"middle"}}/>Programadas</span>
+            <span><span style={{display:"inline-block",width:12,height:12,background:G.grass,borderRadius:2,marginRight:4,verticalAlign:"middle"}}/>Realizadas</span>
+          </div>
+          {totalProgramadas===0
+            ? <div style={{textAlign:"center",padding:24,color:G.soft,fontSize:13}}>
+                Sin clases registradas en los últimos 12 meses
+              </div>
+            : <div style={{display:"flex",alignItems:"flex-end",gap:6,height:160,paddingBottom:28,overflowX:"auto"}}>
+                {porMes.map((m,i)=>{
+                  const hProg = m.programadas>0 ? Math.round((m.programadas/maxProg)*120)+8 : 0;
+                  const hReal = m.programadas>0 ? Math.round((m.realizadas/maxProg)*120) : 0;
+                  const mesLabel = m.mes.slice(5)+"/"+m.mes.slice(2,4);
+                  return <div key={i} style={{flex:"0 0 auto",width:36,display:"flex",flexDirection:"column",alignItems:"center",gap:0}}>
+                    {/* Valor realizadas */}
+                    {m.programadas>0&&<div style={{fontSize:9,color:G.grass,fontWeight:700,marginBottom:2}}>{m.realizadas}</div>}
+                    {/* Barra programadas (fondo) */}
+                    <div style={{position:"relative",width:"100%",display:"flex",flexDirection:"column",alignItems:"center"}}>
+                      <div style={{width:28,height:hProg,background:m.programadas>0?"#d4e6d4":G.mist,borderRadius:"4px 4px 0 0",position:"relative",overflow:"hidden"}}>
+                        {/* Barra realizadas (encima) */}
+                        <div style={{position:"absolute",bottom:0,left:0,right:0,
+                          height:hReal,background:m.pct>=80?G.grass:m.pct>=60?"#e67e22":m.pct>0?G.danger:G.mist,
+                          borderRadius:"4px 4px 0 0",transition:"height .3s"}}/>
+                      </div>
+                    </div>
+                    {/* Etiqueta mes */}
+                    <div style={{fontSize:8,color:G.soft,marginTop:3,textAlign:"center",transform:"rotate(-35deg)",transformOrigin:"top center",whiteSpace:"nowrap"}}>
+                      {mesLabel}
+                    </div>
+                    {/* Porcentaje */}
+                    {m.pct!==null&&m.programadas>0&&<div style={{fontSize:8,fontWeight:700,
+                      color:m.pct>=80?G.grass:m.pct>=60?"#e67e22":G.danger,marginTop:10}}>
+                      {m.pct}%
+                    </div>}
+                  </div>;
+                })}
+              </div>
+          }
+        </Card>
+
+        {/* Tabla detallada por mes */}
+        <Card>
+          <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:12}}>📋 Detalle mensual</div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead>
+                <tr style={{background:G.mist}}>
+                  {["Mes","Programadas","Realizadas","Pendientes","% Asistencia"].map(h=>(
+                    <th key={h} style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:G.fairway,borderBottom:"2px solid #d0e0d0"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {porMes.filter(m=>m.programadas>0).reverse().map((m,i)=>{
+                  const pend = m.programadas - m.realizadas;
+                  const color = m.pct>=80?G.grass:m.pct>=60?"#e67e22":G.danger;
+                  return <tr key={m.mes} style={{background:i%2===0?"white":"#f9fbf9",borderBottom:"1px solid #f0f0f0"}}>
+                    <td style={{padding:"8px 10px",fontWeight:600}}>{m.mes}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center"}}>{m.programadas}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center",color:G.grass,fontWeight:700}}>{m.realizadas}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center",color:pend>0?G.danger:G.soft}}>{pend>0?pend:"—"}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center"}}>
+                      {m.pct!==null
+                        ? <span style={{background:color,color:"white",borderRadius:6,padding:"2px 8px",fontSize:12,fontWeight:700}}>{m.pct}%</span>
+                        : "—"}
+                    </td>
+                  </tr>;
+                })}
+                {porMes.filter(m=>m.programadas>0).length===0&&<tr>
+                  <td colSpan={5} style={{textAlign:"center",padding:20,color:G.soft}}>Sin clases en los últimos 12 meses</td>
+                </tr>}
+              </tbody>
+              <tfoot>
+                <tr style={{background:G.mist,fontWeight:800}}>
+                  <td style={{padding:"8px 10px",color:G.fairway}}>TOTAL</td>
+                  <td style={{padding:"8px 10px",textAlign:"center"}}>{totalProgramadas}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:G.grass}}>{totalRealizadas}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:totalProgramadas-totalRealizadas>0?G.danger:G.soft}}>{totalProgramadas-totalRealizadas||"—"}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center"}}>
+                    <span style={{background:pctGlobal>=80?G.grass:pctGlobal>=60?"#e67e22":G.danger,color:"white",borderRadius:6,padding:"2px 8px",fontWeight:700}}>{pctGlobal}%</span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      </div>;
+    })()}
+
     {/* ── MODAL NUEVA/EDITAR RONDA ── */}
     {(modal==="nueva"||modal==="editar")&&<Modal
       title={modal==="nueva"?"Nueva ronda":"Editar ronda"}
@@ -3897,11 +4085,629 @@ function ModEstadisticas({data,setData}){
 
 
 // ═══════════════════════════════════════════════════════════════════
-// ADMIN: VÍDEO ANÁLISIS
+// SUBIDA DE VÍDEOS AL ALMACENAMIENTO (presigned URL → GCS)
 // ═══════════════════════════════════════════════════════════════════
+// ── Diagnóstico persistente (sobrevive recargas del iPhone) ──────────
+function dbgLog(msg){
+  try{
+    const arr=JSON.parse(localStorage.getItem("gv_dbg")||"[]");
+    arr.push(new Date().toLocaleTimeString()+"  "+msg);
+    while(arr.length>30) arr.shift();
+    localStorage.setItem("gv_dbg",JSON.stringify(arr));
+  }catch(_){}
+}
+function dbgRead(){ try{return JSON.parse(localStorage.getItem("gv_dbg")||"[]");}catch(_){return[];} }
+function dbgClear(){ try{localStorage.removeItem("gv_dbg");}catch(_){} }
+function esAppInstalada(){
+  try{
+    return (typeof navigator!=="undefined" && navigator.standalone===true) ||
+      (typeof window!=="undefined" && window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  }catch(_){ return false; }
+}
+// Se ejecuta una vez por cada carga de página; una recarga aparecerá como línea nueva.
+try{ if(typeof window!=="undefined") dbgLog("═ app cargada ("+(esAppInstalada()?"INSTALADA":"navegador")+") ═"); }catch(_){}
+// Detectores para saber qué hace iOS al elegir un vídeo (sin recargar la app).
+try{
+  if(typeof window!=="undefined"){
+    window.addEventListener("pageshow", (ev)=>{ if(ev && ev.persisted) dbgLog("⟲ RESTAURADA de caché (iOS descartó la página al elegir vídeo)"); });
+    window.addEventListener("pagehide", (ev)=>{ dbgLog("página oculta"+(ev && ev.persisted?" (guardada en caché)":" (descartada)")); });
+    document.addEventListener("visibilitychange", ()=>{ dbgLog("visibilidad: "+document.visibilityState); });
+  }
+}catch(_){}
+
+async function subirVideoAStorage(file, onProgress){
+  dbgLog("subida Firebase Storage: iniciando…");
+  // Nombre único para evitar colisiones
+  const ext = (file.name||"video").split(".").pop().toLowerCase() || "mp4";
+  const nombre = `videos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const fileRef = storageRef(storage, nombre);
+  const metadata = { contentType: file.type || "video/mp4" };
+
+  return new Promise((resolve, reject)=>{
+    const uploadTask = uploadBytesResumable(fileRef, file, metadata);
+    uploadTask.on("state_changed",
+      snapshot=>{
+        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        if(onProgress) onProgress(pct);
+        dbgLog(`subida: ${pct}%`);
+      },
+      error=>{
+        dbgLog("subida ERROR: " + error.message);
+        reject(new Error("Error al subir el vídeo: " + error.message));
+      },
+      async ()=>{
+        try{
+          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          dbgLog("subida OK: " + url.slice(0,60));
+          resolve(url);
+        } catch(e){
+          reject(new Error("Error obteniendo URL del vídeo: " + e.message));
+        }
+      }
+    );
+  });
+}
+
+// Con Firebase Storage los vídeos ya se sirven directamente desde Google CDN,
+// compatible con todos los navegadores. No necesitamos transcodificación en servidor.
+async function optimizarVideoEnServidor(videoUrl){
+  dbgLog("optimizar: Firebase Storage sirve directamente, sin transcodificación necesaria");
+  return videoUrl; // La URL de Firebase ya es reproducible
+}
+
+// Comprime/reescala el vídeo EN EL DISPOSITIVO antes de subirlo.
+// Reduce mucho el tamaño (carga rápida en 4G) y lo convierte a un formato
+// reproducible en la web (usa el decodificador nativo, que en iPhone lee HEVC).
+async function comprimirVideo(file, onProgress){
+  if(typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream)
+    throw new Error("sin-soporte");
+
+  const url = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.src = url;
+  video.muted = true; video.defaultMuted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline",""); video.setAttribute("muted","");
+  video.preload = "auto";
+  video.style.cssText = "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1";
+  document.body.appendChild(video);
+
+  let rec=null, stream=null;
+  const cleanup = ()=>{
+    try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(_){}
+    try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+    try{ video.pause(); }catch(_){}
+    try{ document.body.removeChild(video); }catch(_){}
+    URL.revokeObjectURL(url);
+  };
+
+  try{
+    await new Promise((res,rej)=>{
+      video.onloadedmetadata = ()=>res();
+      video.onerror = ()=>rej(new Error("No se pudo leer el vídeo."));
+      setTimeout(()=>rej(new Error("Tiempo agotado leyendo el vídeo.")), 30000);
+    });
+
+    const w = video.videoWidth, h = video.videoHeight;
+    if(!w || !h) throw new Error("Sin dimensiones de vídeo.");
+    const dur = isFinite(video.duration) ? video.duration : 0;
+
+    const MAX_DIM = 854; // ~480p en el lado largo (suficiente para analizar el swing)
+    const scale = Math.min(1, MAX_DIM/Math.max(w,h));
+    const tw = Math.max(2, Math.round(w*scale/2)*2);
+    const th = Math.max(2, Math.round(h*scale/2)*2);
+    const canvas = document.createElement("canvas");
+    canvas.width = tw; canvas.height = th;
+    const ctx = canvas.getContext("2d");
+    const fps = 30;
+    stream = canvas.captureStream(fps);
+
+    const mimes = ["video/mp4;codecs=avc1.42E01E","video/mp4","video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"];
+    let mime = "";
+    if(MediaRecorder.isTypeSupported) mime = mimes.find(m=>MediaRecorder.isTypeSupported(m)) || "";
+    rec = new MediaRecorder(stream, mime ? {mimeType:mime, videoBitsPerSecond:2500000} : {videoBitsPerSecond:2500000});
+    const chunks=[];
+    rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+
+    let finished=false;
+    const recStopped = new Promise(res=>{ rec.onstop=()=>res(); });
+    const stopAll = ()=>{ if(finished) return; finished=true; try{ if(rec.state!=="inactive") rec.stop(); }catch(_){} };
+
+    rec.start(1000);
+
+    const draw = ()=>{
+      if(finished) return;
+      try{ ctx.drawImage(video,0,0,tw,th); }catch(_){}
+      if(onProgress && dur) onProgress(Math.min(99, Math.round((video.currentTime/dur)*100)));
+      requestAnimationFrame(draw);
+    };
+
+    await video.play();
+    requestAnimationFrame(draw);
+
+    await new Promise((res)=>{
+      video.onended = ()=>res();
+      const cap = dur>0 ? dur*1000*3 + 20000 : 600000; // watchdog por si no termina
+      setTimeout(()=>res(), cap);
+    });
+
+    stopAll();
+    await recStopped;
+
+    const outMp4 = mime.indexOf("mp4")>=0;
+    const outType = outMp4 ? "video/mp4" : "video/webm";
+    const ext = outMp4 ? "mp4" : "webm";
+    const blob = new Blob(chunks, {type: outType});
+    if(!blob.size) throw new Error("La compresión no produjo datos.");
+    const base = ((file.name||"video").replace(/\.[^.]+$/,"")) || "video";
+    return new File([blob], base+"-comp."+ext, {type: outType});
+  } finally {
+    cleanup();
+  }
+}
+
+function VideoUploader({ value, onChange }){
+  const [subiendo, setSubiendo] = useState(false);
+  const [prog, setProg] = useState(0);
+  const [fase, setFase] = useState("subir"); // comprimir | subir
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+  const MAX_MB = 200;       // tamaño máximo del archivo final que se sube
+  const MAX_SRC_MB = 2000;  // tamaño máximo del archivo original que aceptamos comprimir
+
+  async function onFile(e){
+    setErr(""); setSubiendo(true); setFase("subir"); setProg(0);
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if(!file){
+      setSubiendo(false);
+      setErr("No se recibió el vídeo desde la galería. Vuelve a tocar el botón y elige \"Seleccionar archivo\", o graba el vídeo de nuevo.");
+      return;
+    }
+    // iOS a veces entrega el vídeo con type vacío al elegirlo de la galería:
+    // aceptamos si el tipo es de vídeo O si la extensión es de vídeo.
+    const nombre = (file.name||"").toLowerCase();
+    const esVideo = (file.type && file.type.startsWith("video/")) ||
+      /\.(mp4|mov|m4v|3gp|3g2|avi|mkv|webm|qt|hevc|mpg|mpeg|ts)$/.test(nombre);
+    if(!esVideo){ setSubiendo(false); setErr("Selecciona un archivo de vídeo."); return; }
+    if(file.size > MAX_SRC_MB*1024*1024){
+      setSubiendo(false);
+      setErr(`El vídeo pesa ${(file.size/1024/1024).toFixed(0)} MB y es demasiado grande. Graba un vídeo más corto.`);
+      return;
+    }
+    try{
+      // 1) Comprimir en el dispositivo (reduce tamaño y convierte a formato compatible)
+      let toUpload = file;
+      setFase("comprimir");
+      try{
+        const comp = await comprimirVideo(file, setProg);
+        if(comp && comp.size > 0) toUpload = comp; // usar siempre el comprimido si se generó
+      }catch(_){ /* si la compresión falla, subimos el original */ }
+
+      if(toUpload.size > MAX_MB*1024*1024){
+        setErr(`El vídeo sigue pesando ${(toUpload.size/1024/1024).toFixed(0)} MB (límite ${MAX_MB} MB). Graba un vídeo más corto o en menor resolución.`);
+        setSubiendo(false); return;
+      }
+
+      // 2) Subir
+      setFase("subir"); setProg(0);
+      const url = await subirVideoAStorage(toUpload, setProg);
+
+      // 3) Optimizar en el servidor: garantiza reproducción en iPhone/web
+      //    (convierte a H.264 MP4). Si fallara, se usa el vídeo subido tal cual.
+      let finalUrl = url;
+      try{
+        setFase("optimizar"); setProg(0);
+        finalUrl = await optimizarVideoEnServidor(url);
+      }catch(_){ /* si la optimización falla, usamos el vídeo subido */ }
+      onChange(finalUrl);
+    }catch(e2){
+      setErr(e2.message || "No se pudo subir el vídeo.");
+    }
+    setSubiendo(false);
+  }
+
+  const tieneVideo = !!value;
+
+  return <div>
+    {!subiendo && <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+      <label style={{position:"relative",display:"inline-flex",alignItems:"center",gap:6,background:G.grass,color:"#fff",
+        borderRadius:9,padding:"9px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+        📂 {tieneVideo ? "Cambiar vídeo" : "Subir vídeo del dispositivo"}
+        <input ref={fileRef} type="file" accept="video/*"
+          onClick={()=>dbgLog("input activado (abriendo galería)")}
+          onChange={onFile}
+          style={{position:"absolute",width:1,height:1,padding:0,margin:-1,overflow:"hidden",clip:"rect(0 0 0 0)",whiteSpace:"nowrap",border:0}}/>
+      </label>
+      {tieneVideo && <>
+        <a href={value} target="_blank" rel="noreferrer" style={{background:G.purple,color:"#fff",
+          borderRadius:8,padding:"8px 14px",textDecoration:"none",fontSize:13,fontWeight:600}}>▶ Ver</a>
+        <button type="button" onClick={()=>onChange("")} style={{background:"none",border:"none",
+          color:G.danger,cursor:"pointer",fontSize:13,fontWeight:600}}>✕ Quitar</button>
+      </>}
+    </div>}
+
+    {subiendo && <div style={{padding:"6px 0"}}>
+      <div style={{fontSize:13,color:G.fairway,fontWeight:600,marginBottom:6}}>
+        {fase==="comprimir" ? "Preparando vídeo… "+prog+"%"
+          : fase==="subir" ? "Subiendo vídeo… "+prog+"%"
+          : "Optimizando para la web…"}
+      </div>
+      <div style={{height:8,background:"#e8e8e8",borderRadius:6,overflow:"hidden"}}>
+        <div style={{height:"100%",width:(fase==="optimizar"?100:prog)+"%",background:G.grass,transition:"width .2s"}}/>
+      </div>
+      {fase==="comprimir" && <div style={{fontSize:11,color:G.soft,marginTop:6}}>Comprimiendo el vídeo para que cargue rápido… no cierres esta pantalla.</div>}
+      {fase==="optimizar" && <div style={{fontSize:11,color:G.soft,marginTop:6}}>Convirtiendo el vídeo a un formato compatible con todos los móviles… puede tardar un poco, no cierres esta pantalla.</div>}
+    </div>}
+
+    {tieneVideo && !subiendo && <div style={{fontSize:11,color:G.grass,marginTop:6}}>✅ Vídeo guardado en la app.</div>}
+
+    {err && <div style={{fontSize:12,color:G.danger,marginTop:6}}>⚠️ {err}</div>}
+
+    <div style={{margin:"10px 0 6px",color:G.soft,fontSize:11}}>— o pega un enlace directo a un archivo de vídeo (.mp4/.mov) —</div>
+    <Input value={value||""} onChange={v=>onChange(v)} placeholder="https://…"/>
+    {value && /youtube\.com|youtu\.be|vimeo\.com|drive\.google\.com|dropbox\.com/i.test(value) &&
+      <div style={{fontSize:11,color:G.danger,marginTop:6}}>⚠️ Los enlaces de YouTube, Vimeo, Google Drive o Dropbox no se pueden reproducir en la app. Mejor sube el vídeo desde el dispositivo.</div>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ANALIZADOR DE VÍDEO INTERACTIVO (líneas de colores + reproducción)
+// ═══════════════════════════════════════════════════════════════════
+function AnalizadorVideo({initialUrl="", onClose}){
+  const videoRef  = useRef(null);
+  const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [dbg,setDbg] = useState(dbgRead());
+  useEffect(()=>{ const id=setInterval(()=>setDbg(dbgRead()),1000); return ()=>clearInterval(id); },[]);
+  const [src,setSrc]         = useState(initialUrl);
+  const [urlInput,setUrlInput] = useState("");
+  const [playing,setPlaying] = useState(false);
+  const [dur,setDur]         = useState(0);
+  const [cur,setCur]         = useState(0);
+  const [speed,setSpeed]     = useState(1);
+  const [color,setColor]     = useState("#ff2d2d");
+  const [grosor,setGrosor]   = useState(4);
+  const [tool,setTool]       = useState("linea"); // linea | libre
+  const [err,setErr]         = useState("");
+  const [loading,setLoading] = useState(false);   // vídeo cargando
+  const [subiendo,setSubiendo] = useState(false); // preparando (subir+optimizar)
+  const [fase,setFase]       = useState("subir");  // comprimir | subir | optimizar
+  const [prog,setProg]       = useState(0);
+  const [strokes,setStrokes] = useState([]);      // trazos confirmados
+  const drawing   = useRef(false);
+  const curStroke = useRef(null);
+  const loadTimeoutRef = useRef(null);
+  function clearLoadTimeout(){ if(loadTimeoutRef.current){ clearTimeout(loadTimeoutRef.current); loadTimeoutRef.current=null; } }
+
+  const COLORS = ["#ff2d2d","#ffd400","#22c55e","#3b82f6","#ffffff","#111111"];
+  const FPS = 30;
+
+  // Limpiar object URL al desmontar / cambiar
+  useEffect(()=>()=>{ if(src && src.startsWith("blob:")) URL.revokeObjectURL(src); },[src]);
+
+  function resetReproduccion(){ clearLoadTimeout(); setErr(""); setLoading(false); setCur(0); setDur(0); setPlaying(false); }
+  function esEnlaceNoDirecto(u){
+    return /youtube\.com|youtu\.be|vimeo\.com|drive\.google\.com|dropbox\.com/i.test(u);
+  }
+  async function loadFile(e){
+    dbgLog("onChange DISPARADO"); setDbg(dbgRead());
+    // Feedback inmediato: en cuanto se elige un archivo mostramos estado,
+    // así sabemos con certeza que la selección se ha registrado.
+    if(src && src.startsWith("blob:")) URL.revokeObjectURL(src);
+    setStrokes([]); curStroke.current=null; clearLoadTimeout();
+    setCur(0); setDur(0); setPlaying(false);
+    setErr(""); setSubiendo(true); setFase("subir"); setProg(0);
+    const f=e.target.files?.[0];
+    if(e.target) e.target.value="";
+    if(!f){
+      dbgLog("archivo VACÍO (galería no entregó nada)"); setDbg(dbgRead());
+      setSubiendo(false);
+      setErr("No se recibió el vídeo desde la galería. Vuelve a tocar \"Subir vídeo del dispositivo\" y elige \"Seleccionar archivo\", o graba el vídeo de nuevo.");
+      return;
+    }
+    dbgLog("archivo recibido: "+(f.name||"sin-nombre")+" · "+Math.round((f.size||0)/1024/1024)+"MB · tipo:"+(f.type||"vacío")); setDbg(dbgRead());
+    // iOS a veces entrega el vídeo con type vacío: aceptamos por extensión.
+    const nombre=(f.name||"").toLowerCase();
+    const esVideo=(f.type && f.type.startsWith("video/")) ||
+      /\.(mp4|mov|m4v|3gp|3g2|avi|mkv|webm|qt|hevc|mpg|mpeg|ts)$/.test(nombre);
+    if(!esVideo){ dbgLog("rechazado: no parece vídeo"); setDbg(dbgRead()); setSubiendo(false); setErr("Selecciona un archivo de vídeo."); return; }
+    // Subir + convertir a H.264 en el servidor: garantiza reproducción en iPhone,
+    // porque reproducir el archivo local (HEVC) no funciona en Safari.
+    try{
+      const url=await subirVideoAStorage(f,setProg); setDbg(dbgRead());
+      let finalUrl=url;
+      try{ setFase("optimizar"); setProg(0); finalUrl=await optimizarVideoEnServidor(url); }
+      catch(_){ dbgLog("optimizar falló, uso el vídeo subido tal cual"); /* si la conversión falla, usamos el vídeo subido tal cual */ }
+      setDbg(dbgRead());
+      dbgLog("LISTO, mostrando reproductor"); setDbg(dbgRead());
+      setSubiendo(false);
+      setSrc(finalUrl);
+    }catch(e2){
+      dbgLog("ERROR: "+(e2?.message||"desconocido")); setDbg(dbgRead());
+      setSubiendo(false);
+      setErr(e2?.message || "No se pudo preparar el vídeo. Inténtalo de nuevo.");
+    }
+  }
+  function loadUrl(){
+    if(!urlInput.trim()) return;
+    if(esEnlaceNoDirecto(urlInput)){
+      setErr("Los enlaces de YouTube, Vimeo, Google Drive o Dropbox no se pueden reproducir aquí. Descarga el vídeo y súbelo desde el dispositivo, o pega un enlace directo a un archivo .mp4/.mov.");
+      return;
+    }
+    setStrokes([]); curStroke.current=null; resetReproduccion();
+    setSrc(urlInput.trim());
+  }
+
+  // Cargando + tiempo de espera: si el vídeo no carga en 25s, avisar
+  useEffect(()=>{
+    clearLoadTimeout();
+    if(!src){ setLoading(false); return; }
+    setErr(""); setLoading(true);
+    loadTimeoutRef.current=setTimeout(()=>{
+      loadTimeoutRef.current=null;
+      const v=videoRef.current;
+      if(v && v.readyState>=2){ setLoading(false); return; } // ya cargó, no avisar
+      setLoading(false);
+      setErr("El vídeo tarda demasiado en cargar. Puede que el formato no sea compatible con la web (los vídeos de iPhone en alta eficiencia/HEVC a veces no se reproducen) o que el archivo sea muy grande. Prueba a grabar en modo \"Más compatible\" en los ajustes de la cámara del iPhone, o sube un vídeo más ligero.");
+    }, 25000);
+    return ()=>clearLoadTimeout();
+  },[src]);
+
+  // ── Canvas: tamaño y redibujado ───────────────────────────────────
+  function resizeCanvas(){
+    const v=videoRef.current, c=canvasRef.current;
+    if(!v||!c) return;
+    const r=v.getBoundingClientRect();
+    if(r.width===0||r.height===0) return;
+    if(c.width!==Math.round(r.width)||c.height!==Math.round(r.height)){
+      c.width=Math.round(r.width); c.height=Math.round(r.height);
+    }
+    redraw();
+  }
+  function redraw(){
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext("2d");
+    ctx.clearRect(0,0,c.width,c.height);
+    const all = curStroke.current ? [...strokes, curStroke.current] : strokes;
+    all.forEach(s=>{
+      const pts=s.pts; if(!pts||!pts.length) return;
+      ctx.strokeStyle=s.color; ctx.lineWidth=s.grosor;
+      ctx.lineCap="round"; ctx.lineJoin="round";
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x*c.width, pts[0].y*c.height);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*c.width, pts[i].y*c.height);
+      ctx.stroke();
+    });
+  }
+  useEffect(()=>{ redraw(); },[strokes]);
+  useEffect(()=>{
+    const ro=new ResizeObserver(()=>resizeCanvas());
+    if(videoRef.current) ro.observe(videoRef.current);
+    window.addEventListener("resize",resizeCanvas);
+    return ()=>{ ro.disconnect(); window.removeEventListener("resize",resizeCanvas); };
+  },[src]);
+
+  // ── Dibujo ────────────────────────────────────────────────────────
+  function ptFromEvent(e){
+    const c=canvasRef.current; const r=c.getBoundingClientRect();
+    const t=e.touches&&e.touches[0];
+    const cx=(t?t.clientX:e.clientX)-r.left;
+    const cy=(t?t.clientY:e.clientY)-r.top;
+    return { x:Math.max(0,Math.min(1,cx/r.width)), y:Math.max(0,Math.min(1,cy/r.height)) };
+  }
+  function down(e){
+    if(!src) return;
+    e.preventDefault();
+    drawing.current=true;
+    curStroke.current={ color, grosor, pts:[ptFromEvent(e)] };
+    redraw();
+  }
+  function move(e){
+    if(!drawing.current) return;
+    e.preventDefault();
+    const p=ptFromEvent(e);
+    if(tool==="linea") curStroke.current.pts=[curStroke.current.pts[0], p];
+    else curStroke.current.pts.push(p);
+    redraw();
+  }
+  function up(){
+    if(!drawing.current) return;
+    drawing.current=false;
+    if(curStroke.current && curStroke.current.pts.length>1)
+      setStrokes(s=>[...s, curStroke.current]);
+    curStroke.current=null;
+  }
+  function undo(){ setStrokes(s=>s.slice(0,-1)); }
+  function limpiar(){ setStrokes([]); }
+
+  // ── Reproducción ──────────────────────────────────────────────────
+  function togglePlay(){ const v=videoRef.current; if(!v) return; v.paused?v.play():v.pause(); }
+  function step(d){ const v=videoRef.current; if(!v) return; v.pause(); v.currentTime=Math.max(0,Math.min(v.duration||0, v.currentTime+d/FPS)); }
+  function restart(){ const v=videoRef.current; if(!v) return; v.currentTime=0; }
+  function setSpd(s){ setSpeed(s); if(videoRef.current) videoRef.current.playbackRate=s; }
+  function seek(e){ const v=videoRef.current; if(!v) return; v.currentTime=Number(e.target.value); }
+  useEffect(()=>{ if(videoRef.current) videoRef.current.playbackRate=speed; },[src]);
+
+  // Atajos de teclado
+  useEffect(()=>{
+    function onKey(e){
+      if(e.target.tagName==="INPUT") return;
+      if(e.key===" "){ e.preventDefault(); togglePlay(); }
+      else if(e.key==="ArrowLeft"){ e.preventDefault(); step(-1); }
+      else if(e.key==="ArrowRight"){ e.preventDefault(); step(1); }
+      else if(e.key==="Escape"){ onClose&&onClose(); }
+    }
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[]);
+
+  function fmtT(t){ t=t||0; const m=Math.floor(t/60); const s=Math.floor(t%60); return `${m}:${String(s).padStart(2,"0")}`; }
+
+  const ctrlBtn={background:"#2a2f33",color:"#fff",border:"none",borderRadius:9,minWidth:44,height:42,fontSize:17,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 10px"};
+
+  return <div style={{position:"fixed",inset:0,background:"rgba(10,15,12,.97)",zIndex:1000,display:"flex",flexDirection:"column"}}>
+    {/* Barra superior */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",background:G.fairway,color:"#fff",flexShrink:0}}>
+      <span style={{fontWeight:700,fontSize:15}}>🎥 Analizador de vídeo</span>
+      <div style={{display:"flex",gap:8}}>
+        {src&&<button onClick={()=>{setSrc("");setStrokes([]);curStroke.current=null;}} style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"none",borderRadius:8,padding:"6px 12px",fontSize:13,fontWeight:600,cursor:"pointer"}}>📂 Otro vídeo</button>}
+        <button onClick={onClose} style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"none",borderRadius:8,padding:"6px 12px",fontSize:13,fontWeight:600,cursor:"pointer"}}>✕ Cerrar</button>
+      </div>
+    </div>
+
+    {!src ? (
+      /* Pantalla de carga */
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:"#fff",borderRadius:16,padding:28,maxWidth:440,width:"100%",textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:8}}>🎬</div>
+          {subiendo ? (
+            <>
+              <h3 style={{margin:"0 0 6px",color:G.fairway}}>Preparando tu vídeo…</h3>
+              <p style={{fontSize:13,color:G.soft,margin:"0 0 16px"}}>
+                {fase==="optimizar"
+                  ? "Optimizando para la web (esto tarda unos segundos)…"
+                  : "Subiendo vídeo… "+prog+"%"}
+              </p>
+              <div style={{height:8,background:"#eee",borderRadius:99,overflow:"hidden"}}>
+                <div style={{height:"100%",width:(fase==="optimizar"?100:prog)+"%",background:G.grass,
+                  transition:"width .2s",borderRadius:99}}/>
+              </div>
+              <p style={{fontSize:12,color:G.soft,margin:"14px 0 0"}}>No cierres esta ventana.</p>
+            </>
+          ) : (
+            <>
+              <h3 style={{margin:"0 0 6px",color:G.fairway}}>Cargar un vídeo para analizar</h3>
+              <p style={{fontSize:13,color:G.soft,margin:"0 0 18px"}}>Sube un vídeo desde tu dispositivo o pega un enlace. Luego podrás dibujar líneas de colores y reproducirlo a cámara lenta.</p>
+              <label onClick={()=>dbgLog("toque en botón subir")}
+                style={{position:"relative",display:"inline-block",background:G.grass,color:"#fff",borderRadius:10,padding:"12px 22px",fontSize:15,fontWeight:700,cursor:"pointer"}}>
+                📂 Subir vídeo del dispositivo
+                <input ref={fileInputRef} type="file" accept="video/*"
+                  onClick={()=>dbgLog("input activado (abriendo galería)")}
+                  onChange={loadFile}
+                  style={{position:"absolute",width:1,height:1,padding:0,margin:-1,overflow:"hidden",clip:"rect(0 0 0 0)",whiteSpace:"nowrap",border:0}}/>
+              </label>
+              <div style={{marginTop:16,padding:"12px 14px",background:"#F1F6F1",border:"1px dashed "+G.grass,borderRadius:10,textAlign:"left"}}>
+                <div style={{fontSize:13,fontWeight:700,color:G.fairway,marginBottom:8}}>Si el botón de arriba no abre nada, usa este selector clásico:</div>
+                <input type="file" accept="video/*"
+                  onClick={()=>dbgLog("selector clásico tocado")}
+                  onChange={loadFile}
+                  style={{fontSize:15,maxWidth:"100%"}}/>
+              </div>
+              {esAppInstalada() && (
+                <div style={{marginTop:14,background:"#FFF7E6",border:"1px solid #F0C36D",borderRadius:10,padding:"10px 12px",fontSize:12.5,color:"#7A5A00",textAlign:"left"}}>
+                  Estás usando la app instalada en la pantalla de inicio. En iPhone, subir vídeos desde aquí a veces falla. Si no funciona, ábrela en Safari:
+                  <a href={typeof window!=="undefined"?window.location.href:"#"} target="_blank" rel="noopener noreferrer"
+                     style={{display:"block",marginTop:8,background:G.purple,color:"#fff",textDecoration:"none",borderRadius:8,padding:"9px 14px",fontWeight:700,textAlign:"center"}}>
+                    🧭 Abrir en Safari para subir el vídeo
+                  </a>
+                </div>
+              )}
+              <div style={{margin:"18px 0 8px",color:G.soft,fontSize:12}}>— o pega un enlace —</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="https://…"
+                  style={{flex:1,border:"1px solid #ccc",borderRadius:8,padding:"9px 12px",fontSize:14,fontFamily:"inherit",boxSizing:"border-box"}}/>
+                <button onClick={loadUrl} style={{background:G.purple,color:"#fff",border:"none",borderRadius:8,padding:"0 16px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cargar</button>
+              </div>
+              {err && <div style={{marginTop:14,color:G.danger,fontSize:13,fontWeight:600}}>⚠️ {err}</div>}
+              <div style={{marginTop:18,textAlign:"left",background:"#f6f6f6",border:"1px solid #e2e2e2",borderRadius:8,padding:"8px 10px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <b style={{fontSize:11,color:"#555"}}>Diagnóstico (para el técnico)</b>
+                  <button type="button" onClick={()=>{ dbgClear(); setDbg([]); }} style={{fontSize:10,background:"none",border:"1px solid #ccc",borderRadius:6,padding:"2px 8px",cursor:"pointer",color:"#666"}}>Limpiar</button>
+                </div>
+                <div style={{maxHeight:150,overflow:"auto",fontFamily:"monospace",fontSize:10,color:"#333",lineHeight:1.5}}>
+                  {dbg.length===0 ? <div style={{color:"#999"}}>— sin registros aún —</div>
+                    : dbg.map((l,i)=><div key={i}>{l}</div>)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    ) : (
+      <>
+        {/* Zona de vídeo + dibujo */}
+        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:10,minHeight:0,overflow:"hidden"}}>
+          <div style={{position:"relative",display:"inline-block",maxWidth:"100%",maxHeight:"100%"}}>
+            <video ref={videoRef} src={src} playsInline preload="metadata"
+              onLoadedMetadata={e=>{setErr(""); setDur(e.target.duration||0); e.target.playbackRate=speed; resizeCanvas();}}
+              onLoadedData={()=>{clearLoadTimeout(); setLoading(false);}}
+              onCanPlay={()=>{clearLoadTimeout(); setLoading(false);}}
+              onTimeUpdate={e=>setCur(e.target.currentTime||0)}
+              onError={()=>{clearLoadTimeout(); setLoading(false); setErr("No se pudo cargar este vídeo. Puede que el formato no sea compatible (los vídeos de iPhone en alta eficiencia/HEVC a veces no se reproducen en la web) o, si es un enlace, que no apunte a un archivo de vídeo directo. Prueba a subir el archivo desde tu dispositivo.");}}
+              onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}
+              style={{display:"block",maxWidth:"100%",maxHeight:"78vh",borderRadius:8,background:"#000"}}/>
+            <canvas ref={canvasRef}
+              onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={up}
+              onTouchStart={down} onTouchMove={move} onTouchEnd={up}
+              style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none"}}/>
+            {loading&&!err&&<div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",gap:12,alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+              <div style={{width:46,height:46,border:"4px solid rgba(255,255,255,.25)",borderTop:"4px solid #fff",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+              <div style={{color:"rgba(255,255,255,.85)",fontSize:13}}>Cargando vídeo…</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>}
+            {err&&<div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",alignItems:"center",justifyContent:"center",padding:20,textAlign:"center"}}>
+              <div style={{background:"rgba(0,0,0,.8)",color:"#fff",borderRadius:12,padding:"16px 20px",maxWidth:380,fontSize:13,lineHeight:1.5}}>⚠️ {err}</div>
+            </div>}
+          </div>
+        </div>
+
+        {/* Herramientas de dibujo */}
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 12px",background:"#15191c",flexShrink:0}}>
+          <div style={{display:"flex",gap:5}}>
+            {COLORS.map(c=>(
+              <button key={c} onClick={()=>setColor(c)} title={c}
+                style={{width:26,height:26,borderRadius:"50%",background:c,cursor:"pointer",
+                  border:color===c?"3px solid #fff":"2px solid #555"}}/>
+            ))}
+            <label style={{width:26,height:26,borderRadius:"50%",overflow:"hidden",border:"2px solid #555",cursor:"pointer",position:"relative",display:"inline-block"}}>
+              <span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#fff",pointerEvents:"none"}}>🎨</span>
+              <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{opacity:0,width:"100%",height:"100%",cursor:"pointer"}}/>
+            </label>
+          </div>
+          <div style={{width:1,height:24,background:"#3a3f43"}}/>
+          <button onClick={()=>setTool("linea")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="linea"?G.grass:"#2a2f33"}}>📏 Línea</button>
+          <button onClick={()=>setTool("libre")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="libre"?G.grass:"#2a2f33"}}>✏️ Libre</button>
+          <div style={{display:"flex",alignItems:"center",gap:6,color:"#bbb",fontSize:12}}>
+            Grosor
+            <input type="range" min={1} max={12} value={grosor} onChange={e=>setGrosor(Number(e.target.value))} style={{width:80}}/>
+          </div>
+          <div style={{width:1,height:24,background:"#3a3f43"}}/>
+          <button onClick={undo} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px"}}>↩ Deshacer</button>
+          <button onClick={limpiar} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:"#7a2a2a"}}>🗑 Limpiar</button>
+        </div>
+
+        {/* Barra de progreso */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 16px",background:"#15191c",flexShrink:0}}>
+          <span style={{color:"#bbb",fontSize:12,minWidth:38,textAlign:"right"}}>{fmtT(cur)}</span>
+          <input type="range" min={0} max={dur||0} step={0.01} value={cur} onChange={seek} style={{flex:1}}/>
+          <span style={{color:"#bbb",fontSize:12,minWidth:38}}>{fmtT(dur)}</span>
+        </div>
+
+        {/* Controles de reproducción */}
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"center",padding:"10px 12px 14px",background:"#15191c",flexShrink:0}}>
+          <button onClick={restart} title="Al inicio" style={ctrlBtn}>⏮</button>
+          <button onClick={()=>step(-5)} title="Retroceder" style={ctrlBtn}>⏪</button>
+          <button onClick={()=>step(-1)} title="Fotograma atrás" style={ctrlBtn}>◀|</button>
+          <button onClick={togglePlay} style={{...ctrlBtn,background:G.grass,minWidth:64,fontSize:22}}>{playing?"⏸":"▶"}</button>
+          <button onClick={()=>step(1)} title="Fotograma adelante" style={ctrlBtn}>|▶</button>
+          <button onClick={()=>step(5)} title="Avanzar" style={ctrlBtn}>⏩</button>
+          <div style={{width:1,height:24,background:"#3a3f43",margin:"0 4px"}}/>
+          <span style={{color:"#bbb",fontSize:12}}>Velocidad</span>
+          {[0.25,0.5,1].map(s=>(
+            <button key={s} onClick={()=>setSpd(s)} style={{...ctrlBtn,minWidth:0,height:36,fontSize:13,fontWeight:600,padding:"0 12px",background:speed===s?G.purple:"#2a2f33"}}>{s===1?"1x":s+"x"}</button>
+          ))}
+        </div>
+      </>
+    )}
+  </div>;
+}
+
 function ModAnalisis({data,setData}){
+  const [analizar,setAnalizar]=useState(null); // {url} | null
   const [modal,setModal]=useState(null);
   const [verModal,setVerModal]=useState(null);
+  const [repApp,setRepApp]=useState(false); // optimizando vídeo existente
   const [form,setForm]=useState({});
   const [alumnoSel,setAlumnoSel]=useState("todos");
   const [aiLoading,setAiLoading]=useState(false);
@@ -3951,6 +4757,7 @@ function ModAnalisis({data,setData}){
     <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
       <Sel value={alumnoSel} onChange={setAlumnoSel} options={[{value:"todos",label:"Todos"},...alumnos.map(a=>({value:a.id,label:a.nombre}))]}/>
       <Btn color="purple" onClick={()=>{setForm(blank());setModal("new");}}>+ Nuevo análisis</Btn>
+      <Btn color="sky" onClick={()=>setAnalizar({url:""})}>🎥 Analizar vídeo</Btn>
     </div>
     <div style={{display:"grid",gap:10}}>
       {filtrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30}}>Sin análisis.</div>}
@@ -3987,7 +4794,23 @@ function ModAnalisis({data,setData}){
           <div key={k}><span style={{fontSize:11,color:G.soft}}>{k}</span><div style={{fontWeight:700}}>{v}</div></div>
         ))}
       </div>
-      {verItem.videoUrl&&<div style={{marginBottom:14}}><a href={verItem.videoUrl} target="_blank" rel="noreferrer" style={{background:G.purple,color:G.white,borderRadius:8,padding:"8px 16px",textDecoration:"none",fontSize:14,fontWeight:600,display:"inline-block"}}>▶ Abrir vídeo</a></div>}
+      {verItem.videoUrl&&<div style={{marginBottom:14}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <a href={verItem.videoUrl} target="_blank" rel="noreferrer" style={{background:G.purple,color:G.white,borderRadius:8,padding:"8px 16px",textDecoration:"none",fontSize:14,fontWeight:600,display:"inline-block"}}>▶ Abrir vídeo</a>
+          <button onClick={()=>setAnalizar({url:verItem.videoUrl})} style={{background:G.sky,color:G.white,border:"none",borderRadius:8,padding:"8px 16px",fontSize:14,fontWeight:600,cursor:"pointer"}}>🎥 Analizar</button>
+          <button disabled={repApp} onClick={async()=>{
+            setRepApp(true);
+            try{
+              const nuevaUrl=await optimizarVideoEnServidor(verItem.videoUrl);
+              setData({...data,analisis:(data.analisis||[]).map(x=>x.id===verItem.id?{...x,videoUrl:nuevaUrl}:x)});
+              alert("✅ Vídeo optimizado. Ya debería reproducirse correctamente. Pulsa \"Analizar\".");
+            }catch(e){
+              alert("No se pudo optimizar el vídeo. "+(e.message||""));
+            }finally{ setRepApp(false); }
+          }} style={{background:repApp?G.soft:G.flag,color:G.white,border:"none",borderRadius:8,padding:"8px 16px",fontSize:14,fontWeight:600,cursor:repApp?"default":"pointer"}}>{repApp?"Optimizando…":"🔧 Optimizar para web"}</button>
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:6}}>Si el vídeo no se reproduce (típico en vídeos antiguos de iPhone), pulsa <b>🔧 Optimizar para web</b> una vez y luego <b>Analizar</b>.</div>
+      </div>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <div style={{background:G.mist,borderRadius:10,padding:12}}>
           <div style={{fontSize:12,fontWeight:700,color:G.grass,marginBottom:6}}>✔ Positivos</div>
@@ -4026,7 +4849,10 @@ function ModAnalisis({data,setData}){
         <Field label="Palo"><Sel value={form.palo||"7-hierro"} onChange={v=>setForm({...form,palo:v})} options={PALO_OPTIONS.map(p=>({value:p,label:p}))}/></Field>
         <Field label="Valoración"><Sel value={form.valoracion||"3"} onChange={v=>setForm({...form,valoracion:v})} options={["1","2","3","4","5"].map(v=>({value:v,label:"★".repeat(Number(v))+" ("+v+")"}))}/></Field>
       </div>
-      <Field label="URL vídeo"><Input value={form.videoUrl||""} onChange={v=>setForm({...form,videoUrl:v})} placeholder="https://…"/></Field>
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:12,fontWeight:600,color:G.soft,display:"block",marginBottom:6}}>🎬 VÍDEO</label>
+        <VideoUploader value={form.videoUrl||""} onChange={u=>setForm({...form,videoUrl:u})}/>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <div><div style={{fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>✔ POSITIVOS</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosBuenos||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosBuenos",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.grass:"#e8e8e8",color:s?G.white:G.soft}}>{a}</button>;})}</div>
@@ -4055,6 +4881,8 @@ function ModAnalisis({data,setData}){
         <Btn color="purple" onClick={save}>Guardar</Btn>
       </div>
     </Modal>}
+
+    {analizar&&<AnalizadorVideo initialUrl={analizar.url||""} onClose={()=>setAnalizar(null)}/>}
   </div>;
 }
 
@@ -4201,6 +5029,123 @@ function ModPagos({data,setData}){
     const a=document.createElement("a");a.href=url;a.download="contabilidad-academia.csv";a.click();URL.revokeObjectURL(url);
   }
 
+  // ── Informe PDF pagos pendientes ─────────────────────────────────
+  async function generarPDFPendientes(){
+    await cargarJsPDF();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const VERDE = [15, 80, 30];
+    const DORADO= [180, 140, 60];
+    const ROJO  = [192, 57, 43];
+    const BLANCO= [255, 255, 255];
+    const GRIS  = [245, 247, 245];
+
+    const hoy = today();
+    const mesActual = hoy.slice(0,7);
+
+    // Clases pasadas sin cobrar con precio > 0
+    const clases = data.clases||[];
+    const pendientes = clases.filter(c=>
+      !c.asistio && c.fecha <= hoy && Number(c.precio||0)>0
+    );
+
+    // Agrupar por alumno
+    const porAlumno = {};
+    pendientes.forEach(c=>{
+      const al = alumnos.find(a=>a.id===c.alumnoId);
+      const nombre = al?.nombre||"Alumno desconocido";
+      const tel    = al?.telefono||"";
+      if(!porAlumno[nombre]) porAlumno[nombre]={nombre,tel,clases:[],total:0};
+      porAlumno[nombre].clases.push(c);
+      porAlumno[nombre].total += Number(c.precio||0);
+    });
+    const filas = Object.values(porAlumno).sort((a,b)=>b.total-a.total);
+    const totalGlobal = filas.reduce((s,f)=>s+f.total,0);
+
+    // ── Cabecera ──
+    doc.setFillColor(...VERDE);
+    doc.rect(0, 0, W, 32, "F");
+    doc.setFillColor(...DORADO);
+    doc.rect(0, 32, W, 2, "F");
+
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(16); doc.setFont("helvetica","bold");
+    doc.text("GOLF CIUDAD REAL C.D.", W/2, 12, {align:"center"});
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 19, {align:"center"});
+    doc.setFontSize(11); doc.setFont("helvetica","bold");
+    doc.text("INFORME DE PAGOS PENDIENTES", W/2, 27, {align:"center"});
+
+    // ── Subheader ──
+    doc.setFillColor(...GRIS);
+    doc.rect(0, 34, W, 12, "F");
+    doc.setTextColor(60,60,60);
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text(`Fecha del informe: ${hoy}`, 14, 41);
+    doc.text(`Clases pendientes: ${pendientes.length}`, W/2, 41, {align:"center"});
+    doc.text(`Total pendiente: ${totalGlobal.toFixed(2)} EUR`, W-14, 41, {align:"right"});
+
+    let y = 52;
+
+    if(filas.length===0){
+      doc.setTextColor(...VERDE);
+      doc.setFontSize(13); doc.setFont("helvetica","bold");
+      doc.text("No hay pagos pendientes. ¡Todo al dia!", W/2, y+20, {align:"center"});
+    } else {
+      filas.forEach((f,idx)=>{
+        // Comprobar salto de pagina
+        if(y > 255){
+          doc.addPage();
+          y = 14;
+        }
+
+        // Fila alumno
+        doc.setFillColor(idx%2===0?240:248, idx%2===0?247:250, idx%2===0?240:248);
+        const bloqueH = 8 + f.clases.length * 6;
+        doc.rect(10, y-4, W-20, bloqueH, "F");
+
+        doc.setFontSize(10); doc.setFont("helvetica","bold");
+        doc.setTextColor(...VERDE);
+        doc.text(f.nombre, 14, y+1);
+        if(f.tel){
+          doc.setFontSize(8); doc.setFont("helvetica","normal");
+          doc.setTextColor(100,100,100);
+          doc.text("Tel: "+f.tel, 14, y+6);
+        }
+        // Total alumno
+        doc.setFontSize(10); doc.setFont("helvetica","bold");
+        doc.setTextColor(...ROJO);
+        doc.text(f.total.toFixed(2)+" EUR", W-14, y+1, {align:"right"});
+
+        y += 10;
+
+        // Clases de este alumno
+        f.clases.forEach(c=>{
+          if(y > 265){ doc.addPage(); y = 14; }
+          doc.setFontSize(8); doc.setFont("helvetica","normal");
+          doc.setTextColor(80,80,80);
+          const label = `  • ${c.fecha}  ${c.hora||""}  ${c.tipo||""}  ${c.zona||""}`;
+          doc.text(label, 16, y);
+          doc.text(Number(c.precio).toFixed(2)+" EUR", W-14, y, {align:"right"});
+          y += 6;
+        });
+        y += 4;
+      });
+
+      // ── Pie totales ──
+      if(y > 255){ doc.addPage(); y = 14; }
+      doc.setFillColor(...VERDE);
+      doc.rect(10, y, W-20, 10, "F");
+      doc.setFontSize(11); doc.setFont("helvetica","bold");
+      doc.setTextColor(...BLANCO);
+      doc.text("TOTAL PENDIENTE", 14, y+7);
+      doc.text(totalGlobal.toFixed(2)+" EUR", W-14, y+7, {align:"right"});
+    }
+
+    doc.save(`pagos_pendientes_${hoy}.pdf`);
+  }
+
   // ── Colores tabs ─────────────────────────────────────────────────
   const TABS=[
     {id:"resumen",label:"📊 Resumen"},
@@ -4233,11 +5178,18 @@ function ModPagos({data,setData}){
     </div>
     {(filtroDesde||filtroHasta)&&<button onClick={()=>{setFiltroDesde("");setFiltroHasta("");}}
       style={{background:"#eee",border:"none",borderRadius:6,padding:"5px 10px",fontSize:12,cursor:"pointer"}}>✕ Limpiar</button>}
-    <button onClick={exportarCSV}
-      style={{background:"#217346",color:"#fff",border:"none",borderRadius:6,
-        padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>
-      📊 Exportar CSV
-    </button>
+    <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+      <button onClick={exportarCSV}
+        style={{background:"#217346",color:"#fff",border:"none",borderRadius:6,
+          padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📊 Exportar CSV
+      </button>
+      <button onClick={generarPDFPendientes}
+        style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:6,
+          padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📄 PDF Pendientes
+      </button>
+    </div>
   </div>;
 
   // ── RENDER ───────────────────────────────────────────────────────
@@ -5410,6 +6362,51 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const [hoyosAlumno,setHoyosAlumno]=useState(initHoyos(18));
   const [hoyoActualAlumno,setHoyoActualAlumno]=useState(0);
   const [modoEntradaAlumno,setModoEntradaAlumno]=useState("hoyo");
+  const {mostrarBanner,mostrarModal,UI:NotifUI} = useNotifManager();
+
+  // ── Detección de cambios para notificaciones al alumno ────────────
+  const prevClasesAlumno   = useRef((data.clases||[]).filter(c=>c.alumnoId===alumnoId).length);
+  const prevInformesAlumno = useRef((data.informes||[]).filter(i=>i.alumnoId===alumnoId&&i.publicado).length);
+  const prevMsgsAlumno     = useRef((data.mensajes||[]).filter(m=>m.destinatario===alumnoId&&!m.leido).length);
+  const prevArchivosAlumno = useRef((data.archivosProfesor||[]).filter(a=>
+    a.destinatarios==="todos"||a.destinatarios==="activos"||(a.alumnosSelec||[]).includes(alumnoId)).length);
+
+  useEffect(()=>{
+    const clasesAlumno=(data.clases||[]).filter(c=>c.alumnoId===alumnoId).length;
+    const informesAlumno=(data.informes||[]).filter(i=>i.alumnoId===alumnoId&&i.publicado).length;
+    const msgsAlumno=(data.mensajes||[]).filter(m=>m.destinatario===alumnoId&&!m.leido).length;
+    const archivosAlumno=(data.archivosProfesor||[]).filter(a=>
+      a.destinatarios==="todos"||a.destinatarios==="activos"||(a.alumnosSelec||[]).includes(alumnoId)).length;
+
+    // Nueva clase → Modal importante
+    if(clasesAlumno>prevClasesAlumno.current){
+      const miClases=(data.clases||[]).filter(c=>c.alumnoId===alumnoId);
+      const ultima=miClases.at(-1);
+      mostrarModal("clase","¡Nueva clase programada!",
+        "Tu profesor ha programado una nueva clase para ti.",
+        `📅 ${fmtDate(ultima?.fecha)} · ${ultima?.horaInicio||ultima?.hora||""} · ${ultima?.zona||""}`,
+        ()=>setTab("calendario"));
+    }
+    // Nuevo informe → Modal importante
+    if(informesAlumno>prevInformesAlumno.current){
+      mostrarModal("informe","¡Nuevo informe disponible!",
+        "Tu profesor ha publicado un nuevo informe de seguimiento para ti.",
+        "",()=>setTab("informes"));
+    }
+    // Nuevo mensaje → Banner
+    if(msgsAlumno>prevMsgsAlumno.current){
+      mostrarBanner("mensaje","Nuevo mensaje de tu profesor","Tienes un mensaje sin leer",()=>setTab("mensajes"));
+    }
+    // Nuevo archivo → Banner
+    if(archivosAlumno>prevArchivosAlumno.current){
+      mostrarBanner("archivo","Nuevo archivo disponible","Tu profesor te ha enviado un archivo",()=>setTab("inicio"));
+    }
+
+    prevClasesAlumno.current=clasesAlumno;
+    prevInformesAlumno.current=informesAlumno;
+    prevMsgsAlumno.current=msgsAlumno;
+    prevArchivosAlumno.current=archivosAlumno;
+  },[data]);
   const alumno=data.alumnos.find(a=>a.id===alumnoId);
   const analisis=(data.analisis||[]).filter(a=>a.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const estadisticas=(data.estadisticas||[]).filter(s=>s.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -5509,6 +6506,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   ];
 
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
+    {NotifUI}
     {/* Header */}
     <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:680,margin:"0 auto"}}>
@@ -12706,6 +13704,7 @@ const ADMIN_TABS=[
   {id:"archivos",label:"Archivos",icon:"📁"},
   {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
   {id:"tareas",label:"Tareas",icon:"📋"},
+  {id:"bonos",label:"Bonos",icon:"🎫"},
   {id:"pagos",label:"Pagos",icon:"💶"},
   {id:"ajustes",label:"Ajustes",icon:"⚙️"},
 // ── POLLITOS ampliación (p051-p075) ──────────────────────────────
@@ -13334,8 +14333,729 @@ function ModArchivos({data,setData}){
   </div>;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// PDF: INFORME DE BONOS
+// ═══════════════════════════════════════════════════════════════════
+async function generarPDFBonos(bonos, alumnos, filtroAlumnoId="todos"){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const VERDE  = [15, 80, 30];
+  const DORADO = [180, 140, 60];
+  const GRIS   = [245, 247, 245];
+  const BLANCO = [255, 255, 255];
+  const SUAVE  = [120, 120, 120];
+
+  const hoy = (new Date()).toISOString().slice(0,10);
+
+  // Filtrar y agrupar por alumno
+  let lista = filtroAlumnoId==="todos" ? bonos : bonos.filter(b=>b.alumnoId===filtroAlumnoId);
+  const porAlumno = {};
+  lista.forEach(b=>{
+    if(!porAlumno[b.alumnoId]) porAlumno[b.alumnoId]=[];
+    porAlumno[b.alumnoId].push(b);
+  });
+  const alumnosData = Object.keys(porAlumno)
+    .map(id=>{
+      const al = alumnos.find(a=>a.id===id);
+      const bs = porAlumno[id].sort((a,b2)=>(b2.fechaCompra||"").localeCompare(a.fechaCompra||""));
+      const totalClases = bs.reduce((s,b)=>s+Number(b.clases),0);
+      const totalUsadas = bs.reduce((s,b)=>s+b.usadas,0);
+      const totalPrecio = bs.reduce((s,b)=>s+Number(b.precio||0),0);
+      return { nombre:al?.nombre||"Alumno", telefono:al?.telefono||"", bonos:bs, totalClases, totalUsadas, totalPrecio };
+    })
+    .sort((a,b)=>a.nombre.localeCompare(b.nombre));
+
+  // Totales globales
+  const totalBonosActivos = lista.filter(b=>b.usadas<Number(b.clases)).length;
+  const totalClasesVendidas = lista.reduce((s,b)=>s+Number(b.clases),0);
+  const totalClasesUsadas   = lista.reduce((s,b)=>s+b.usadas,0);
+  const totalIngresos       = lista.reduce((s,b)=>s+Number(b.precio||0),0);
+
+  // ── Cabecera ──
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 0, W, 32, "F");
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 32, W, 2, "F");
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(16); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 11, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de Espana  ·  Academia Profesional de Golf", W/2, 18, {align:"center"});
+  doc.setFontSize(11); doc.setFont("helvetica","bold");
+  doc.text("INFORME DE BONOS DE CLASES", W/2, 27, {align:"center"});
+
+  // ── Subheader ──
+  doc.setFillColor(...GRIS);
+  doc.rect(0, 34, W, 12, "F");
+  doc.setTextColor(60,60,60);
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text(`Fecha: ${hoy}`, 14, 41);
+  doc.text(`Bonos activos: ${totalBonosActivos}`, W/2, 41, {align:"center"});
+  doc.text(`Total ingresos: ${totalIngresos.toFixed(2)} EUR`, W-14, 41, {align:"right"});
+
+  // ── KPIs ──
+  let y = 54;
+  const kpis = [
+    ["Bonos totales", lista.length],
+    ["Bonos activos", totalBonosActivos],
+    ["Clases vendidas", totalClasesVendidas],
+    ["Clases usadas", totalClasesUsadas],
+    ["Clases restantes", totalClasesVendidas-totalClasesUsadas],
+  ];
+  const kw = (W-28)/kpis.length;
+  kpis.forEach(([label,val],i)=>{
+    const x=14+i*kw;
+    doc.setFillColor(i%2===0?238:248, i%2===0?246:252, i%2===0?238:248);
+    doc.rect(x, y, kw-2, 16, "F");
+    doc.setTextColor(...VERDE); doc.setFontSize(13); doc.setFont("helvetica","bold");
+    doc.text(String(val), x+kw/2-1, y+8, {align:"center"});
+    doc.setTextColor(...SUAVE); doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text(label, x+kw/2-1, y+13, {align:"center"});
+  });
+  y += 22;
+
+  // ── Por alumno ──
+  alumnosData.forEach((a, ai)=>{
+    if(y > 255){ doc.addPage(); y=14; }
+
+    // Bloque alumno - cabecera
+    doc.setFillColor(...VERDE);
+    doc.rect(10, y, W-20, 9, "F");
+    doc.setTextColor(...BLANCO); doc.setFontSize(10); doc.setFont("helvetica","bold");
+    doc.text(a.nombre, 14, y+6);
+    if(a.telefono){
+      doc.setFontSize(8); doc.setFont("helvetica","normal");
+      doc.text(`Tel: ${a.telefono}`, W-14, y+6, {align:"right"});
+    }
+    y += 11;
+
+    // Resumen alumno
+    doc.setFillColor(230, 245, 230);
+    doc.rect(10, y, W-20, 7, "F");
+    doc.setTextColor(40,80,40); doc.setFontSize(8); doc.setFont("helvetica","normal");
+    doc.text(`${a.bonos.length} bono(s)  ·  ${a.totalClases} clases compradas  ·  ${a.totalUsadas} usadas  ·  ${a.totalClases-a.totalUsadas} restantes${a.totalPrecio>0?"  ·  "+a.totalPrecio.toFixed(2)+" EUR":""}`, 14, y+4.5);
+    y += 9;
+
+    // Bonos del alumno
+    a.bonos.forEach((b,bi)=>{
+      if(y > 270){ doc.addPage(); y=14; }
+      const agotado = b.usadas >= Number(b.clases);
+      const pct = Math.round(((b.usadas||0)/Number(b.clases))*100);
+      doc.setFillColor(bi%2===0?252:246, bi%2===0?252:250, bi%2===0?252:246);
+      doc.rect(12, y, W-24, 14, "F");
+      // Punto de estado
+      doc.setFillColor(...(agotado?SUAVE:VERDE));
+      doc.circle(17, y+5, 2, "F");
+      // Pack y tipo
+      doc.setTextColor(40,40,40); doc.setFontSize(9); doc.setFont("helvetica","bold");
+      doc.text(`Pack ${b.clases} clases  -  ${b.tipo||"Individual"}`, 22, y+5);
+      // Estado
+      doc.setFontSize(8); doc.setFont("helvetica","normal");
+      doc.setTextColor(agotado?120:15, agotado?120:100, agotado?120:40);
+      doc.text(agotado?"Completado":"Activo", 22, y+10);
+      // Fecha y precio
+      doc.setTextColor(...SUAVE);
+      if(b.fechaCompra) doc.text(`Compra: ${b.fechaCompra}`, W/2, y+5, {align:"center"});
+      if(b.precio) doc.text(`${Number(b.precio).toFixed(2)} EUR`, W-14, y+5, {align:"right"});
+      // Progreso texto
+      doc.setTextColor(60,60,60);
+      doc.text(`${b.usadas||0}/${b.clases} clases usadas (${pct}%)`, W/2, y+10, {align:"center"});
+      // Barra de progreso
+      const barX=14, barY=y+11.5, barW=W-28, barH=2;
+      doc.setFillColor(220,220,220); doc.rect(barX, barY, barW, barH, "F");
+      doc.setFillColor(...(agotado?SUAVE:VERDE)); doc.rect(barX, barY, barW*(pct/100), barH, "F");
+      y += 16;
+    });
+    y += 4;
+  });
+
+  // ── Footer ──
+  const pages = doc.internal.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFillColor(...VERDE);
+    doc.rect(0, 291, W, 6, "F");
+    doc.setTextColor(...BLANCO); doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text("Golf Ciudad Real C.D.  ·  Informe de Bonos de Clases  ·  Confidencial", W/2, 295, {align:"center"});
+    doc.text(`Pag. ${p}/${pages}`, W-10, 295, {align:"right"});
+  }
+
+  const label = filtroAlumnoId==="todos" ? "todos" : (alumnos.find(a=>a.id===filtroAlumnoId)?.nombre||"alumno").replace(/\s+/g,"_");
+  doc.save(`bonos_${label}_${hoy}.pdf`);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: BONOS DE CLASES
+// ═══════════════════════════════════════════════════════════════════
+function ModBonos({data, setData}){
+  const [modalBono, setModalBono] = useState(null);
+  const [form, setForm]           = useState({});
+  const [filtroAlumno, setFiltroAlumno] = useState("todos");
+  const [filtroEstado, setFiltroEstado] = useState("activos");
+  const [vistaHistorial, setVistaHistorial] = useState(false);
+
+  const alumnos = data.alumnos||[];
+  const bonos   = data.bonos||[];
+
+  const PACKS = [
+    {n:5,  label:"Pack 5 clases",  color:"#3a7abf"},
+    {n:10, label:"Pack 10 clases", color:G.fairway},
+    {n:20, label:"Pack 20 clases", color:G.grass},
+  ];
+
+  function abrirNuevo(){
+    setForm({alumnoId:alumnos[0]?.id||"",tipo:"Individual",clases:10,precio:"",fechaCompra:today(),notas:""});
+    setModalBono("new");
+  }
+
+  function guardar(){
+    if(!form.alumnoId||!form.clases) return;
+    const bono={...form,id:uid(),clases:Number(form.clases),usadas:0};
+    setData({...data,bonos:[...bonos,bono]});
+    setModalBono(null);
+  }
+
+  function usarClase(id){
+    const b=bonos.find(x=>x.id===id);
+    if(!b||b.usadas>=Number(b.clases)) return;
+    setData({...data,bonos:bonos.map(x=>x.id===id?{...x,usadas:x.usadas+1}:x)});
+  }
+
+  function devolverClase(id){
+    const b=bonos.find(x=>x.id===id);
+    if(!b||b.usadas<=0) return;
+    setData({...data,bonos:bonos.map(x=>x.id===id?{...x,usadas:x.usadas-1}:x)});
+  }
+
+  function eliminar(id){
+    if(!confirm("¿Eliminar este bono?")) return;
+    setData({...data,bonos:bonos.filter(x=>x.id!==id)});
+  }
+
+  // Stats globales
+  const bonosActivos   = bonos.filter(b=>b.usadas<Number(b.clases)).length;
+  const clasesVendidas = bonos.reduce((s,b)=>s+Number(b.clases),0);
+  const clasesUsadas   = bonos.reduce((s,b)=>s+b.usadas,0);
+  const clasesRestantes= clasesVendidas-clasesUsadas;
+
+  // Filtros
+  let lista = [...bonos];
+  if(filtroAlumno!=="todos") lista=lista.filter(b=>b.alumnoId===filtroAlumno);
+  if(filtroEstado==="activos") lista=lista.filter(b=>b.usadas<Number(b.clases));
+  if(filtroEstado==="agotados") lista=lista.filter(b=>b.usadas>=Number(b.clases));
+  lista.sort((a,b)=>(a.usadas>=Number(a.clases)?1:-1)-(b.usadas>=Number(b.clases)?1:-1)||(b.fechaCompra||"").localeCompare(a.fechaCompra||""));
+
+  function nombreAlumno(id){ return alumnos.find(a=>a.id===id)?.nombre||"—"; }
+
+  return <div>
+    {/* Barra superior */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+      <select value={filtroAlumno} onChange={e=>setFiltroAlumno(e.target.value)}
+        style={{flex:1,minWidth:160,border:"1.5px solid #d0e0d0",borderRadius:8,
+          padding:"8px 12px",fontSize:14,background:"#fff",fontFamily:"inherit",color:G.fairway,fontWeight:600}}>
+        <option value="todos">Todos los alumnos</option>
+        {alumnos.filter(a=>a.activo).map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+      </select>
+      {[["activos","✅ Activos"],["agotados","❌ Agotados"],["todos","📋 Todos"]].map(([id,label])=>(
+        <button key={id} onClick={()=>setFiltroEstado(id)}
+          style={{background:filtroEstado===id?G.fairway:"#f0f0f0",
+            color:filtroEstado===id?"#fff":"#555",border:"none",borderRadius:8,
+            padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          {label}
+        </button>
+      ))}
+      <button onClick={()=>setVistaHistorial(v=>!v)}
+        style={{background:vistaHistorial?G.fairway:"#f0f0f0",color:vistaHistorial?"#fff":"#555",
+          border:"none",borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        🕓 Historial
+      </button>
+      <Btn color="secondary" onClick={()=>generarPDFBonos(bonos,alumnos,filtroAlumno)}>📄 PDF</Btn>
+      <Btn onClick={abrirNuevo}>🎫 Nuevo bono</Btn>
+    </div>
+
+    {/* ── VISTA HISTORIAL ── */}
+    {vistaHistorial&&(()=>{
+      const todosBonos=[...bonos].sort((a,b)=>(b.fechaCompra||"").localeCompare(a.fechaCompra||""));
+      // Agrupar por alumno
+      const porAlumno={};
+      todosBonos.forEach(b=>{
+        if(!porAlumno[b.alumnoId]) porAlumno[b.alumnoId]=[];
+        porAlumno[b.alumnoId].push(b);
+      });
+      const alumnosConBonos=Object.keys(porAlumno)
+        .map(id=>({id,nombre:nombreAlumno(id),bonos:porAlumno[id]}))
+        .filter(a=>filtroAlumno==="todos"||a.id===filtroAlumno)
+        .sort((a,b)=>a.nombre.localeCompare(b.nombre));
+      if(alumnosConBonos.length===0) return <div style={{textAlign:"center",padding:40,
+        background:G.mist,borderRadius:12,color:G.soft}}>
+        <div style={{fontSize:32,marginBottom:8}}>🕓</div>
+        <div style={{fontWeight:700}}>Sin historial de bonos</div>
+      </div>;
+      return <div style={{display:"grid",gap:14}}>
+        {alumnosConBonos.map(a=>{
+          const totalClases=a.bonos.reduce((s,b)=>s+Number(b.clases),0);
+          const totalUsadas=a.bonos.reduce((s,b)=>s+b.usadas,0);
+          const totalPrecio=a.bonos.reduce((s,b)=>s+Number(b.precio||0),0);
+          return <Card key={a.id} style={{borderLeft:`4px solid ${G.fairway}`}}>
+            {/* Cabecera alumno */}
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+              <span style={{fontSize:20}}>🏌️</span>
+              <span style={{fontWeight:800,fontSize:15,color:G.fairway,flex:1}}>{a.nombre}</span>
+              <span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:6,padding:"3px 10px",fontWeight:700}}>{a.bonos.length} bono{a.bonos.length!==1?"s":""}</span>
+              <span style={{fontSize:11,background:"#e8f5e9",color:G.grass,borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalClases} clases</span>
+              {totalPrecio>0&&<span style={{fontSize:11,background:"#fff8e1",color:"#c17900",borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalPrecio.toFixed(2)}€</span>}
+            </div>
+            {/* Línea de tiempo */}
+            <div style={{display:"flex",flexDirection:"column",gap:0}}>
+              {a.bonos.map((b,idx)=>{
+                const agotado=b.usadas>=Number(b.clases);
+                const pct=Math.round(((b.usadas||0)/Number(b.clases))*100);
+                const esUltimo=idx===a.bonos.length-1;
+                return <div key={b.id} style={{display:"flex",gap:12,alignItems:"stretch"}}>
+                  {/* Indicador línea de tiempo */}
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",width:24,flexShrink:0}}>
+                    <div style={{width:14,height:14,borderRadius:"50%",marginTop:4,flexShrink:0,
+                      background:agotado?"#aaa":idx===0?G.grass:G.sky,
+                      border:"2px solid",borderColor:agotado?"#ccc":idx===0?G.fairway:G.sky}}/>
+                    {!esUltimo&&<div style={{width:2,flex:1,background:"#ddd",margin:"2px 0"}}/>}
+                  </div>
+                  {/* Contenido */}
+                  <div style={{flex:1,paddingBottom:esUltimo?0:12}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                      <span style={{fontSize:12,fontWeight:700,color:agotado?G.soft:G.ink}}>
+                        {b.fechaCompra||"Sin fecha"} — Pack {b.clases} clases
+                      </span>
+                      <span style={{fontSize:10,background:G.mist,color:G.fairway,borderRadius:4,padding:"1px 6px"}}>{b.tipo||"Individual"}</span>
+                      {agotado
+                        ? <span style={{fontSize:10,background:"#eee",color:G.soft,borderRadius:4,padding:"1px 6px"}}>✓ Completado</span>
+                        : idx===0
+                          ? <span style={{fontSize:10,background:"#e8f5e9",color:G.grass,borderRadius:4,padding:"1px 6px",fontWeight:700}}>● Activo</span>
+                          : null}
+                    </div>
+                    {/* Mini barra */}
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{flex:1,maxWidth:180,background:"#e8e8e8",borderRadius:6,height:7,overflow:"hidden"}}>
+                        <div style={{width:`${pct}%`,height:"100%",background:agotado?"#aaa":G.grass,borderRadius:6}}/>
+                      </div>
+                      <span style={{fontSize:11,color:G.soft}}>{b.usadas||0}/{b.clases} usadas</span>
+                      {b.precio&&<span style={{fontSize:11,color:"#c17900",fontWeight:600}}>💶 {Number(b.precio).toFixed(2)}€</span>}
+                    </div>
+                    {b.notas&&<div style={{fontSize:11,color:G.soft,marginTop:3}}>📝 {b.notas}</div>}
+                  </div>
+                </div>;
+              })}
+            </div>
+            {/* Resumen pie */}
+            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #e8e8e8",
+              display:"flex",gap:16,fontSize:12,color:G.soft,flexWrap:"wrap"}}>
+              <span>📋 Total clases compradas: <b style={{color:G.ink}}>{totalClases}</b></span>
+              <span>✅ Total clases usadas: <b style={{color:G.grass}}>{totalUsadas}</b></span>
+              <span>⏳ Pendientes: <b style={{color:G.flag}}>{totalClases-totalUsadas}</b></span>
+            </div>
+          </Card>;
+        })}
+      </div>;
+    })()}
+
+    {/* ── VISTA NORMAL (lista de bonos) ── */}
+    {!vistaHistorial&&<>
+
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:20}}>
+      {[
+        [bonosActivos,"Bonos activos",G.grass,"🎫"],
+        [clasesVendidas,"Clases vendidas",G.fairway,"📋"],
+        [clasesUsadas,"Clases usadas",G.sky,"✅"],
+        [clasesRestantes,"Clases restantes",clasesRestantes>0?G.flag:G.soft,"⏳"],
+      ].map(([v,l,c,ico])=>(
+        <Card key={l} style={{textAlign:"center",borderTop:`3px solid ${c}`}}>
+          <div style={{fontSize:22,marginBottom:4}}>{ico}</div>
+          <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft,marginTop:2}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Lista de bonos */}
+    {lista.length===0
+      ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:32,marginBottom:8}}>🎫</div>
+          <div style={{fontWeight:700}}>Sin bonos {filtroEstado==="activos"?"activos":"registrados"}</div>
+          <div style={{fontSize:13,marginTop:4}}>Pulsa "Nuevo bono" para crear el primero.</div>
+        </div>
+      : <div style={{display:"grid",gap:10}}>
+          {lista.map(b=>{
+            const total=Number(b.clases);
+            const usadas=b.usadas||0;
+            const restantes=total-usadas;
+            const pct=Math.round((usadas/total)*100);
+            const agotado=usadas>=total;
+            const color=agotado?G.soft:pct>=80?G.flag:G.grass;
+            return <Card key={b.id} style={{borderLeft:`4px solid ${agotado?"#ccc":G.flag}`,opacity:agotado?0.7:1}}>
+              <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:180}}>
+                  {/* Alumno + tipo */}
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:22}}>🎫</span>
+                    <span style={{fontWeight:800,fontSize:15,color:G.ink}}>{nombreAlumno(b.alumnoId)}</span>
+                    <span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:6,padding:"2px 8px",fontWeight:600}}>{b.tipo||"Individual"}</span>
+                    {agotado&&<span style={{fontSize:11,background:"#eee",color:G.soft,borderRadius:6,padding:"2px 8px",fontWeight:600}}>Agotado</span>}
+                  </div>
+                  {/* Barra de progreso */}
+                  <div style={{marginBottom:6}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                      <span style={{color:G.soft}}>{usadas} de {total} clases usadas</span>
+                      <span style={{fontWeight:700,color}}>{restantes} restantes</span>
+                    </div>
+                    <div style={{background:"#e8e8e8",borderRadius:8,height:12,overflow:"hidden"}}>
+                      <div style={{width:`${pct}%`,height:"100%",
+                        background:agotado?"#aaa":pct>=80?G.flag:G.grass,
+                        borderRadius:8,transition:"width .3s"}}/>
+                    </div>
+                    {/* Indicadores visuales por clase */}
+                    <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+                      {Array.from({length:total},(_,i)=>(
+                        <div key={i} style={{width:18,height:18,borderRadius:4,
+                          background:i<usadas?"#1a5c2a":"#e0f0e0",
+                          border:"1px solid",borderColor:i<usadas?"#0f3518":"#a0c8a0",
+                          display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>
+                          {i<usadas?"✓":""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Info adicional */}
+                  <div style={{fontSize:11,color:G.soft,display:"flex",gap:12,flexWrap:"wrap"}}>
+                    {b.fechaCompra&&<span>📅 Compra: {b.fechaCompra}</span>}
+                    {b.precio&&<span>💶 {Number(b.precio).toFixed(2)}€</span>}
+                    {b.notas&&<span>📝 {b.notas}</span>}
+                  </div>
+                </div>
+                {/* Acciones */}
+                <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+                  <Btn small color="sky" onClick={()=>usarClase(b.id)} disabled={agotado}
+                    style={{opacity:agotado?0.4:1,cursor:agotado?"not-allowed":"pointer"}}>
+                    ✔ Usar clase
+                  </Btn>
+                  {usadas>0&&<Btn small color="secondary" onClick={()=>devolverClase(b.id)}>
+                    ↩ Devolver
+                  </Btn>}
+                  <Btn small color="danger" onClick={()=>eliminar(b.id)}>🗑</Btn>
+                </div>
+              </div>
+            </Card>;
+          })}
+        </div>
+    }</>}
+
+    {/* Modal nuevo bono */}
+    {modalBono==="new"&&<Modal title="🎫 Nuevo bono de clases" onClose={()=>setModalBono(null)}>
+      <Field label="Alumno *">
+        <select value={form.alumnoId} onChange={e=>setForm(f=>({...f,alumnoId:e.target.value}))}
+          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"9px 12px",
+            fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+          {alumnos.filter(a=>a.activo).map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+        </select>
+      </Field>
+      <Field label="Pack de clases *">
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {PACKS.map(p=>(
+            <button key={p.n} type="button" onClick={()=>setForm(f=>({...f,clases:p.n}))}
+              style={{flex:1,minWidth:80,background:form.clases===p.n?p.color:"#f0f0f0",
+                color:form.clases===p.n?"#fff":"#555",border:"none",borderRadius:8,
+                padding:"10px 6px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              {p.label}
+            </button>
+          ))}
+          <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:100}}>
+            <span style={{fontSize:12,color:G.soft,whiteSpace:"nowrap"}}>Personalizado:</span>
+            <Input type="number" min="1" max="50" value={form.clases}
+              onChange={v=>setForm(f=>({...f,clases:Number(v)||1}))}
+              style={{width:70}}/>
+          </div>
+        </div>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Field label="Tipo">
+          <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:13,background:"#fff",fontFamily:"inherit"}}>
+            {["Individual","Grupal","Intensivo","Pollitos","Escuela adultos"].map(t=>(
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Fecha compra">
+          <Input type="date" value={form.fechaCompra} onChange={v=>setForm(f=>({...f,fechaCompra:v}))}/>
+        </Field>
+      </div>
+      <Field label="Precio total (€)">
+        <Input type="number" min="0" step="0.01" value={form.precio}
+          onChange={v=>setForm(f=>({...f,precio:v}))} placeholder="Ej: 150"/>
+      </Field>
+      <Field label="Notas">
+        <Input value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))}
+          placeholder="Observaciones opcionales..."/>
+      </Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModalBono(null)}>Cancelar</Btn>
+        <Btn onClick={guardar} disabled={!form.alumnoId||!form.clases}>🎫 Crear bono</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TOAST: NUEVA INSCRIPCIÓN EN TIEMPO REAL
+// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// SISTEMA DE NOTIFICACIONES — Banner + Modal
+// Banner: avisos leves (mensajes, archivos, estadísticas)
+// Modal:  avisos importantes (clase nueva, informe, inscripción)
+// ═══════════════════════════════════════════════════════════════════
+
+const NOTIF_COLORS = {
+  clase:       {bg:"linear-gradient(135deg,#1a5c2a,#2e7d44)", icon:"📅"},
+  informe:     {bg:"linear-gradient(135deg,#7b5ea7,#9b7ec7)", icon:"📑"},
+  mensaje:     {bg:"linear-gradient(135deg,#2980b9,#3498db)", icon:"✉️"},
+  archivo:     {bg:"linear-gradient(135deg,#c8a84b,#e0c060)", icon:"📁"},
+  estadistica: {bg:"linear-gradient(135deg,#e67e22,#f39c12)", icon:"📊"},
+  inscripcion: {bg:"linear-gradient(135deg,#1a5c2a,#2e7d44)", icon:"🔔"},
+};
+
+// ── Banner (desaparece solo en 6s) ───────────────────────────────
+function NotifBanner({notif, onClose, onClick}){
+  const [saliendo,setSaliendo]=useState(false);
+  const timer=useRef(null);
+  useEffect(()=>{
+    timer.current=setTimeout(()=>{ setSaliendo(true); setTimeout(onClose,400); },6000);
+    return ()=>clearTimeout(timer.current);
+  },[]);
+  function cerrar(e){ e?.stopPropagation(); setSaliendo(true); setTimeout(onClose,400); }
+  const col=NOTIF_COLORS[notif.tipo]||NOTIF_COLORS.mensaje;
+  return <div onClick={()=>{ onClick?.(); cerrar(); }}
+    style={{position:"fixed",top:16,right:16,zIndex:99999,width:310,
+      background:col.bg,color:"#fff",borderRadius:14,
+      boxShadow:"0 6px 24px rgba(0,0,0,.3)",cursor:"pointer",overflow:"hidden",
+      transition:"all .4s cubic-bezier(.34,1.56,.64,1)",
+      transform:saliendo?"translateY(-120%) scale(.95)":"translateY(0) scale(1)",
+      opacity:saliendo?0:1}}>
+    <div style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
+      <div style={{fontSize:28,flexShrink:0}}>{col.icon}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:800,fontSize:14,lineHeight:1.2}}>{notif.titulo}</div>
+        <div style={{fontSize:12,opacity:.9,marginTop:2,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{notif.cuerpo}</div>
+      </div>
+      <button onClick={cerrar} style={{background:"rgba(255,255,255,.2)",border:"none",
+        color:"#fff",borderRadius:"50%",width:22,height:22,cursor:"pointer",
+        fontSize:12,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+    </div>
+    <div style={{height:3,background:"rgba(255,255,255,.25)"}}>
+      <div style={{height:"100%",background:"rgba(255,255,255,.7)",
+        animation:"shrink 6s linear forwards",
+        "@keyframes shrink":{from:{width:"100%"},to:{width:"0%"}}}}/>
+    </div>
+    <style>{`@keyframes shrink{from{width:100%}to{width:0%}}`}</style>
+  </div>;
+}
+
+// ── Modal importante (hay que cerrar manualmente) ─────────────────
+function NotifModal({notif, onClose, onClick}){
+  const col=NOTIF_COLORS[notif.tipo]||NOTIF_COLORS.mensaje;
+  return <div style={{position:"fixed",inset:0,zIndex:99998,
+    background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",
+    justifyContent:"center",padding:20,animation:"fadeIn .3s ease"}}
+    onClick={onClose}>
+    <style>{`@keyframes fadeIn{from{opacity:0}to{opacity:1}}@keyframes popIn{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
+    <div onClick={e=>e.stopPropagation()}
+      style={{background:"#fff",borderRadius:20,overflow:"hidden",
+        maxWidth:360,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
+        animation:"popIn .3s cubic-bezier(.34,1.56,.64,1)"}}>
+      {/* Cabecera */}
+      <div style={{background:col.bg,padding:"24px 20px",textAlign:"center",color:"#fff"}}>
+        <div style={{fontSize:52,marginBottom:8}}>{col.icon}</div>
+        <div style={{fontWeight:800,fontSize:18,lineHeight:1.3}}>{notif.titulo}</div>
+      </div>
+      {/* Cuerpo */}
+      <div style={{padding:"20px 22px"}}>
+        <p style={{margin:"0 0 16px",fontSize:14,color:"#333",lineHeight:1.6,textAlign:"center"}}>{notif.cuerpo}</p>
+        {notif.detalle&&<div style={{background:"#f5f5f5",borderRadius:10,padding:"10px 14px",
+          fontSize:13,color:"#555",marginBottom:16}}>{notif.detalle}</div>}
+        <div style={{display:"flex",gap:10}}>
+          {onClick&&<button onClick={()=>{onClick();onClose();}}
+            style={{flex:1,background:col.bg,color:"#fff",border:"none",borderRadius:10,
+              padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+            Ver ahora
+          </button>}
+          <button onClick={onClose}
+            style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",borderRadius:10,
+              padding:"12px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            {onClick?"Después":"Cerrar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Gestor central de notificaciones ─────────────────────────────
+function useNotifManager(){
+  const [banners,setBanners]=useState([]);
+  const [modales,setModales]=useState([]);
+
+  function mostrarBanner(tipo, titulo, cuerpo, onClick){
+    const id=uid();
+    setBanners(b=>[...b,{id,tipo,titulo,cuerpo,onClick}]);
+    return id;
+  }
+  function mostrarModal(tipo, titulo, cuerpo, detalle, onClick){
+    const id=uid();
+    setModales(m=>[...m,{id,tipo,titulo,cuerpo,detalle,onClick}]);
+    return id;
+  }
+  function cerrarBanner(id){ setBanners(b=>b.filter(x=>x.id!==id)); }
+  function cerrarModal(id){ setModales(m=>m.filter(x=>x.id!==id)); }
+
+  const UI = <>
+    {banners.map((n,i)=>(
+      <div key={n.id} style={{position:"fixed",top:16+(i*80),right:16,zIndex:99999+i}}>
+        <NotifBanner notif={n} onClose={()=>cerrarBanner(n.id)} onClick={n.onClick}/>
+      </div>
+    ))}
+    {modales.slice(0,1).map(n=>(
+      <NotifModal key={n.id} notif={n} onClose={()=>cerrarModal(n.id)} onClick={n.onClick}/>
+    ))}
+  </>;
+
+  return {mostrarBanner, mostrarModal, UI};
+}
+
+function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
+  const [visible,setVisible]=useState(false);
+  const [saliendo,setSaliendo]=useState(false);
+  const prevCount=useRef(pendientesCount);
+  const timerRef=useRef(null);
+
+  useEffect(()=>{
+    if(pendientesCount>prevCount.current){
+      setVisible(true);
+      setSaliendo(false);
+      clearTimeout(timerRef.current);
+      timerRef.current=setTimeout(()=>{
+        setSaliendo(true);
+        setTimeout(()=>setVisible(false),400);
+      },7000);
+    }
+    prevCount.current=pendientesCount;
+    return ()=>clearTimeout(timerRef.current);
+  },[pendientesCount]);
+
+  function cerrar(e){
+    e&&e.stopPropagation();
+    setSaliendo(true);
+    setTimeout(()=>setVisible(false),400);
+  }
+
+  if(!visible) return null;
+
+  const nombre=ultimaNotif?.nombre||"Nuevo alumno";
+  const tipo=ultimaNotif?.tipoEscuela==="infantil"?"🧒 Escuela Infantil":"🏌️ Escuela Adultos";
+
+  return <div onClick={()=>{onVerAhora();cerrar();}}
+    style={{position:"fixed",bottom:24,right:24,zIndex:99999,
+      width:320,background:"linear-gradient(135deg,#1a5c2a,#2e7d44)",
+      color:"white",borderRadius:16,boxShadow:"0 8px 32px rgba(0,0,0,.35)",
+      cursor:"pointer",overflow:"hidden",
+      transition:"all .4s cubic-bezier(.34,1.56,.64,1)",
+      transform:saliendo?"translateY(120%) scale(.95)":"translateY(0) scale(1)",
+      opacity:saliendo?0:1}}>
+    <div style={{background:"rgba(255,255,255,.1)",padding:"12px 16px",
+      display:"flex",alignItems:"center",gap:12}}>
+      <div style={{fontSize:36,flexShrink:0,animation:"bounce .6s ease infinite alternate"}}>
+        🔔
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:800,fontSize:15,lineHeight:1.2}}>
+          ¡Nueva inscripción!
+        </div>
+        <div style={{fontSize:13,opacity:.9,marginTop:2,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {nombre}
+        </div>
+        <div style={{fontSize:11,opacity:.7,marginTop:2}}>{tipo}</div>
+      </div>
+      <button onClick={cerrar}
+        style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",
+          borderRadius:50,width:24,height:24,cursor:"pointer",fontSize:14,
+          flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        ✕
+      </button>
+    </div>
+    <div style={{background:"rgba(255,255,255,.15)",padding:"8px 16px",
+      fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+      <span>Pulsa para revisar · {pendientesCount} pendiente{pendientesCount!==1?"s":""}</span>
+      <span style={{marginLeft:"auto"}}>→</span>
+    </div>
+    <style>{`@keyframes bounce{from{transform:rotate(-10deg)}to{transform:rotate(10deg)}}`}</style>
+  </div>;
+}
+
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
   const [tab,setTab]=useState("calendario");
+  const [verSinClase,setVerSinClase]=useState(false);
+  const [msgAbierto,setMsgAbierto]=useState(null);
+  const [msgTexto,setMsgTexto]=useState("");
+  const [msgAsunto,setMsgAsunto]=useState("Recordatorio de clase");
+  const [msgEnviado,setMsgEnviado]=useState({});
+  const {mostrarBanner,mostrarModal,UI:NotifUI} = useNotifManager();
+
+  // ── Detección de cambios para notificaciones al profesor ──────────
+  const prevClases   = useRef((data.clases||[]).length);
+  const prevMensajes = useRef((data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length);
+  const prevStats    = useRef((data.notificacionesAlumno||[]).length);
+  const prevArchivos = useRef((data.archivosProfesor||[]).length);
+  const prevInformes = useRef((data.informes||[]).filter(i=>i.publicado).length);
+
+  useEffect(()=>{
+    const clases=(data.clases||[]).length;
+    const msgs=(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length;
+    const stats=(data.notificacionesAlumno||[]).length;
+    const archivos=(data.archivosProfesor||[]).length;
+    const informes=(data.informes||[]).filter(i=>i.publicado).length;
+
+    // Nueva clase → Modal
+    if(clases>prevClases.current){
+      const ultima=(data.clases||[]).at(-1);
+      const alumno=(data.alumnos||[]).find(a=>a.id===ultima?.alumnoId);
+      mostrarModal("clase","¡Nueva clase programada!",
+        `${alumno?.nombre||"Un alumno"} tiene una clase nueva.`,
+        `📅 ${fmtDate(ultima?.fecha)} · ${ultima?.horaInicio||ultima?.hora||""} · ${ultima?.zona||""}`,
+        ()=>setTab("clases"));
+    }
+    // Nuevo mensaje → Banner
+    if(msgs>prevMensajes.current){
+      mostrarBanner("mensaje","Nuevo mensaje","Un alumno te ha escrito",()=>setTab("mensajes"));
+    }
+    // Estadísticas enviadas → Banner
+    if(stats>prevStats.current){
+      const ultima=(data.notificacionesAlumno||[]).at(-1);
+      mostrarBanner("estadistica","Estadísticas recibidas",ultima?.mensaje||"Un alumno ha enviado sus estadísticas",()=>setTab("estadisticas"));
+    }
+    // Nuevo informe publicado → Modal
+    if(informes>prevInformes.current){
+      mostrarModal("informe","Informe publicado","Se ha publicado un nuevo informe para un alumno.","",()=>setTab("informes"));
+    }
+
+    prevClases.current=clases;
+    prevMensajes.current=msgs;
+    prevStats.current=stats;
+    prevArchivos.current=archivos;
+    prevInformes.current=informes;
+  },[data]);
+
 
   // Filtrar datos según el profesor activo
   // null = profesor principal (ve todo lo sin asignar + sus alumnos)
@@ -13358,6 +15078,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
   const nombrePanel = profesorNombre ? profesorNombre+" · Panel Profesor" : "Panel del Profesor";
 
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand,color:G.ink}}>
+    {NotifUI}
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:920,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -13381,11 +15102,13 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
           {ADMIN_TABS.map(t=>{
             const mensajesNoLeidos = t.id==="mensajes" ? (data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length : 0;
+            const bonosAgotando = t.id==="bonos" ? (data.bonos||[]).filter(b=>{const r=Number(b.clases)-b.usadas;return r>0&&r<=2;}).length : 0;
             return <button key={t.id} onClick={()=>setTab(t.id)}
               style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
               {t.icon} {t.label}
               {t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
               {t.id==="mensajes"&&mensajesNoLeidos>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{mensajesNoLeidos}</span>}
+              {t.id==="bonos"&&bonosAgotando>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#e67e22",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{bonosAgotando}</span>}
             </button>;
           })}
         </div>
@@ -13409,6 +15132,123 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         <div style={{fontSize:20}}>→</div>
         <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}`}</style>
       </div>}
+
+      {/* ── Aviso alumnos sin clase reciente ── */}
+      {(()=>{
+        const hoy=today();
+        const hace30=new Date(hoy); hace30.setDate(hace30.getDate()-30);
+        const lim=hace30.toISOString().slice(0,10);
+        const clases=data.clases||[];
+        const sinClase=(data.alumnos||[]).filter(a=>a.activo).map(a=>{
+          const ult=clases.filter(c=>c.alumnoId===a.id&&c.asistio)
+            .map(c=>c.fecha).sort().at(-1)||null;
+          return {...a,ultimaClase:ult};
+        }).filter(a=>!a.ultimaClase||a.ultimaClase<lim)
+          .sort((a,b)=>(a.ultimaClase||"0000")<(b.ultimaClase||"0000")?-1:1);
+        if(sinClase.length===0) return null;
+        return <div style={{borderRadius:14,border:"2px solid #e67e22",background:"#fffbf5",
+          marginBottom:18,overflow:"hidden"}}>
+          <div onClick={()=>setVerSinClase(v=>!v)}
+            style={{padding:"12px 18px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",
+              background:"#fef4e4"}}>
+            <span style={{fontSize:24}}>⚠️</span>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:800,fontSize:14,color:"#b7560a"}}>
+                {sinClase.length} alumno{sinClase.length!==1?"s":""} sin clase en más de 30 días
+              </div>
+              <div style={{fontSize:12,color:"#c27a2a",marginTop:1}}>
+                Pulsa para ver el listado y hacer seguimiento
+              </div>
+            </div>
+            <span style={{fontSize:18,color:"#c27a2a",transition:"transform .2s",
+              transform:verSinClase?"rotate(90deg)":"rotate(0deg)"}}>›</span>
+          </div>
+          {verSinClase&&<div style={{padding:"10px 18px 14px",display:"grid",gap:6}}>
+            {sinClase.map(a=>{
+              const dias=a.ultimaClase
+                ? Math.round((new Date(hoy)-new Date(a.ultimaClase))/(1000*60*60*24))
+                : null;
+              const abierto=msgAbierto===a.id;
+              const yaEnviado=msgEnviado[a.id];
+              function enviarMsgRapido(){
+                if(!msgTexto.trim()) return;
+                const fecha=new Date().toISOString();
+                const nuevo={id:uid(),de:"profesor",para:a.id,
+                  asunto:msgAsunto||"Recordatorio de clase",
+                  cuerpo:msgTexto,tipo:"mensaje",fecha,leido:false};
+                addDoc(collection(db,"mensajes"),{...nuevo,timestamp:serverTimestamp()}).catch(e=>console.warn(e));
+                setData({...data,mensajes:[...(data.mensajes||[]),nuevo]});
+                setMsgEnviado(prev=>({...prev,[a.id]:true}));
+                setMsgAbierto(null);
+                setMsgTexto("");
+                setMsgAsunto("Recordatorio de clase");
+              }
+              return <div key={a.id}
+                style={{borderRadius:10,border:"1px solid #f5dfc0",overflow:"hidden",background:"white"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px"}}>
+                  <span style={{fontSize:20}}>👤</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13,color:"#333"}}>{a.nombre}</div>
+                    <div style={{fontSize:11,color:"#888"}}>
+                      {a.ultimaClase
+                        ? `Última clase: ${a.ultimaClase} (hace ${dias} días)`
+                        : "Sin clases registradas"}
+                    </div>
+                  </div>
+                  {a.telefono&&<a href={`tel:${a.telefono}`}
+                    style={{fontSize:12,color:G.fairway,fontWeight:600,textDecoration:"none",
+                      background:"#e8f5eb",borderRadius:6,padding:"4px 8px"}}>
+                    📞 Llamar
+                  </a>}
+                  <button onClick={()=>{setMsgAbierto(abierto?null:a.id);setMsgTexto("");setMsgAsunto("Recordatorio de clase");}}
+                    style={{fontSize:12,background:yaEnviado?"#e8f5eb":abierto?"#f0f0f0":"#3b82f6",
+                      color:yaEnviado?G.grass:abierto?"#555":"white",border:"none",
+                      borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
+                    {yaEnviado?"✓ Enviado":"✉️ Mensaje"}
+                  </button>
+                  <button onClick={()=>setTab("clases")}
+                    style={{fontSize:12,background:G.fairway,color:"white",border:"none",
+                      borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
+                    + Clase
+                  </button>
+                </div>
+                {abierto&&<div style={{padding:"10px 14px 12px",background:"#f8fbff",
+                  borderTop:"1px solid #e0ecff"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#3b82f6",marginBottom:6}}>
+                    ✉️ Mensaje rápido para {a.nombre}
+                  </div>
+                  <input value={msgAsunto} onChange={e=>setMsgAsunto(e.target.value)}
+                    placeholder="Asunto..."
+                    style={{width:"100%",border:"1px solid #d0e0ff",borderRadius:7,
+                      padding:"6px 10px",fontSize:13,marginBottom:6,fontFamily:"inherit",
+                      boxSizing:"border-box"}}/>
+                  <textarea value={msgTexto} onChange={e=>setMsgTexto(e.target.value)}
+                    placeholder={`Escribe aquí el mensaje para ${a.nombre}...`}
+                    rows={3}
+                    style={{width:"100%",border:"1px solid #d0e0ff",borderRadius:7,
+                      padding:"6px 10px",fontSize:13,resize:"vertical",fontFamily:"inherit",
+                      boxSizing:"border-box"}}/>
+                  <div style={{display:"flex",gap:8,marginTop:8,justifyContent:"flex-end"}}>
+                    <button onClick={()=>setMsgAbierto(null)}
+                      style={{background:"#f0f0f0",border:"none",borderRadius:6,
+                        padding:"6px 14px",fontSize:12,cursor:"pointer"}}>
+                      Cancelar
+                    </button>
+                    <button onClick={enviarMsgRapido}
+                      disabled={!msgTexto.trim()}
+                      style={{background:msgTexto.trim()?"#3b82f6":"#aac4f0",color:"white",
+                        border:"none",borderRadius:6,padding:"6px 16px",fontSize:12,
+                        fontWeight:700,cursor:msgTexto.trim()?"pointer":"default"}}>
+                      📤 Enviar
+                    </button>
+                  </div>
+                </div>}
+              </div>;
+            })}
+          </div>}
+        </div>;
+      })()}
+
       <h2 style={{margin:"0 0 18px",color:G.fairway,fontSize:19,fontWeight:800}}>
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
@@ -13425,8 +15265,13 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="archivos"&&<ModArchivos data={data} setData={setData}/>}
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
+      {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
+    <ToastNuevaInscripcion
+      pendientesCount={pendientesCount}
+      ultimaNotif={(notifs||[]).find(n=>n.tipo==="nuevo_registro"||n.tipo==="nuevo_alumno_adulto")||null}
+      onVerAhora={()=>setTab("pendientes")}/>
   </div>;
 }
 
@@ -13693,15 +15538,28 @@ export default function App(){
 
   // ── Conectar Firebase al arrancar ──
   useEffect(()=>{
+    // Timeout de seguridad: si Firebase no responde en 1.5s, arrancar igualmente
+    let cancelled = false;
+    let snapshotRecibido = false; // evita que el getDoc inicial pise datos más nuevos
+    let unsub=()=>{}, unsubN=()=>{}, unsubP=()=>{};
+    const fallbackTimer = setTimeout(()=>{ if(!cancelled) setFbReady(true); }, 1500);
+
     signInAnonymously(auth)
       .then(()=>{
+        if(cancelled) return;
+        // Mostrar la app en cuanto hay sesión; los datos llegan por onSnapshot
+        clearTimeout(fallbackTimer);
+        setFbReady(true);
+        // Cargar datos iniciales en segundo plano (no bloquea el arranque)
         cargarDatosFirebase().then(fbData=>{
-          if(fbData){ setDataRaw(fbData); saveData(fbData); }
-          setFbReady(true);
+          // Si onSnapshot ya entregó datos, no sobrescribir con la lectura inicial
+          if(cancelled || snapshotRecibido || !fbData) return;
+          setDataRaw(fbData); saveData(fbData);
         });
         // Escuchar cambios en tiempo real
-        const unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
+        unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
           if(snap.exists()){
+            snapshotRecibido = true;
             const fbData = { ...makeDefaultData(), ...snap.data() };
             setDataRaw(prev=>{
               // Merge fotos locales (no se guardan en Firebase por tamaño)
@@ -13714,20 +15572,21 @@ export default function App(){
           }
         }, err=>{ console.warn("Snapshot error:", err); setFbReady(true); });
         // Escuchar notificaciones
-        const unsubN = onSnapshot(
+        unsubN = onSnapshot(
           query(collection(db,"notificaciones"), orderBy("timestamp","desc")),
           snap=>setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))),
           err=>console.warn("Notif error:", err)
         );
         // Escuchar registros pendientes para el contador
-        const unsubP = onSnapshot(
+        unsubP = onSnapshot(
           collection(db,"registros_pendientes"),
           snap=>setPendientesCount(snap.docs.length),
           err=>console.warn("Pendientes error:", err)
         );
-        return ()=>{ unsub(); unsubN(); unsubP(); };
       })
-      .catch(err=>{ console.warn("Firebase error:", err); setFbReady(true); });
+      .catch(err=>{ console.warn("Firebase error:", err); clearTimeout(fallbackTimer); if(!cancelled) setFbReady(true); });
+
+    return ()=>{ cancelled=true; clearTimeout(fallbackTimer); unsub(); unsubN(); unsubP(); };
   },[]);
 
   function setData(d){
