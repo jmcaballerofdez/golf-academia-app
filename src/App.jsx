@@ -4658,12 +4658,13 @@ function AnalizadorVideo({initialUrl="", onClose}){
         {/* Zona de vídeo + dibujo */}
         <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:10,minHeight:0,overflow:"hidden"}}>
           <div style={{position:"relative",display:"inline-block",maxWidth:"100%",maxHeight:"100%"}}>
-            <video ref={videoRef} src={src} playsInline preload="metadata"
+            <video ref={videoRef} src={src} playsInline preload="auto"
               onLoadedMetadata={e=>{setErr(""); setDur(e.target.duration||0); e.target.playbackRate=speed; resizeCanvas();}}
-              onLoadedData={()=>{clearLoadTimeout(); setLoading(false);}}
-              onCanPlay={()=>{clearLoadTimeout(); setLoading(false);}}
+              onLoadedData={()=>{clearLoadTimeout(); setLoading(false); setErr("");}}
+              onCanPlay={()=>{clearLoadTimeout(); setLoading(false); setErr("");}}
+              onPlaying={()=>{clearLoadTimeout(); setLoading(false); setErr("");}}
               onTimeUpdate={e=>setCur(e.target.currentTime||0)}
-              onError={()=>{clearLoadTimeout(); setLoading(false); setErr("No se pudo cargar este vídeo. Puede que el formato no sea compatible (los vídeos de iPhone en alta eficiencia/HEVC a veces no se reproducen en la web) o, si es un enlace, que no apunte a un archivo de vídeo directo. Prueba a subir el archivo desde tu dispositivo.");}}
+              onError={()=>{clearLoadTimeout(); setLoading(false); setErr("No se pudo cargar este vídeo. Puede que el formato no sea compatible. Prueba a subir el archivo desde tu dispositivo.");}}
               onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}
               style={{display:"block",maxWidth:"100%",maxHeight:"78vh",borderRadius:8,background:"#000"}}/>
             <canvas ref={canvasRef}
