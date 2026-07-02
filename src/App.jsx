@@ -4460,10 +4460,14 @@ function AnalizadorVideo({initialUrl="", onClose}){
     if(!v||!c) return;
     const r=v.getBoundingClientRect();
     if(r.width===0||r.height===0) return;
-    if(c.width!==Math.round(r.width)||c.height!==Math.round(r.height)){
-      c.width=Math.round(r.width); c.height=Math.round(r.height);
-    }
-    redraw();
+    // Solo redimensionar si el tamaño cambió de verdad (evita borrar al reproducir)
+    const newW=Math.round(r.width), newH=Math.round(r.height);
+    if(c.width===newW && c.height===newH){ redraw(); return; }
+    // Guardar el dibujo actual antes de redimensionar
+    const savedStrokes = strokes;
+    c.width=newW; c.height=newH;
+    // Redibujar con los trazos guardados
+    setTimeout(()=>redraw(), 0);
   }
   function redraw(){
     const c=canvasRef.current; if(!c) return;
@@ -4482,10 +4486,25 @@ function AnalizadorVideo({initialUrl="", onClose}){
   }
   useEffect(()=>{ redraw(); },[strokes]);
   useEffect(()=>{
+    // Observar cambios reales de layout del contenedor, no del vídeo
+    const target = canvasRef.current?.parentElement || videoRef.current;
     const ro=new ResizeObserver(()=>resizeCanvas());
-    if(videoRef.current) ro.observe(videoRef.current);
+    if(target) ro.observe(target);
     window.addEventListener("resize",resizeCanvas);
-    return ()=>{ ro.disconnect(); window.removeEventListener("resize",resizeCanvas); };
+    // Inicializar canvas cuando el vídeo tenga dimensiones
+    const v=videoRef.current;
+    if(v){
+      v.addEventListener("loadedmetadata", resizeCanvas);
+      v.addEventListener("resize", resizeCanvas);
+    }
+    return ()=>{
+      ro.disconnect();
+      window.removeEventListener("resize",resizeCanvas);
+      if(v){
+        v.removeEventListener("loadedmetadata", resizeCanvas);
+        v.removeEventListener("resize", resizeCanvas);
+      }
+    };
   },[src]);
 
   // ── Dibujo ────────────────────────────────────────────────────────
@@ -4514,9 +4533,11 @@ function AnalizadorVideo({initialUrl="", onClose}){
   function up(){
     if(!drawing.current) return;
     drawing.current=false;
-    if(curStroke.current && curStroke.current.pts.length>1)
+    if(curStroke.current && curStroke.current.pts.length>1){
       setStrokes(s=>[...s, curStroke.current]);
+    }
     curStroke.current=null;
+    redraw();
   }
   function undo(){ setStrokes(s=>s.slice(0,-1)); }
   function limpiar(){ setStrokes([]); }
@@ -6495,6 +6516,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
     {id:"miperfil",label:"Mi PIN",icon:"🔐"},
   ];
   const permisos = data.permisosPortal || {};
+  // Si un permiso no está definido explícitamente como false, se muestra
   const ATABS = ATABS_ALL.filter(t => permisos[t.id] !== false);
   // Si la pestaña activa queda oculta, ir a la primera visible
   useEffect(()=>{
