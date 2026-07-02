@@ -4439,19 +4439,27 @@ function AnalizadorVideo({initialUrl="", onClose}){
     setSrc(urlInput.trim());
   }
 
-  // Cargando + tiempo de espera: si el vídeo no carga en 25s, avisar
+  // Cargando + tiempo de espera: si el vídeo no carga en 60s, avisar
   useEffect(()=>{
     clearLoadTimeout();
     if(!src){ setLoading(false); return; }
     setErr(""); setLoading(true);
+    const v=videoRef.current;
+    // Limpiar el error en cuanto el vídeo empiece a reproducirse
+    function onPlaying(){ setErr(""); setLoading(false); clearLoadTimeout(); }
+    function onCanPlay(){ setErr(""); setLoading(false); }
+    if(v){ v.addEventListener("playing", onPlaying); v.addEventListener("canplay", onCanPlay); }
     loadTimeoutRef.current=setTimeout(()=>{
       loadTimeoutRef.current=null;
-      const v=videoRef.current;
-      if(v && v.readyState>=2){ setLoading(false); return; } // ya cargó, no avisar
+      const v2=videoRef.current;
+      if(v2 && (v2.readyState>=2||v2.currentTime>0)){ setLoading(false); return; }
       setLoading(false);
-      setErr("El vídeo tarda demasiado en cargar. Puede que el formato no sea compatible con la web (los vídeos de iPhone en alta eficiencia/HEVC a veces no se reproducen) o que el archivo sea muy grande. Prueba a grabar en modo \"Más compatible\" en los ajustes de la cámara del iPhone, o sube un vídeo más ligero.");
-    }, 25000);
-    return ()=>clearLoadTimeout();
+      setErr("El vídeo tarda en cargar. Si el formato no es compatible, prueba a grabar en modo \"Más compatible\" en Ajustes → Cámara → Formatos del iPhone, o usa un vídeo más corto.");
+    }, 60000);
+    return ()=>{
+      clearLoadTimeout();
+      if(v){ v.removeEventListener("playing", onPlaying); v.removeEventListener("canplay", onCanPlay); }
+    };
   },[src]);
 
   // ── Canvas: tamaño y redibujado ───────────────────────────────────
