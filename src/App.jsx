@@ -4534,10 +4534,18 @@ function AnalizadorVideo({initialUrl="", onClose}){
     if(!drawing.current) return;
     drawing.current=false;
     if(curStroke.current && curStroke.current.pts.length>1){
-      setStrokes(s=>[...s, curStroke.current]);
+      const newStroke = curStroke.current;
+      curStroke.current=null;
+      // Actualizar el ref inmediatamente antes de redibujar
+      strokesRef.current = [...strokesRef.current, newStroke];
+      // Actualizar el estado (triggera re-render)
+      setStrokes([...strokesRef.current]);
+      // Redibujar con el ref ya actualizado
+      redraw();
+    } else {
+      curStroke.current=null;
+      redraw();
     }
-    curStroke.current=null;
-    redraw();
   }
   function undo(){ setStrokes(s=>s.slice(0,-1)); }
   function limpiar(){ setStrokes([]); }
