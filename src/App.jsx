@@ -4361,7 +4361,7 @@ function AnalizadorVideo({initialUrl="", onClose}){
   const [subiendo,setSubiendo] = useState(false); // preparando (subir+optimizar)
   const [fase,setFase]       = useState("subir");  // comprimir | subir | optimizar
   const [prog,setProg]       = useState(0);
-  const [strokes,setStrokes] = useState([]);      // trazos confirmados
+  const strokesOrig = useRef([]);      // trazos confirmados (ref auxiliar)
   const drawing   = useRef(false);
   const curStroke = useRef(null);
   const loadTimeoutRef = useRef(null);
@@ -4464,22 +4464,34 @@ function AnalizadorVideo({initialUrl="", onClose}){
     // Redibujar con los trazos guardados
     setTimeout(()=>redraw(), 0);
   }
+  const [strokes,setStrokes] = useState([]);
+  const strokesRef = useRef([]);
+
+  // Sincronizar ref con estado
+  useEffect(()=>{ strokesRef.current = strokes; redraw(); },[strokes]);
+
   function redraw(){
     const c=canvasRef.current; if(!c) return;
     const ctx=c.getContext("2d");
+    if(!ctx) return;
     ctx.clearRect(0,0,c.width,c.height);
-    const all = curStroke.current ? [...strokes, curStroke.current] : strokes;
+    // Usar ref para tener siempre el valor más actualizado
+    const all = curStroke.current
+      ? [...strokesRef.current, curStroke.current]
+      : strokesRef.current;
     all.forEach(s=>{
-      const pts=s.pts; if(!pts||!pts.length) return;
-      ctx.strokeStyle=s.color; ctx.lineWidth=s.grosor;
-      ctx.lineCap="round"; ctx.lineJoin="round";
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x*c.width, pts[0].y*c.height);
-      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*c.width, pts[i].y*c.height);
-      ctx.stroke();
+      try{
+        const pts=s.pts; if(!pts||pts.length<1) return;
+        ctx.strokeStyle=s.color||"#ff0000";
+        ctx.lineWidth=s.grosor||3;
+        ctx.lineCap="round"; ctx.lineJoin="round";
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x*c.width, pts[0].y*c.height);
+        for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*c.width, pts[i].y*c.height);
+        ctx.stroke();
+      }catch(err){ console.warn("redraw stroke error:", err); }
     });
   }
-  useEffect(()=>{ redraw(); },[strokes]);
   useEffect(()=>{
     // Observar cambios reales de layout del contenedor, no del vídeo
     const target = canvasRef.current?.parentElement || videoRef.current;
