@@ -4,7 +4,7 @@ import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
 } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
-import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ─── Firebase Config ──────────────────────────────────────────────
 // ── Google Calendar Configuración ────────────────────────────────
@@ -4809,7 +4809,22 @@ function ModAnalisis({data,setData}){
               <Btn small color="purple" onClick={()=>setVerModal(a.id)}>Ver</Btn>
               <Btn small color="secondary" onClick={()=>{setForm({...a});setModal(a.id);}}>✎</Btn>
               <Btn small color={a.enviado?"secondary":"sky"} onClick={()=>setData({...data,analisis:analisis.map(x=>x.id===a.id?{...x,enviado:!x.enviado}:x)})}>{a.enviado?"↩":"✉"}</Btn>
-              <Btn small color="danger" onClick={()=>{if(confirm("¿Eliminar?"))setData({...data,analisis:analisis.filter(x=>x.id!==a.id)});}}>✕</Btn>
+              <Btn small color="danger" onClick={async()=>{
+                if(!confirm("¿Eliminar este análisis? Si tiene vídeo también se borrará de Storage.")) return;
+                // Borrar vídeo de Firebase Storage si existe
+                if(a.videoUrl && a.videoUrl.includes("firebasestorage")){
+                  try{
+                    // Extraer la ruta del archivo de la URL de Firebase
+                    const url = new URL(a.videoUrl);
+                    const path = decodeURIComponent(url.pathname.split("/o/")[1]?.split("?")[0]||"");
+                    if(path){
+                      const fileRef = storageRef(storage, path);
+                      await deleteObject(fileRef).catch(e=>console.warn("Storage delete:", e));
+                    }
+                  }catch(e){ console.warn("Error borrando vídeo:", e); }
+                }
+                setData({...data, analisis:analisis.filter(x=>x.id!==a.id)});
+              }}>🗑</Btn>
             </div>
           </div>
         </Card>
