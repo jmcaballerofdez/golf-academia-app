@@ -4455,14 +4455,18 @@ function AnalizadorVideo({initialUrl="", onClose}){
     if(!v||!c) return;
     const r=v.getBoundingClientRect();
     if(r.width===0||r.height===0) return;
-    // Solo redimensionar si el tamaño cambió de verdad (evita borrar al reproducir)
     const newW=Math.round(r.width), newH=Math.round(r.height);
-    if(c.width===newW && c.height===newH){ redraw(); return; }
-    // Guardar el dibujo actual antes de redimensionar
-    const savedStrokes = strokes;
-    c.width=newW; c.height=newH;
-    // Redibujar con los trazos guardados
-    setTimeout(()=>redraw(), 0);
+    // Solo redimensionar si el tamaño cambió realmente
+    if(c.width===newW && c.height===newH){
+      // Tamaño igual — solo redibujar sin borrar
+      redraw();
+      return;
+    }
+    // Tamaño cambió — redimensionar y redibujar
+    c.width=newW;
+    c.height=newH;
+    // Usar setTimeout para que el canvas termine de redimensionarse
+    setTimeout(()=>redraw(), 10);
   }
   const [strokes,setStrokes] = useState([]);
   const strokesRef = useRef([]);
@@ -4493,24 +4497,13 @@ function AnalizadorVideo({initialUrl="", onClose}){
     });
   }
   useEffect(()=>{
-    // Observar cambios reales de layout del contenedor, no del vídeo
-    const target = canvasRef.current?.parentElement || videoRef.current;
-    const ro=new ResizeObserver(()=>resizeCanvas());
-    if(target) ro.observe(target);
-    window.addEventListener("resize",resizeCanvas);
-    // Inicializar canvas cuando el vídeo tenga dimensiones
+    // Solo observar resize de ventana, no del vídeo (evita borrar al reproducir)
+    window.addEventListener("resize", resizeCanvas);
     const v=videoRef.current;
-    if(v){
-      v.addEventListener("loadedmetadata", resizeCanvas);
-      v.addEventListener("resize", resizeCanvas);
-    }
+    if(v) v.addEventListener("loadedmetadata", resizeCanvas);
     return ()=>{
-      ro.disconnect();
-      window.removeEventListener("resize",resizeCanvas);
-      if(v){
-        v.removeEventListener("loadedmetadata", resizeCanvas);
-        v.removeEventListener("resize", resizeCanvas);
-      }
+      window.removeEventListener("resize", resizeCanvas);
+      if(v) v.removeEventListener("loadedmetadata", resizeCanvas);
     };
   },[src]);
 
