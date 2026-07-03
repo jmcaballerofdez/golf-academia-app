@@ -4117,11 +4117,21 @@ try{
 
 async function subirVideoAStorage(file, onProgress){
   dbgLog("subida Firebase Storage: iniciando…");
-  // Nombre único para evitar colisiones
-  const ext = (file.name||"video").split(".").pop().toLowerCase() || "mp4";
+
+  // Normalizar extensión — .mov se sube como video/mp4 para mejor compatibilidad
+  let ext = (file.name||"video").split(".").pop().toLowerCase() || "mp4";
+  let contentType = file.type || "video/mp4";
+
+  // Los .mov de iPhone son QuickTime — forzar mp4 en el nombre para que el navegador lo reconozca
+  if(ext === "mov" || contentType === "video/quicktime"){
+    ext = "mp4";
+    contentType = "video/mp4";
+    dbgLog("subida: .mov detectado, subiendo como video/mp4");
+  }
+
   const nombre = `videos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
   const fileRef = storageRef(storage, nombre);
-  const metadata = { contentType: file.type || "video/mp4" };
+  const metadata = { contentType };
 
   return new Promise((resolve, reject)=>{
     const uploadTask = uploadBytesResumable(fileRef, file, metadata);
@@ -4261,11 +4271,9 @@ function VideoUploader({ value, onChange }){
     e.target.value = "";
     if(!file){
       setSubiendo(false);
-      setErr("No se recibió el vídeo desde la galería. Vuelve a tocar el botón y elige \"Seleccionar archivo\", o graba el vídeo de nuevo.");
+      setErr("No se recibió el vídeo. Vuelve a intentarlo eligiendo el archivo.");
       return;
     }
-    // iOS a veces entrega el vídeo con type vacío al elegirlo de la galería:
-    // aceptamos si el tipo es de vídeo O si la extensión es de vídeo.
     const nombre = (file.name||"").toLowerCase();
     const esVideo = (file.type && file.type.startsWith("video/")) ||
       /\.(mp4|mov|m4v|3gp|3g2|avi|mkv|webm|qt|hevc|mpg|mpeg|ts)$/.test(nombre);
@@ -4276,33 +4284,12 @@ function VideoUploader({ value, onChange }){
       return;
     }
     try{
-      // 1) Comprimir en el dispositivo (reduce tamaño y convierte a formato compatible)
-      let toUpload = file;
-      setFase("comprimir");
-      try{
-        const comp = await comprimirVideo(file, setProg);
-        if(comp && comp.size > 0) toUpload = comp; // usar siempre el comprimido si se generó
-      }catch(_){ /* si la compresión falla, subimos el original */ }
-
-      if(toUpload.size > MAX_MB*1024*1024){
-        setErr(`El vídeo sigue pesando ${(toUpload.size/1024/1024).toFixed(0)} MB (límite ${MAX_MB} MB). Graba un vídeo más corto o en menor resolución.`);
-        setSubiendo(false); return;
-      }
-
-      // 2) Subir
+      // Subir directamente — subirVideoAStorage ya maneja .mov → mp4
       setFase("subir"); setProg(0);
-      const url = await subirVideoAStorage(toUpload, setProg);
-
-      // 3) Optimizar en el servidor: garantiza reproducción en iPhone/web
-      //    (convierte a H.264 MP4). Si fallara, se usa el vídeo subido tal cual.
-      let finalUrl = url;
-      try{
-        setFase("optimizar"); setProg(0);
-        finalUrl = await optimizarVideoEnServidor(url);
-      }catch(_){ /* si la optimización falla, usamos el vídeo subido */ }
-      onChange(finalUrl);
+      const url = await subirVideoAStorage(file, setProg);
+      onChange(url);
     }catch(e2){
-      setErr(e2.message || "No se pudo subir el vídeo.");
+      setErr(e2.message || "No se pudo subir el vídeo. Comprueba tu conexión e inténtalo de nuevo.");
     }
     setSubiendo(false);
   }
