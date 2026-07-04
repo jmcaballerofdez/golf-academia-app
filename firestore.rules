@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Ficha del club: nombre, si está activo, módulos comprados.
+    // Solo lectura desde la app (la gestión de altas/bajas se hace desde
+    // la consola de Firebase o desde una futura herramienta de administración).
+    match /clubes/{clubId} {
+      allow read: if request.auth != null && request.auth.token.clubId == clubId;
+      allow write: if false;
+
+      // Todo lo demás (mant_equipo, mant_tareas, mant_partes, mant_aplicaciones,
+      // mant_maquinaria, mant_fichajes, y cualquier colección futura) vive aquí
+      // dentro. Solo una sesión autenticada con el clubId correcto en su token
+      // puede leer o escribir — un club nunca puede ver los datos de otro,
+      // aunque conozca o adivine el nombre de otro club.
+      match /{coleccion}/{docId} {
+        allow read, write: if request.auth != null && request.auth.token.clubId == clubId;
+      }
+    }
+
+    // Cualquier otra ruta no contemplada explícitamente: denegada por defecto.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
