@@ -4,29 +4,52 @@ import {
   getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc,
   onSnapshot, serverTimestamp, query, orderBy, Timestamp,
 } from "firebase/firestore";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import {
+  LayoutDashboard, Users, ClipboardCheck, AlertTriangle, FlaskConical,
+  Tractor, Clock, Plus, Pencil, Trash2, X, Menu, ChevronRight,
+  LogIn, LogOut, FileDown, ShieldCheck, KeyRound,
+} from "lucide-react";
 
 // ─── Firebase Config ───────────────────────────────────────────────
 // Usa el MISMO proyecto Firebase que Golf B (golf-ciudad-real-50819).
 // Las colecciones llevan el prefijo "mant_" para no mezclarse con Academia.
 const firebaseConfig = {
-  apiKey: "PEGA_AQUI_TU_API_KEY",
+  apiKey: "AIzaSyDQMYwKTt05hfSPW-Trl7NYPGyDFKA76dQ",
   authDomain: "golf-ciudad-real-50819.firebaseapp.com",
   projectId: "golf-ciudad-real-50819",
-  storageBucket: "golf-ciudad-real-50819.appspot.com",
-  messagingSenderId: "PEGA_AQUI",
-  appId: "PEGA_AQUI",
+  storageBucket: "golf-ciudad-real-50819.firebasestorage.app",
+  messagingSenderId: "447720199984",
+  appId: "1:447720199984:web:312a8a1140d95554821af5",
 };
-
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const functions = getFunctions(app);
+
+// ─── Resolución del club (multi-cliente) ───────────────────────────
+// golfsantander.golfb.es → "golfsantander"  |  en local o dominio raíz → "ciudad-real"
+function resolverClubId() {
+  const host = window.location.hostname;
+  // Solo interpretamos el subdominio como clubId en dominios propios tipo
+  // "golfsantander.golfb.es". En GitHub Pages (*.github.io) o en local,
+  // usamos siempre el club piloto por defecto.
+  if (host.endsWith(".golfb.es")) {
+    const sub = host.split(".")[0];
+    if (sub && sub !== "www") return sub;
+  }
+  return "ciudad-real"; // valor por defecto: GitHub Pages, localhost, etc.
+}
+const CLUB_ID = resolverClubId();
 
 // ─── Paleta de marca Golf B ────────────────────────────────────────
 const VERDE = "#0F501E";
 const VERDE_OSCURO = "#0A3A15";
+const VERDE_NEGRO = "#07270F"; // sidebar, botones primarios — tono más corporativo
 const DORADO = "#B48C3C";
 const CREMA = "#F7F5F0";
+const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif";
 
 // ─── Equipo por defecto (se crea la primera vez si la colección está vacía) ──
 const EQUIPO_INICIAL = [
@@ -55,16 +78,17 @@ function fechaCorta(ts) {
   return d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// ─── Badge corporativo (tonos planos, sin bordes llamativos) ────────
 function Badge({ children, tone = "neutral" }) {
   const tones = {
-    neutral: "bg-stone-100 text-stone-700",
-    verde: "bg-green-100 text-green-800",
-    ambar: "bg-amber-100 text-amber-800",
-    rojo: "bg-red-100 text-red-700",
-    dorado: "bg-yellow-50 text-yellow-800 border border-yellow-300",
+    neutral: "bg-stone-100 text-stone-600",
+    verde: "bg-emerald-50 text-emerald-700",
+    ambar: "bg-amber-50 text-amber-700",
+    rojo: "bg-red-50 text-red-600",
+    dorado: "bg-amber-50 text-amber-800",
   };
   return (
-    <span className={cx("px-2 py-0.5 rounded-full text-xs font-medium", tones[tone] || tones.neutral)}>
+    <span className={cx("px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap", tones[tone] || tones.neutral)}>
       {children}
     </span>
   );
@@ -92,6 +116,77 @@ function tonePrioridad(p) {
   return "neutral";
 }
 
+// ─── Cabecera de sección reutilizable (título serif + subtítulo + acción) ──
+function Cabecera({ titulo, subtitulo, children }) {
+  return (
+    <div className="flex items-start justify-between mb-6 flex-wrap gap-3">
+      <div>
+        <h1 className="text-[26px] font-semibold tracking-tight" style={{ color: VERDE_NEGRO, fontFamily: SERIF }}>{titulo}</h1>
+        {subtitulo && <p className="text-stone-500 text-sm mt-1">{subtitulo}</p>}
+      </div>
+      {children && <div className="flex items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+// ─── Botones corporativos ────────────────────────────────────────────
+function BotonPrimario({ children, onClick, icon: Icon = Plus, type = "button" }) {
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-white text-sm font-medium shadow-sm hover:opacity-90 active:scale-[0.99] transition"
+      style={{ background: VERDE_NEGRO }}
+    >
+      {Icon && <Icon size={16} strokeWidth={2} />}
+      {children}
+    </button>
+  );
+}
+
+function BotonSecundario({ children, onClick, icon: Icon }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium border border-stone-300 text-stone-700 bg-white hover:bg-stone-50 transition"
+    >
+      {Icon && <Icon size={16} strokeWidth={2} />}
+      {children}
+    </button>
+  );
+}
+
+function PillFiltro({ activo, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cx(
+        "px-3.5 py-1.5 rounded-lg text-sm font-medium border transition",
+        activo ? "text-white border-transparent" : "text-stone-600 border-stone-300 bg-white hover:bg-stone-50"
+      )}
+      style={activo ? { background: VERDE_NEGRO } : {}}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── Tarjeta base ─────────────────────────────────────────────────────
+function Tarjeta({ children, className = "", onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className={cx(
+        "bg-white rounded-xl border border-stone-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.04)]",
+        onClick && "cursor-pointer hover:shadow-md hover:border-stone-300 transition",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 // ─── Modal genérico ──────────────────────────────────────────────────
 function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null;
@@ -101,11 +196,13 @@ function Modal({ open, onClose, title, children, wide }) {
         className={cx("bg-white rounded-2xl shadow-xl w-full max-h-[90vh] overflow-y-auto", wide ? "max-w-2xl" : "max-w-md")}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#eee" }}>
-          <h3 className="font-semibold text-lg" style={{ color: VERDE_OSCURO }}>{title}</h3>
-          <button onClick={onClose} className="text-stone-400 hover:text-stone-700 text-xl leading-none">×</button>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
+          <h3 className="font-semibold text-lg" style={{ color: VERDE_NEGRO, fontFamily: SERIF }}>{title}</h3>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700 rounded-md p-1 hover:bg-stone-100 transition">
+            <X size={18} />
+          </button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-6">{children}</div>
       </div>
     </div>
   );
@@ -113,14 +210,24 @@ function Modal({ open, onClose, title, children, wide }) {
 
 function Field({ label, children }) {
   return (
-    <label className="block mb-3">
-      <span className="block text-sm font-medium text-stone-600 mb-1">{label}</span>
+    <label className="block mb-3.5">
+      <span className="block text-[13px] font-medium text-stone-600 mb-1.5">{label}</span>
       {children}
     </label>
   );
 }
 
-const inputCls = "w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F501E]/30 focus:border-[#0F501E]";
+const inputCls = "w-full border border-stone-300 rounded-lg px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-[#0A3A15]/15 focus:border-[#0A3A15] transition";
+
+// ─── Rutas de Firestore ancladas al club (multi-cliente) ─────────────
+// Todo documento vive bajo clubes/{CLUB_ID}/{coleccion}/{id}.
+// Así un club NUNCA puede leer accidentalmente los datos de otro: la ruta lo impide.
+function coleccionClub(nombre) {
+  return collection(db, "clubes", CLUB_ID, nombre);
+}
+function docClub(nombre, id) {
+  return doc(db, "clubes", CLUB_ID, nombre, id);
+}
 
 // ─── Firestore hook genérico ─────────────────────────────────────────
 function useColeccion(nombre, ordenarPor = "creadoEn", dir = "desc") {
@@ -128,7 +235,7 @@ function useColeccion(nombre, ordenarPor = "creadoEn", dir = "desc") {
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, nombre), orderBy(ordenarPor, dir));
+    const q = query(coleccionClub(nombre), orderBy(ordenarPor, dir));
     const unsub = onSnapshot(q, (snap) => {
       setDatos(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setCargando(false);
@@ -143,14 +250,15 @@ function useColeccion(nombre, ordenarPor = "creadoEn", dir = "desc") {
 }
 
 async function crearDoc(coleccion, data) {
-  return addDoc(collection(db, coleccion), { ...data, creadoEn: serverTimestamp() });
+  return addDoc(coleccionClub(coleccion), { ...data, creadoEn: serverTimestamp() });
 }
 async function actualizarDoc(coleccion, id, data) {
-  return updateDoc(doc(db, coleccion, id), data);
+  return updateDoc(docClub(coleccion, id), data);
 }
 async function borrarDoc(coleccion, id) {
-  return deleteDoc(doc(db, coleccion, id));
+  return deleteDoc(docClub(coleccion, id));
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 // APP
@@ -158,27 +266,62 @@ async function borrarDoc(coleccion, id) {
 export default function App() {
   const [usuario, setUsuario] = useState(null);
   const [cargandoAuth, setCargandoAuth] = useState(true);
+  const [errorClub, setErrorClub] = useState(null);
   const [vista, setVista] = useState("dashboard");
   const [menuAbierto, setMenuAbierto] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUsuario(u);
-      setCargandoAuth(false);
-      if (!u) signInAnonymously(auth).catch((e) => console.error("Error de auth:", e));
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) { setUsuario(u); setCargandoAuth(false); return; }
+      try {
+        const mintTenantToken = httpsCallable(functions, "mintTenantToken");
+        const res = await mintTenantToken({ clubId: CLUB_ID });
+        await signInWithCustomToken(auth, res.data.token);
+      } catch (e) {
+        console.error("No se pudo autenticar con el club:", e);
+        setErrorClub(e.message || "No se pudo verificar el club.");
+        setCargandoAuth(false);
+      }
     });
     return () => unsub();
   }, []);
 
-  const NAV = [
-    { id: "dashboard", label: "Panel", icono: "📊" },
-    { id: "equipo", label: "Equipo", icono: "👥" },
-    { id: "tareas", label: "Tareas de campo", icono: "✅" },
-    { id: "partes", label: "Partes de incidencia", icono: "⚠️" },
-    { id: "aplicaciones", label: "Aplicaciones", icono: "🧪" },
-    { id: "maquinaria", label: "Maquinaria", icono: "🚜" },
-    { id: "fichajes", label: "Fichajes", icono: "🕒" },
+  // Navegación agrupada por bloques, al estilo del panel de Finanzas
+  const NAV_GROUPS = [
+    { label: "Principal", items: [
+      { id: "dashboard", label: "Panel", Icon: LayoutDashboard },
+    ]},
+    { label: "Operativa", items: [
+      { id: "tareas", label: "Tareas de campo", Icon: ClipboardCheck },
+      { id: "partes", label: "Partes de incidencia", Icon: AlertTriangle },
+      { id: "aplicaciones", label: "Aplicaciones", Icon: FlaskConical },
+    ]},
+    { label: "Recursos", items: [
+      { id: "equipo", label: "Equipo", Icon: Users },
+      { id: "maquinaria", label: "Maquinaria", Icon: Tractor },
+    ]},
+    { label: "Sistema", items: [
+      { id: "fichajes", label: "Fichajes", Icon: Clock },
+    ]},
   ];
+
+  const TITULOS = {
+    dashboard: "Panel", equipo: "Equipo", tareas: "Tareas de campo",
+    partes: "Partes de incidencia", aplicaciones: "Aplicaciones",
+    maquinaria: "Maquinaria", fichajes: "Fichajes",
+  };
+
+  if (errorClub) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: CREMA }}>
+        <Tarjeta className="p-6 max-w-sm text-center">
+          <AlertTriangle className="mx-auto mb-2 text-amber-600" size={28} strokeWidth={1.75} />
+          <p className="font-semibold mb-1" style={{ color: VERDE_NEGRO }}>No se pudo acceder a este club</p>
+          <p className="text-sm text-stone-500">{errorClub}</p>
+        </Tarjeta>
+      </div>
+    );
+  }
 
   if (cargandoAuth) {
     return (
@@ -196,28 +339,43 @@ export default function App() {
           "fixed md:static z-40 inset-y-0 left-0 w-64 text-white flex flex-col transition-transform",
           menuAbierto ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
-        style={{ background: VERDE_OSCURO }}
+        style={{ background: VERDE_NEGRO }}
       >
-        <div className="px-5 py-6 border-b border-white/10">
-          <p className="text-xl font-bold italic" style={{ fontFamily: "'Exo 2', sans-serif" }}>Golf B</p>
-          <p className="text-xs text-white/60 mt-0.5">Mantenimiento · Golf Ciudad Real C.D.</p>
+        <div className="px-6 py-6 border-b border-white/10">
+          <p className="text-2xl font-bold italic tracking-tight" style={{ fontFamily: "'Exo 2', sans-serif" }}>Golf B</p>
+          <p className="text-[11px] text-white/45 mt-1 uppercase tracking-widest">Mantenimiento</p>
+          <p className="text-xs text-white/60 mt-2">Golf Ciudad Real C.D.</p>
         </div>
-        <nav className="flex-1 py-4 space-y-1 px-3">
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => { setVista(item.id); setMenuAbierto(false); }}
-              className={cx(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition",
-                vista === item.id ? "bg-white/15 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
-              )}
-            >
-              <span>{item.icono}</span>{item.label}
-            </button>
+        <nav className="flex-1 py-5 px-3 space-y-5 overflow-y-auto">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label}>
+              <p className="px-3 mb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-white/35">
+                {group.label}
+              </p>
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const activo = vista === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => { setVista(item.id); setMenuAbierto(false); }}
+                      className={cx(
+                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13.5px] font-medium transition",
+                        activo ? "bg-white/12 text-white" : "text-white/65 hover:bg-white/8 hover:text-white"
+                      )}
+                    >
+                      <item.Icon size={16} strokeWidth={1.75} className={activo ? "opacity-100" : "opacity-70"} />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </nav>
-        <div className="px-5 py-4 border-t border-white/10 text-[11px] text-white/50">
+        <div className="px-6 py-4 border-t border-white/10 text-[11px] text-white/45 leading-relaxed">
           José Manuel Caballero Fernández<br />PGA España Nº 1908P
+          <div className="mt-1.5 text-white/25">Club: {CLUB_ID}</div>
         </div>
       </aside>
 
@@ -227,12 +385,12 @@ export default function App() {
 
       {/* Contenido */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b">
-          <button onClick={() => setMenuAbierto(true)} className="text-2xl leading-none" style={{ color: VERDE }}>☰</button>
-          <p className="font-semibold italic" style={{ color: VERDE }}>Golf B · Mantenimiento</p>
+        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-stone-100">
+          <button onClick={() => setMenuAbierto(true)} className="p-1 text-stone-600"><Menu size={22} /></button>
+          <p className="font-semibold italic" style={{ color: VERDE_NEGRO }}>Golf B · {TITULOS[vista]}</p>
           <div className="w-6" />
         </header>
-        <main className="flex-1 p-4 md:p-8 max-w-6xl w-full mx-auto">
+        <main className="flex-1 p-4 md:p-10 max-w-6xl w-full mx-auto">
           {vista === "dashboard" && <Dashboard irA={setVista} />}
           {vista === "equipo" && <Equipo />}
           {vista === "tareas" && <Tareas />}
@@ -266,56 +424,60 @@ function Dashboard({ irA }) {
   }).length;
 
   const tarjetas = [
-    { id: "tareas", label: "Tareas pendientes", valor: tareasPendientes, icono: "✅", tone: "verde" },
-    { id: "partes", label: "Partes abiertos", valor: partesAbiertos, icono: "⚠️", tone: partesAbiertos > 0 ? "rojo" : "verde" },
-    { id: "maquinaria", label: "Maquinaria operativa", valor: `${maquinasOperativas}/${maquinaria.length || 0}`, icono: "🚜", tone: "neutral" },
-    { id: "aplicaciones", label: "Aplicaciones este mes", valor: aplicacionesMes, icono: "🧪", tone: "dorado" },
+    { id: "tareas", label: "Tareas pendientes", valor: tareasPendientes, Icon: ClipboardCheck, tone: "verde" },
+    { id: "partes", label: "Partes abiertos", valor: partesAbiertos, Icon: AlertTriangle, tone: partesAbiertos > 0 ? "rojo" : "verde" },
+    { id: "maquinaria", label: "Maquinaria operativa", valor: `${maquinasOperativas}/${maquinaria.length || 0}`, Icon: Tractor, tone: "neutral" },
+    { id: "aplicaciones", label: "Aplicaciones este mes", valor: aplicacionesMes, Icon: FlaskConical, tone: "dorado" },
   ];
+
+  const iconBg = {
+    verde: "bg-emerald-50 text-emerald-700",
+    rojo: "bg-red-50 text-red-600",
+    dorado: "bg-amber-50 text-amber-700",
+    neutral: "bg-stone-100 text-stone-500",
+  };
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1" style={{ color: VERDE_OSCURO }}>Panel de mantenimiento</h1>
-      <p className="text-stone-500 text-sm mb-6">Vista general del campo, equipo y actividad reciente.</p>
+      <Cabecera titulo="Panel de mantenimiento" subtitulo="Vista general del campo, equipo y actividad reciente." />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {tarjetas.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => irA(c.id)}
-            className="bg-white rounded-xl p-4 text-left shadow-sm border border-stone-100 hover:shadow-md transition"
-          >
-            <div className="text-2xl mb-2">{c.icono}</div>
-            <div className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>{c.valor}</div>
+          <Tarjeta key={c.id} onClick={() => irA(c.id)} className="p-5 text-left">
+            <div className={cx("w-9 h-9 rounded-lg flex items-center justify-center mb-3", iconBg[c.tone])}>
+              <c.Icon size={18} strokeWidth={1.75} />
+            </div>
+            <div className="text-2xl font-semibold" style={{ color: VERDE_NEGRO, fontFamily: SERIF }}>{c.valor}</div>
             <div className="text-xs text-stone-500 mt-1">{c.label}</div>
-          </button>
+          </Tarjeta>
         ))}
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-stone-100">
-          <h2 className="font-semibold mb-3" style={{ color: VERDE_OSCURO }}>Últimos partes de incidencia</h2>
+        <Tarjeta className="p-5">
+          <h2 className="font-semibold mb-3 text-[15px]" style={{ color: VERDE_NEGRO }}>Últimos partes de incidencia</h2>
           {partes.slice(0, 5).length === 0 && <p className="text-sm text-stone-400">Sin partes registrados.</p>}
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {partes.slice(0, 5).map((p) => (
-              <li key={p.id} className="flex items-center justify-between text-sm">
-                <span className="truncate">{p.titulo}</span>
+              <li key={p.id} className="flex items-center justify-between text-sm gap-3">
+                <span className="truncate text-stone-700">{p.titulo}</span>
                 <Badge tone={toneGravedad(p.gravedad)}>{p.gravedad}</Badge>
               </li>
             ))}
           </ul>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-stone-100">
-          <h2 className="font-semibold mb-3" style={{ color: VERDE_OSCURO }}>Tareas próximas</h2>
+        </Tarjeta>
+        <Tarjeta className="p-5">
+          <h2 className="font-semibold mb-3 text-[15px]" style={{ color: VERDE_NEGRO }}>Tareas próximas</h2>
           {tareas.slice(0, 5).length === 0 && <p className="text-sm text-stone-400">Sin tareas registradas.</p>}
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {tareas.slice(0, 5).map((t) => (
-              <li key={t.id} className="flex items-center justify-between text-sm">
-                <span className="truncate">{t.titulo}</span>
+              <li key={t.id} className="flex items-center justify-between text-sm gap-3">
+                <span className="truncate text-stone-700">{t.titulo}</span>
                 <Badge tone={toneEstado(t.estado)}>{t.estado}</Badge>
               </li>
             ))}
           </ul>
-        </div>
+        </Tarjeta>
       </div>
     </div>
   );
@@ -348,30 +510,28 @@ function Equipo() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>Equipo</h1>
-          <p className="text-stone-500 text-sm">Personal de mantenimiento del campo.</p>
-        </div>
-        <button onClick={abrirNuevo} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>+ Añadir</button>
-      </div>
+      <Cabecera titulo="Equipo" subtitulo="Personal de mantenimiento del campo.">
+        <BotonPrimario onClick={abrirNuevo}>Añadir</BotonPrimario>
+      </Cabecera>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {equipo.map((m) => (
-          <div key={m.id} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100">
+          <Tarjeta key={m.id} className="p-4">
             <div className="flex items-start justify-between">
               <div>
-                <p className="font-semibold" style={{ color: VERDE_OSCURO }}>{m.nombre}</p>
+                <p className="font-semibold" style={{ color: VERDE_NEGRO }}>{m.nombre}</p>
                 <p className="text-sm text-stone-500">{m.rol}</p>
                 {m.telefono && <p className="text-xs text-stone-400 mt-1">{m.telefono}</p>}
-                <div className="flex gap-1 mt-2">
+                <div className="flex gap-1.5 mt-2.5">
                   {m.esAdmin && <Badge tone="dorado">Administrador</Badge>}
                   <Badge tone={m.pin ? "verde" : "neutral"}>{m.pin ? "PIN configurado" : "Sin PIN"}</Badge>
                 </div>
               </div>
-              <button onClick={() => abrirEditar(m)} className="text-stone-400 hover:text-stone-700 text-sm">✎</button>
+              <button onClick={() => abrirEditar(m)} className="text-stone-400 hover:text-stone-700 p-1 rounded hover:bg-stone-100 transition">
+                <Pencil size={15} />
+              </button>
             </div>
-          </div>
+          </Tarjeta>
         ))}
       </div>
 
@@ -392,9 +552,11 @@ function Equipo() {
         </label>
         <div className="flex justify-between items-center mt-4">
           {editando ? (
-            <button onClick={async () => { await borrarDoc("mant_equipo", editando.id); setModal(false); }} className="text-red-600 text-sm">Eliminar</button>
+            <button onClick={async () => { await borrarDoc("mant_equipo", editando.id); setModal(false); }} className="inline-flex items-center gap-1.5 text-red-600 text-sm hover:text-red-700">
+              <Trash2 size={14} /> Eliminar
+            </button>
           ) : <span />}
-          <button onClick={guardar} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Guardar</button>
+          <BotonPrimario onClick={guardar} icon={null}>Guardar</BotonPrimario>
         </div>
       </Modal>
     </div>
@@ -427,31 +589,23 @@ function Tareas() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>Tareas de campo</h1>
-          <p className="text-stone-500 text-sm">Trabajo diario asignado al equipo.</p>
-        </div>
-        <button onClick={abrirNuevo} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>+ Nueva tarea</button>
-      </div>
+      <Cabecera titulo="Tareas de campo" subtitulo="Trabajo diario asignado al equipo.">
+        <BotonPrimario onClick={abrirNuevo}>Nueva tarea</BotonPrimario>
+      </Cabecera>
 
-      <div className="flex gap-2 mb-4 flex-wrap">
+      <div className="flex gap-2 mb-5 flex-wrap">
         {["Todas", ...ESTADOS_TAREA].map((e) => (
-          <button key={e} onClick={() => setFiltroEstado(e)}
-            className={cx("px-3 py-1 rounded-full text-xs font-medium border", filtroEstado === e ? "text-white border-transparent" : "text-stone-600 border-stone-300")}
-            style={filtroEstado === e ? { background: VERDE } : {}}>
-            {e}
-          </button>
+          <PillFiltro key={e} activo={filtroEstado === e} onClick={() => setFiltroEstado(e)}>{e}</PillFiltro>
         ))}
       </div>
 
       <div className="space-y-2">
         {tareasFiltradas.length === 0 && <p className="text-sm text-stone-400">No hay tareas en este filtro.</p>}
         {tareasFiltradas.map((t) => (
-          <div key={t.id} onClick={() => abrirEditar(t)} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 cursor-pointer hover:shadow-md transition">
+          <Tarjeta key={t.id} onClick={() => abrirEditar(t)} className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-medium truncate" style={{ color: VERDE_OSCURO }}>{t.titulo}</p>
+                <p className="font-medium truncate" style={{ color: VERDE_NEGRO }}>{t.titulo}</p>
                 <p className="text-xs text-stone-500 mt-0.5">{t.zona} · {t.asignadoA || "Sin asignar"} {t.fechaLimite ? `· vence ${t.fechaLimite}` : ""}</p>
               </div>
               <div className="flex gap-2 shrink-0">
@@ -459,7 +613,7 @@ function Tareas() {
                 <Badge tone={toneEstado(t.estado)}>{t.estado}</Badge>
               </div>
             </div>
-          </div>
+          </Tarjeta>
         ))}
       </div>
 
@@ -492,9 +646,11 @@ function Tareas() {
         <Field label="Descripción"><textarea className={inputCls} rows={3} value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} /></Field>
         <div className="flex justify-between items-center mt-4">
           {editando ? (
-            <button onClick={async () => { await borrarDoc("mant_tareas", editando.id); setModal(false); }} className="text-red-600 text-sm">Eliminar</button>
+            <button onClick={async () => { await borrarDoc("mant_tareas", editando.id); setModal(false); }} className="inline-flex items-center gap-1.5 text-red-600 text-sm hover:text-red-700">
+              <Trash2 size={14} /> Eliminar
+            </button>
           ) : <span />}
-          <button onClick={guardar} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Guardar</button>
+          <BotonPrimario onClick={guardar} icon={null}>Guardar</BotonPrimario>
         </div>
       </Modal>
     </div>
@@ -524,21 +680,17 @@ function Partes() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>Partes de incidencia</h1>
-          <p className="text-stone-500 text-sm">Averías, daños o problemas detectados en el campo.</p>
-        </div>
-        <button onClick={abrirNuevo} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>+ Nuevo parte</button>
-      </div>
+      <Cabecera titulo="Partes de incidencia" subtitulo="Averías, daños o problemas detectados en el campo.">
+        <BotonPrimario onClick={abrirNuevo}>Nuevo parte</BotonPrimario>
+      </Cabecera>
 
       <div className="space-y-2">
         {partes.length === 0 && <p className="text-sm text-stone-400">No hay partes registrados.</p>}
         {partes.map((p) => (
-          <div key={p.id} onClick={() => abrirEditar(p)} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 cursor-pointer hover:shadow-md transition">
+          <Tarjeta key={p.id} onClick={() => abrirEditar(p)} className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-medium truncate" style={{ color: VERDE_OSCURO }}>{p.titulo}</p>
+                <p className="font-medium truncate" style={{ color: VERDE_NEGRO }}>{p.titulo}</p>
                 <p className="text-xs text-stone-500 mt-0.5">{p.zona} · {fechaCorta(p.creadoEn)} {p.reportadoPor ? `· ${p.reportadoPor}` : ""}</p>
               </div>
               <div className="flex gap-2 shrink-0">
@@ -546,7 +698,7 @@ function Partes() {
                 <Badge tone={toneEstado(p.estado)}>{p.estado}</Badge>
               </div>
             </div>
-          </div>
+          </Tarjeta>
         ))}
       </div>
 
@@ -578,9 +730,11 @@ function Partes() {
         <Field label="Descripción"><textarea className={inputCls} rows={3} value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} /></Field>
         <div className="flex justify-between items-center mt-4">
           {editando ? (
-            <button onClick={async () => { await borrarDoc("mant_partes", editando.id); setModal(false); }} className="text-red-600 text-sm">Eliminar</button>
+            <button onClick={async () => { await borrarDoc("mant_partes", editando.id); setModal(false); }} className="inline-flex items-center gap-1.5 text-red-600 text-sm hover:text-red-700">
+              <Trash2 size={14} /> Eliminar
+            </button>
           ) : <span />}
-          <button onClick={guardar} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Guardar</button>
+          <BotonPrimario onClick={guardar} icon={null}>Guardar</BotonPrimario>
         </div>
       </Modal>
     </div>
@@ -610,41 +764,37 @@ function Aplicaciones() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>Aplicaciones</h1>
-          <p className="text-stone-500 text-sm">Registro de fertilizantes y fitosanitarios aplicados al campo.</p>
-        </div>
-        <button onClick={abrirNuevo} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>+ Nueva aplicación</button>
-      </div>
+      <Cabecera titulo="Aplicaciones" subtitulo="Registro de fertilizantes y fitosanitarios aplicados al campo.">
+        <BotonPrimario onClick={abrirNuevo}>Nueva aplicación</BotonPrimario>
+      </Cabecera>
 
-      <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-stone-100">
+      <Tarjeta className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-stone-500 border-b border-stone-100">
-              <th className="px-4 py-3 font-medium">Producto</th>
-              <th className="px-4 py-3 font-medium">Tipo</th>
-              <th className="px-4 py-3 font-medium">Zona</th>
-              <th className="px-4 py-3 font-medium">Fecha</th>
-              <th className="px-4 py-3 font-medium">Carencia</th>
+              <th className="px-5 py-3.5 font-medium">Producto</th>
+              <th className="px-5 py-3.5 font-medium">Tipo</th>
+              <th className="px-5 py-3.5 font-medium">Zona</th>
+              <th className="px-5 py-3.5 font-medium">Fecha</th>
+              <th className="px-5 py-3.5 font-medium">Carencia</th>
             </tr>
           </thead>
           <tbody>
             {aplicaciones.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-stone-400">Sin aplicaciones registradas.</td></tr>
+              <tr><td colSpan={5} className="px-5 py-6 text-center text-stone-400">Sin aplicaciones registradas.</td></tr>
             )}
             {aplicaciones.map((a) => (
-              <tr key={a.id} onClick={() => abrirEditar(a)} className="border-b border-stone-50 last:border-0 cursor-pointer hover:bg-stone-50">
-                <td className="px-4 py-3 font-medium" style={{ color: VERDE_OSCURO }}>{a.producto}</td>
-                <td className="px-4 py-3 text-stone-600">{a.tipo}</td>
-                <td className="px-4 py-3 text-stone-600">{a.zona}</td>
-                <td className="px-4 py-3 text-stone-600">{a.fechaAplicacion || "—"}</td>
-                <td className="px-4 py-3 text-stone-600">{a.plazoSeguridad ? `${a.plazoSeguridad} días` : "—"}</td>
+              <tr key={a.id} onClick={() => abrirEditar(a)} className="border-b border-stone-50 last:border-0 cursor-pointer hover:bg-stone-50/70 transition">
+                <td className="px-5 py-3.5 font-medium" style={{ color: VERDE_NEGRO }}>{a.producto}</td>
+                <td className="px-5 py-3.5 text-stone-600">{a.tipo}</td>
+                <td className="px-5 py-3.5 text-stone-600">{a.zona}</td>
+                <td className="px-5 py-3.5 text-stone-600">{a.fechaAplicacion || "—"}</td>
+                <td className="px-5 py-3.5 text-stone-600">{a.plazoSeguridad ? `${a.plazoSeguridad} días` : "—"}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </Tarjeta>
 
       <Modal open={modal} onClose={() => setModal(false)} title={editando ? "Editar aplicación" : "Nueva aplicación"} wide>
         <div className="grid sm:grid-cols-2 gap-x-4">
@@ -674,9 +824,11 @@ function Aplicaciones() {
         <Field label="Notas"><textarea className={inputCls} rows={2} value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} /></Field>
         <div className="flex justify-between items-center mt-4">
           {editando ? (
-            <button onClick={async () => { await borrarDoc("mant_aplicaciones", editando.id); setModal(false); }} className="text-red-600 text-sm">Eliminar</button>
+            <button onClick={async () => { await borrarDoc("mant_aplicaciones", editando.id); setModal(false); }} className="inline-flex items-center gap-1.5 text-red-600 text-sm hover:text-red-700">
+              <Trash2 size={14} /> Eliminar
+            </button>
           ) : <span />}
-          <button onClick={guardar} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Guardar</button>
+          <BotonPrimario onClick={guardar} icon={null}>Guardar</BotonPrimario>
         </div>
       </Modal>
     </div>
@@ -705,28 +857,24 @@ function Maquinaria() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>Maquinaria</h1>
-          <p className="text-stone-500 text-sm">Estado y mantenimiento del parque de maquinaria.</p>
-        </div>
-        <button onClick={abrirNuevo} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>+ Añadir máquina</button>
-      </div>
+      <Cabecera titulo="Maquinaria" subtitulo="Estado y mantenimiento del parque de maquinaria.">
+        <BotonPrimario onClick={abrirNuevo}>Añadir máquina</BotonPrimario>
+      </Cabecera>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {maquinaria.length === 0 && <p className="text-sm text-stone-400">Sin maquinaria registrada.</p>}
         {maquinaria.map((m) => (
-          <div key={m.id} onClick={() => abrirEditar(m)} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 cursor-pointer hover:shadow-md transition">
+          <Tarjeta key={m.id} onClick={() => abrirEditar(m)} className="p-4">
             <div className="flex items-start justify-between mb-2">
               <div>
-                <p className="font-semibold" style={{ color: VERDE_OSCURO }}>{m.nombre}</p>
+                <p className="font-semibold" style={{ color: VERDE_NEGRO }}>{m.nombre}</p>
                 <p className="text-xs text-stone-500">{m.tipo} {m.modelo ? `· ${m.modelo}` : ""}</p>
               </div>
               <Badge tone={toneEstado(m.estado)}>{m.estado}</Badge>
             </div>
             {m.horometro && <p className="text-xs text-stone-500">Horómetro: {m.horometro} h</p>}
             {m.proximoMantenimiento && <p className="text-xs text-stone-500">Próx. mantenimiento: {m.proximoMantenimiento}</p>}
-          </div>
+          </Tarjeta>
         ))}
       </div>
 
@@ -746,9 +894,11 @@ function Maquinaria() {
         <Field label="Notas"><textarea className={inputCls} rows={2} value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} /></Field>
         <div className="flex justify-between items-center mt-4">
           {editando ? (
-            <button onClick={async () => { await borrarDoc("mant_maquinaria", editando.id); setModal(false); }} className="text-red-600 text-sm">Eliminar</button>
+            <button onClick={async () => { await borrarDoc("mant_maquinaria", editando.id); setModal(false); }} className="inline-flex items-center gap-1.5 text-red-600 text-sm hover:text-red-700">
+              <Trash2 size={14} /> Eliminar
+            </button>
           ) : <span />}
-          <button onClick={guardar} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Guardar</button>
+          <BotonPrimario onClick={guardar} icon={null}>Guardar</BotonPrimario>
         </div>
       </Modal>
     </div>
@@ -828,21 +978,13 @@ function Fichajes() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: VERDE_OSCURO }}>Fichajes</h1>
-          <p className="text-stone-500 text-sm">Registro horario del equipo e informes de jornada.</p>
-        </div>
+      <Cabecera titulo="Fichajes" subtitulo="Registro horario del equipo e informes de jornada.">
         <div className="flex gap-2">
           {tabs.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={cx("px-3 py-1.5 rounded-full text-sm font-medium border", tab === t.id ? "text-white border-transparent" : "text-stone-600 border-stone-300")}
-              style={tab === t.id ? { background: VERDE } : {}}>
-              {t.label}
-            </button>
+            <PillFiltro key={t.id} activo={tab === t.id} onClick={() => setTab(t.id)}>{t.label}</PillFiltro>
           ))}
         </div>
-      </div>
+      </Cabecera>
       {tab === "registro" && <FichajeRegistro />}
       {tab === "informes" && <FichajeInformes />}
       {tab === "corregir" && (
@@ -876,7 +1018,7 @@ function PinModal({ open, onClose, titulo, onConfirm }) {
         placeholder="····"
       />
       {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
-      <button onClick={confirmar} className="w-full mt-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Confirmar</button>
+      <BotonPrimario onClick={confirmar} icon={KeyRound}>Confirmar</BotonPrimario>
     </Modal>
   );
 }
@@ -889,8 +1031,11 @@ function AdminGate({ onOk }) {
   const [pinModal, setPinModal] = useState(false);
 
   return (
-    <div className="bg-white rounded-xl p-6 shadow-sm border border-stone-100 max-w-sm">
-      <p className="text-sm text-stone-500 mb-4">Solo personal administrador puede corregir fichajes. Identifícate para continuar.</p>
+    <Tarjeta className="p-6 max-w-sm">
+      <div className="flex items-center gap-2 mb-4">
+        <ShieldCheck size={18} className="text-stone-500" />
+        <p className="text-sm text-stone-500">Solo personal administrador puede corregir fichajes. Identifícate para continuar.</p>
+      </div>
       <Field label="Administrador">
         <select className={inputCls} value={nombre} onChange={(e) => setNombre(e.target.value)}>
           <option value="">Selecciona…</option>
@@ -900,9 +1045,9 @@ function AdminGate({ onOk }) {
       <button
         disabled={!nombre}
         onClick={() => setPinModal(true)}
-        className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-30"
-        style={{ background: VERDE }}
-      >Introducir PIN</button>
+        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-white text-sm font-medium disabled:opacity-30 mt-1"
+        style={{ background: VERDE_NEGRO }}
+      ><KeyRound size={16} /> Introducir PIN</button>
 
       <PinModal
         open={pinModal}
@@ -914,7 +1059,7 @@ function AdminGate({ onOk }) {
           return false;
         }}
       />
-    </div>
+    </Tarjeta>
   );
 }
 
@@ -959,38 +1104,42 @@ function FichajeRegistro() {
           const estado = ultimoEstado(m.nombre);
           const aviso = estado === "fuera" ? avisoDescanso(m.nombre) : null;
           return (
-            <div key={m.id} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100">
+            <Tarjeta key={m.id} className="p-4">
               <div className="flex items-center justify-between mb-3">
-                <p className="font-semibold" style={{ color: VERDE_OSCURO }}>{m.nombre}</p>
+                <p className="font-semibold" style={{ color: VERDE_NEGRO }}>{m.nombre}</p>
                 <Badge tone={estado === "dentro" ? "verde" : "neutral"}>{estado === "dentro" ? "Dentro" : "Fuera"}</Badge>
               </div>
-              {aviso && <p className="text-xs text-red-600 mb-2">⚠ {aviso}</p>}
+              {aviso && (
+                <p className="text-xs text-red-600 mb-2 flex items-start gap-1.5">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {aviso}
+                </p>
+              )}
               <div className="flex gap-2">
                 <button
                   disabled={estado === "dentro"}
                   onClick={() => pedirFichaje(m, "entrada")}
-                  className="flex-1 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-30"
-                  style={{ background: VERDE }}
-                >Entrada</button>
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-30"
+                  style={{ background: VERDE_NEGRO }}
+                ><LogIn size={14} /> Entrada</button>
                 <button
                   disabled={estado === "fuera"}
                   onClick={() => pedirFichaje(m, "salida")}
-                  className="flex-1 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-30"
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-30"
                   style={{ background: DORADO }}
-                >Salida</button>
+                ><LogOut size={14} /> Salida</button>
               </div>
-            </div>
+            </Tarjeta>
           );
         })}
       </div>
 
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-stone-100">
-        <h2 className="font-semibold mb-3" style={{ color: VERDE_OSCURO }}>Fichajes de hoy</h2>
+      <Tarjeta className="p-5">
+        <h2 className="font-semibold mb-3 text-[15px]" style={{ color: VERDE_NEGRO }}>Fichajes de hoy</h2>
         {fichajesHoy.length === 0 && <p className="text-sm text-stone-400">Nadie ha fichado todavía.</p>}
         <ul className="space-y-1">
           {fichajesHoy.map((f) => (
             <li key={f.id} className="flex items-center justify-between text-sm border-b border-stone-50 last:border-0 py-1.5">
-              <span>{f.empleado}</span>
+              <span className="text-stone-700">{f.empleado}</span>
               <span className="flex items-center gap-2 text-stone-500">
                 <Badge tone={f.tipo === "entrada" ? "verde" : "dorado"}>{f.tipo}</Badge>
                 {horaCorta(f.momento)}
@@ -998,7 +1147,7 @@ function FichajeRegistro() {
             </li>
           ))}
         </ul>
-      </div>
+      </Tarjeta>
 
       <PinModal
         open={!!pinPara}
@@ -1069,48 +1218,50 @@ function FichajeInformes() {
 
   return (
     <div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 mb-4 grid sm:grid-cols-4 gap-3 items-end">
-        <Field label="Empleado">
-          <select className={inputCls} value={empleado} onChange={(e) => setEmpleado(e.target.value)}>
-            <option value="">Todos</option>
-            {equipo.map((m) => <option key={m.id}>{m.nombre}</option>)}
-          </select>
-        </Field>
-        <Field label="Desde"><input type="date" className={inputCls} value={desde} onChange={(e) => setDesde(e.target.value)} /></Field>
-        <Field label="Hasta"><input type="date" className={inputCls} value={hasta} onChange={(e) => setHasta(e.target.value)} /></Field>
-        <button onClick={exportarPDF} className="h-fit px-4 py-2 rounded-lg text-white text-sm font-medium mb-3" style={{ background: VERDE }}>Exportar PDF</button>
-      </div>
+      <Tarjeta className="p-4 mb-4">
+        <div className="grid sm:grid-cols-4 gap-3 items-end">
+          <Field label="Empleado">
+            <select className={inputCls} value={empleado} onChange={(e) => setEmpleado(e.target.value)}>
+              <option value="">Todos</option>
+              {equipo.map((m) => <option key={m.id}>{m.nombre}</option>)}
+            </select>
+          </Field>
+          <Field label="Desde"><input type="date" className={inputCls} value={desde} onChange={(e) => setDesde(e.target.value)} /></Field>
+          <Field label="Hasta"><input type="date" className={inputCls} value={hasta} onChange={(e) => setHasta(e.target.value)} /></Field>
+          <BotonPrimario onClick={exportarPDF} icon={FileDown}>Exportar PDF</BotonPrimario>
+        </div>
+      </Tarjeta>
 
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-stone-100 mb-4">
+      <Tarjeta className="p-5 mb-4">
         <p className="text-sm text-stone-500">Total del periodo</p>
-        <p className="text-3xl font-bold" style={{ color: VERDE_OSCURO }}>{totalHoras.toFixed(2)} h</p>
-      </div>
+        <p className="text-3xl font-semibold" style={{ color: VERDE_NEGRO, fontFamily: SERIF }}>{totalHoras.toFixed(2)} h</p>
+      </Tarjeta>
 
-      <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-stone-100">
+      <Tarjeta className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-stone-500 border-b border-stone-100">
-              <th className="px-4 py-3 font-medium">Fecha</th>
-              <th className="px-4 py-3 font-medium">Entrada</th>
-              <th className="px-4 py-3 font-medium">Salida</th>
-              <th className="px-4 py-3 font-medium">Horas</th>
+              <th className="px-5 py-3.5 font-medium">Fecha</th>
+              <th className="px-5 py-3.5 font-medium">Entrada</th>
+              <th className="px-5 py-3.5 font-medium">Salida</th>
+              <th className="px-5 py-3.5 font-medium">Horas</th>
             </tr>
           </thead>
           <tbody>
             {jornadas.length === 0 && (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-stone-400">Sin fichajes en este periodo.</td></tr>
+              <tr><td colSpan={4} className="px-5 py-6 text-center text-stone-400">Sin fichajes en este periodo.</td></tr>
             )}
             {jornadas.map((j) => (
               <tr key={j.dia} className="border-b border-stone-50 last:border-0">
-                <td className="px-4 py-3 font-medium" style={{ color: VERDE_OSCURO }}>{fechaLegible(j.dia)}</td>
-                <td className="px-4 py-3 text-stone-600">{j.primeraEntrada ? j.primeraEntrada.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
-                <td className="px-4 py-3 text-stone-600">{j.ultimaSalida ? j.ultimaSalida.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : (j.incompleto ? <span className="text-red-500">sin fichar salida</span> : "—")}</td>
-                <td className="px-4 py-3 text-stone-600">{j.horas.toFixed(2)} h</td>
+                <td className="px-5 py-3.5 font-medium" style={{ color: VERDE_NEGRO }}>{fechaLegible(j.dia)}</td>
+                <td className="px-5 py-3.5 text-stone-600">{j.primeraEntrada ? j.primeraEntrada.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                <td className="px-5 py-3.5 text-stone-600">{j.ultimaSalida ? j.ultimaSalida.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : (j.incompleto ? <span className="text-red-500">sin fichar salida</span> : "—")}</td>
+                <td className="px-5 py-3.5 text-stone-600">{j.horas.toFixed(2)} h</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </Tarjeta>
     </div>
   );
 }
@@ -1133,49 +1284,55 @@ function FichajeCorreccion({ admin, onSalir }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <p className="text-sm text-stone-500">Sesión de corrección: <strong>{admin.nombre}</strong></p>
-        <button onClick={onSalir} className="text-sm text-stone-500 underline">Salir del modo corrección</button>
+        <p className="text-sm text-stone-500">Sesión de corrección: <strong className="text-stone-700">{admin.nombre}</strong></p>
+        <button onClick={onSalir} className="text-sm text-stone-500 underline hover:text-stone-700">Salir del modo corrección</button>
       </div>
 
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 mb-4 grid sm:grid-cols-3 gap-3 items-end">
-        <Field label="Empleado">
-          <select className={inputCls} value={filtroEmpleado} onChange={(e) => setFiltroEmpleado(e.target.value)}>
-            <option value="">Todos</option>
-            {equipo.map((m) => <option key={m.id}>{m.nombre}</option>)}
-          </select>
-        </Field>
-        <Field label="Fecha"><input type="date" className={inputCls} value={filtroFecha} onChange={(e) => setFiltroFecha(e.target.value)} /></Field>
-        <button onClick={() => setModalNuevo(true)} className="h-fit px-4 py-2 rounded-lg text-white text-sm font-medium mb-3" style={{ background: VERDE }}>+ Añadir fichaje manual</button>
-      </div>
+      <Tarjeta className="p-4 mb-4">
+        <div className="grid sm:grid-cols-3 gap-3 items-end">
+          <Field label="Empleado">
+            <select className={inputCls} value={filtroEmpleado} onChange={(e) => setFiltroEmpleado(e.target.value)}>
+              <option value="">Todos</option>
+              {equipo.map((m) => <option key={m.id}>{m.nombre}</option>)}
+            </select>
+          </Field>
+          <Field label="Fecha"><input type="date" className={inputCls} value={filtroFecha} onChange={(e) => setFiltroFecha(e.target.value)} /></Field>
+          <BotonPrimario onClick={() => setModalNuevo(true)}>Añadir fichaje manual</BotonPrimario>
+        </div>
+      </Tarjeta>
 
-      <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-stone-100">
+      <Tarjeta className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-stone-500 border-b border-stone-100">
-              <th className="px-4 py-3 font-medium">Empleado</th>
-              <th className="px-4 py-3 font-medium">Tipo</th>
-              <th className="px-4 py-3 font-medium">Fecha y hora</th>
-              <th className="px-4 py-3 font-medium"></th>
+              <th className="px-5 py-3.5 font-medium">Empleado</th>
+              <th className="px-5 py-3.5 font-medium">Tipo</th>
+              <th className="px-5 py-3.5 font-medium">Fecha y hora</th>
+              <th className="px-5 py-3.5 font-medium"></th>
             </tr>
           </thead>
           <tbody>
             {lista.length === 0 && (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-stone-400">Sin fichajes con este filtro.</td></tr>
+              <tr><td colSpan={4} className="px-5 py-6 text-center text-stone-400">Sin fichajes con este filtro.</td></tr>
             )}
             {lista.map((f) => (
               <tr key={f.id} className="border-b border-stone-50 last:border-0">
-                <td className="px-4 py-3 font-medium" style={{ color: VERDE_OSCURO }}>{f.empleado}</td>
-                <td className="px-4 py-3"><Badge tone={f.tipo === "entrada" ? "verde" : "dorado"}>{f.tipo}</Badge></td>
-                <td className="px-4 py-3 text-stone-600">{fechaLegible(fechaISO(f.momento))} · {horaCorta(f.momento)}</td>
-                <td className="px-4 py-3 text-right">
-                  <button onClick={() => setEditando(f)} className="text-stone-400 hover:text-stone-700 text-sm mr-3">✎</button>
-                  <button onClick={async () => { if (confirm("¿Eliminar este fichaje?")) await borrarDoc("mant_fichajes", f.id); }} className="text-red-500 hover:text-red-700 text-sm">Eliminar</button>
+                <td className="px-5 py-3.5 font-medium" style={{ color: VERDE_NEGRO }}>{f.empleado}</td>
+                <td className="px-5 py-3.5"><Badge tone={f.tipo === "entrada" ? "verde" : "dorado"}>{f.tipo}</Badge></td>
+                <td className="px-5 py-3.5 text-stone-600">{fechaLegible(fechaISO(f.momento))} · {horaCorta(f.momento)}</td>
+                <td className="px-5 py-3.5 text-right">
+                  <button onClick={() => setEditando(f)} className="text-stone-400 hover:text-stone-700 p-1 rounded hover:bg-stone-100 transition mr-1">
+                    <Pencil size={14} />
+                  </button>
+                  <button onClick={async () => { if (confirm("¿Eliminar este fichaje?")) await borrarDoc("mant_fichajes", f.id); }} className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition">
+                    <Trash2 size={14} />
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
+      </Tarjeta>
 
       <FichajeFormModal
         open={!!editando || modalNuevo}
@@ -1234,7 +1391,7 @@ function FichajeFormModal({ open, fichaje, equipo, onClose }) {
         <Field label="Fecha"><input type="date" className={inputCls} value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} /></Field>
         <Field label="Hora"><input type="time" className={inputCls} value={form.hora} onChange={(e) => setForm({ ...form, hora: e.target.value })} /></Field>
       </div>
-      <button onClick={guardar} className="w-full mt-2 py-2 rounded-lg text-white text-sm font-medium" style={{ background: VERDE }}>Guardar</button>
+      <BotonPrimario onClick={guardar} icon={null}>Guardar</BotonPrimario>
     </Modal>
   );
 }
