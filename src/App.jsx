@@ -4,7 +4,8 @@ import {
   getFirestore, collection, doc, setDoc, addDoc, deleteDoc, updateDoc,
   onSnapshot, serverTimestamp, query, orderBy, Timestamp,
 } from "firebase/firestore";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { getFunctions, httpsCallable } from "firebase/functions";
 
 // ─── Firebase Config ───────────────────────────────────────────────
 // Usa el MISMO proyecto Firebase que Golf B (golf-ciudad-real-50819).
@@ -21,6 +22,22 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const functions = getFunctions(app);
+
+// ─── Resolución del club (multi-cliente) ───────────────────────────
+// golfsantander.golfb.es → "golfsantander"  |  en local o dominio raíz → "ciudad-real"
+function resolverClubId() {
+  const host = window.location.hostname;
+  // Solo interpretamos el subdominio como clubId en dominios propios tipo
+  // "golfsantander.golfb.es". En GitHub Pages (*.github.io) o en local,
+  // usamos siempre el club piloto por defecto.
+  if (host.endsWith(".golfb.es")) {
+    const sub = host.split(".")[0];
+    if (sub && sub !== "www") return sub;
+  }
+  return "ciudad-real"; // valor por defecto: GitHub Pages, localhost, etc.
+}
+const CLUB_ID = resolverClubId();
 
 // ─── Paleta de marca Golf B ────────────────────────────────────────
 const VERDE = "#0F501E";
@@ -122,13 +139,23 @@ function Field({ label, children }) {
 
 const inputCls = "w-full border border-stone-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F501E]/30 focus:border-[#0F501E]";
 
+// ─── Rutas de Firestore ancladas al club (multi-cliente) ─────────────
+// Todo documento vive bajo clubes/{CLUB_ID}/{coleccion}/{id}.
+// Así un club NUNCA puede leer accidentalmente los datos de otro: la ruta lo impide.
+function coleccionClub(nombre) {
+  return collection(db, "clubes", CLUB_ID, nombre);
+}
+function docClub(nombre, id) {
+  return doc(db, "clubes", CLUB_ID, nombre, id);
+}
+
 // ─── Firestore hook genérico ─────────────────────────────────────────
 function useColeccion(nombre, ordenarPor = "creadoEn", dir = "desc") {
   const [datos, setDatos] = useState([]);
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, nombre), orderBy(ordenarPor, dir));
+    const q = query(coleccionClub(nombre), orderBy(ordenarPor, dir));
     const unsub = onSnapshot(q, (snap) => {
       setDatos(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setCargando(false);
@@ -143,14 +170,15 @@ function useColeccion(nombre, ordenarPor = "creadoEn", dir = "desc") {
 }
 
 async function crearDoc(coleccion, data) {
-  return addDoc(collection(db, coleccion), { ...data, creadoEn: serverTimestamp() });
+  return addDoc(coleccionClub(coleccion), { ...data, creadoEn: serverTimestamp() });
 }
 async function actualizarDoc(coleccion, id, data) {
-  return updateDoc(doc(db, coleccion, id), data);
+  return updateDoc(docClub(coleccion, id), data);
 }
 async function borrarDoc(coleccion, id) {
-  return deleteDoc(doc(db, coleccion, id));
+  return deleteDoc(docClub(coleccion, id));
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 // APP
@@ -158,14 +186,22 @@ async function borrarDoc(coleccion, id) {
 export default function App() {
   const [usuario, setUsuario] = useState(null);
   const [cargandoAuth, setCargandoAuth] = useState(true);
+  const [errorClub, setErrorClub] = useState(null);
   const [vista, setVista] = useState("dashboard");
   const [menuAbierto, setMenuAbierto] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUsuario(u);
-      setCargandoAuth(false);
-      if (!u) signInAnonymously(auth).catch((e) => console.error("Error de auth:", e));
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (u) { setUsuario(u); setCargandoAuth(false); return; }
+      try {
+        const mintTenantToken = httpsCallable(functions, "mintTenantToken");
+        const res = await mintTenantToken({ clubId: CLUB_ID });
+        await signInWithCustomToken(auth, res.data.token);
+      } catch (e) {
+        console.error("No se pudo autenticar con el club:", e);
+        setErrorClub(e.message || "No se pudo verificar el club.");
+        setCargandoAuth(false);
+      }
     });
     return () => unsub();
   }, []);
@@ -179,6 +215,18 @@ export default function App() {
     { id: "maquinaria", label: "Maquinaria", icono: "🚜" },
     { id: "fichajes", label: "Fichajes", icono: "🕒" },
   ];
+
+  if (errorClub) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: CREMA }}>
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-stone-100 max-w-sm text-center">
+          <p className="text-2xl mb-2">⚠️</p>
+          <p className="font-semibold mb-1" style={{ color: VERDE_OSCURO }}>No se pudo acceder a este club</p>
+          <p className="text-sm text-stone-500">{errorClub}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (cargandoAuth) {
     return (
@@ -218,6 +266,7 @@ export default function App() {
         </nav>
         <div className="px-5 py-4 border-t border-white/10 text-[11px] text-white/50">
           José Manuel Caballero Fernández<br />PGA España Nº 1908P
+          <div className="mt-1 text-white/30">Club: {CLUB_ID}</div>
         </div>
       </aside>
 
