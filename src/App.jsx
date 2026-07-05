@@ -11,14 +11,13 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 // Usa el MISMO proyecto Firebase que Golf B (golf-ciudad-real-50819).
 // Las colecciones llevan el prefijo "mant_" para no mezclarse con Academia.
 const firebaseConfig = {
-  apiKey: "PEGA_AQUI_TU_API_KEY",
+  apiKey: "AIzaSyDQMYwKTt05hfSPW-Trl7NYPGyDFKA76dQ",
   authDomain: "golf-ciudad-real-50819.firebaseapp.com",
   projectId: "golf-ciudad-real-50819",
-  storageBucket: "golf-ciudad-real-50819.appspot.com",
-  messagingSenderId: "PEGA_AQUI",
-  appId: "PEGA_AQUI",
+  storageBucket: "golf-ciudad-real-50819.firebasestorage.app",
+  messagingSenderId: "447720199984",
+  appId: "1:447720199984:web:312a8a1140d95554821af5",
 };
-
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
