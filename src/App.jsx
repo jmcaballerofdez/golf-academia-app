@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
 } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
+import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 
 // ─── Firebase Config ──────────────────────────────────────────────
 // ── Google Calendar Configuración ────────────────────────────────
-const GCAL_CLIENT_ID = "532891287117-do4egt1ssit9eqmfg6ugtvfkal361d1o.apps.googleusercontent.com";
+const GCAL_CLIENT_ID = "234350222482-4l7ore116950lcr5bnbbf3b60pdrojj6.apps.googleusercontent.com";
 const GCAL_SCOPES = "https://www.googleapis.com/auth/calendar";
 const GCAL_DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
 
@@ -347,6 +348,25 @@ async function notificarClaseAlumnoEmail(clase, alumno){
 // ── Exportar una clase concreta a Google Calendar ─────────────────
 async function exportarClaseAGcal(clase, alumno){
   try {
+    // ── Email automático al profesor ──────────────────────────────
+    try {
+      await cargarEmailJS();
+      if(window.emailjs){
+        await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
+          nombre_alumno: alumno?.nombre || "Sin nombre",
+          email_alumno:  alumno?.email  || "—",
+          fecha_clase:   fmtDate(clase.fecha) || clase.fecha || "—",
+          hora_clase:    clase.horaInicio || clase.hora || "—",
+          duracion_clase: clase.duracion || "60",
+          tipo_clase:    clase.tipo || "Individual",
+          zona_clase:    clase.zona || "—",
+          contenido:     clase.contenido || "—",
+          enlace_portal: "https://jmcaballerofdez.github.io/golf-academia-app/",
+        }).catch(e=>console.warn("Email profesor clase:",e));
+      }
+    } catch(e){ console.warn("EmailJS profesor:", e); }
+
+    // ── Google Calendar ───────────────────────────────────────────
     // Cargar GAPI
     if(!window.gapi){
       await new Promise((res,rej)=>{
@@ -360,8 +380,9 @@ async function exportarClaseAGcal(clase, alumno){
     await window.gapi.client.init({
       discoveryDocs:["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"]
     });
+
     // Cargar GIS
-    if(!window.google?.accounts){
+    if(!window.google?.accounts?.oauth2){
       await new Promise((res,rej)=>{
         const s=document.createElement("script");
         s.src="https://accounts.google.com/gsi/client";
@@ -369,7 +390,8 @@ async function exportarClaseAGcal(clase, alumno){
         document.head.appendChild(s);
       });
     }
-    const titulo = "🏌️ Clase golf" + (alumno?" — "+alumno.nombre:"");
+
+    const titulo = "🏌️ Clase — " + (alumno?.nombre||"Alumno") + " · " + (clase.tipo||"Individual");
     const fecha = clase.fecha || today();
     const hora = clase.horaInicio || clase.hora || "10:00";
     const [y,m,d] = fecha.split("-");
@@ -377,34 +399,46 @@ async function exportarClaseAGcal(clase, alumno){
     const ini = new Date(Number(y),Number(m)-1,Number(d),hh,mm);
     const fin = new Date(ini.getTime()+(Number(clase.duracion||60))*60*1000);
 
-    const tc = window.google.accounts.oauth2.initTokenClient({
-      client_id: GCAL_CLIENT_ID,
-      scope: GCAL_SCOPES,
-      callback: async (resp) => {
-        if(resp.error){ console.warn("GCal auth error:", resp.error); return; }
-        try {
-          await window.gapi.client.calendar.events.insert({
-            calendarId: "primary",
-            resource: {
-              summary: titulo,
-              description: `Academia Golf B\nAlumno: ${alumno?.nombre||""}\nZona: ${clase.zona||""}\nContenido: ${clase.contenido||""}\nDuración: ${clase.duracion||60} min`,
-              start: {dateTime: ini.toISOString(), timeZone: "Europe/Madrid"},
-              end:   {dateTime: fin.toISOString(), timeZone: "Europe/Madrid"},
-              colorId: "2",
-              reminders: {
-                useDefault: false,
-                overrides: [
-                  {method: "email",  minutes: 1440}, // 24h antes
-                  {method: "popup",  minutes: 60},   // 1h antes
-                ]
+    await new Promise((resolve, reject)=>{
+      const tc = window.google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPES,
+        callback: async (resp) => {
+          if(resp.error){
+            console.warn("GCal auth error:", resp.error);
+            reject(new Error(resp.error));
+            return;
+          }
+          try {
+            await window.gapi.client.calendar.events.insert({
+              calendarId: "primary",
+              resource: {
+                summary: titulo,
+                description: `Golf Ciudad Real C.D. — José Caballero Golf Academy\n\n👤 Alumno: ${alumno?.nombre||""}\n📍 Zona: ${clase.zona||""}\n📝 Contenido: ${clase.contenido||""}\n⏱️ Duración: ${clase.duracion||60} min`,
+                start: {dateTime: ini.toISOString(), timeZone: "Europe/Madrid"},
+                end:   {dateTime: fin.toISOString(), timeZone: "Europe/Madrid"},
+                colorId: "2",
+                reminders: {
+                  useDefault: false,
+                  overrides: [
+                    {method: "email",  minutes: 1440},
+                    {method: "popup",  minutes: 60},
+                  ]
+                }
               }
-            }
-          });
-          console.log("✅ Clase añadida a Google Calendar");
-        } catch(e){ console.warn("GCal insert error:", e); }
-      }
+            });
+            console.log("✅ Clase añadida a Google Calendar");
+            resolve();
+          } catch(e){
+            console.warn("GCal insert error:", e);
+            reject(e);
+          }
+        }
+      });
+      // Solicitar token — siempre renueva para evitar caducidad
+      tc.requestAccessToken({prompt: "consent"});
     });
-    tc.requestAccessToken({prompt: ""});
+
   } catch(e){ console.warn("exportarClaseAGcal error:", e); }
 }
 
@@ -453,8 +487,9 @@ const firebaseConfig = {
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
-const db  = getFirestore(firebaseApp);
-const auth = getAuth(firebaseApp);
+const db      = getFirestore(firebaseApp);
+const auth    = getAuth(firebaseApp);
+const storage = getStorage(firebaseApp);
 
 // ─── Firestore helpers ────────────────────────────────────────────
 const DB_DOC = "academia/datos";
@@ -971,8 +1006,6 @@ function PantallaRegistro({onVolver}){
     if(!form.telefono.trim()){setError("El teléfono es obligatorio.");return;}
     if(!form.email.trim()){setError("El email es obligatorio.");return;}
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)){setError("El email no es válido. Revísalo, por favor.");return;}
-    if(!form.diasPreferencia||form.diasPreferencia.length===0){setError("Selecciona al menos un día de clase preferido.");return;}
-    if(!form.horarioPreferencia){setError("Selecciona un horario preferido.");return;}
     if(form.pinElegido.length<6){setError("La clave debe tener al menos 6 caracteres.");return;}
     if(!form.rgpdAceptado){setError("Debes aceptar la política de protección de datos.");return;}
     if(esMenor){
@@ -1001,8 +1034,12 @@ function PantallaRegistro({onVolver}){
         setLoading(false);
         return;
       }
-      // Comprobar en alumnos ya activos (datos de la app)
-      const alumnosActivos = data?.alumnos||[];
+      // Comprobar en alumnos ya activos (Firebase, no estado local)
+      let alumnosActivos = [];
+      try {
+        const dataSnap = await getDoc(doc(db,"academia","datos"));
+        alumnosActivos = dataSnap.exists() ? (dataSnap.data()?.alumnos||[]) : [];
+      } catch(e2){ console.warn("Error leyendo alumnos activos:", e2); }
       const yaActivo = alumnosActivos.some(a=>
         (form.email&&a.email&&a.email.toLowerCase()===form.email.toLowerCase()) ||
         (form.telefono&&a.telefono&&a.telefono.replace(/\s/g,"")===form.telefono.replace(/\s/g,"")) ||
@@ -2268,10 +2305,12 @@ function EstructuraInfantil({data, setData, alumnos}){
   const porCat = {};
   CATS_INF.forEach(c=>{ porCat[c.id]=[]; });
   porCat["sin"]=[];
-  alumnos.forEach(a=>{
-    if(porCat[a.nivel]!==undefined) porCat[a.nivel].push(a);
-    else porCat["sin"].push(a);
+  (alumnos||[]).forEach(a=>{
+    if(a && porCat[a.nivel]!==undefined) porCat[a.nivel].push(a);
+    else if(a) porCat["sin"].push(a);
   });
+
+  if(!CATS_INF || CATS_INF.length===0) return <div style={{padding:20,color:"#c00"}}>Error: categorías no cargadas.</div>;
 
   return <div>
     {/* Pestañas */}
@@ -2306,10 +2345,11 @@ function EstructuraInfantil({data, setData, alumnos}){
             ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                 {lista.map(a=>(
                   <span key={a.id} style={{display:"flex",alignItems:"center",gap:6,
-                    background:"#f5f5f5",borderRadius:16,padding:"4px 10px 4px 5px",fontSize:12}}>
-                    <FotoAlumno foto={a.foto} nombre={a.nombre} size={24}/>
+                    background:"#f5f5f5",borderRadius:16,padding:"4px 10px",fontSize:12}}>
                     <span style={{fontWeight:600}}>{a.nombre}</span>
-                    {a.fechaNacimiento&&<span style={{color:G.soft}}>{calcularEdad(a.fechaNacimiento)}a</span>}
+                    {a.fechaNacimiento&&<span style={{color:G.soft}}>
+                      {(()=>{ try { return calcularEdad(a.fechaNacimiento)+"a"; } catch(e){ return ""; } })()}
+                    </span>}
                   </span>
                 ))}
               </div>
@@ -2352,8 +2392,12 @@ function EstructuraInfantil({data, setData, alumnos}){
                 ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                     {alumnosG.map(a=>(
                       <span key={a.id} style={{display:"flex",alignItems:"center",gap:5,
-                        background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 5px",fontSize:12}}>
-                        <FotoAlumno foto={a.foto} nombre={a.nombre} size={22}/>
+                        background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 6px",fontSize:12}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:G.fairway,
+                          color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                          fontSize:10,fontWeight:700,flexShrink:0}}>
+                          {(a.nombre||"?")[0].toUpperCase()}
+                        </div>
                         {a.nombre}
                       </span>
                     ))}
@@ -2418,20 +2462,25 @@ function EstructuraInfantil({data, setData, alumnos}){
       <div style={{maxHeight:220,overflowY:"auto",border:"1px solid #eee",borderRadius:10,padding:8}}>
         {alumnos.length===0
           ? <div style={{textAlign:"center",color:G.soft,padding:20,fontSize:13}}>
-              No hay alumnos infantiles todavía
+              No hay alumnos todavía
             </div>
           : alumnos.map(a=>{
               const sel=(formGrupo.alumnoIds||[]).includes(a.id);
               const catA=GRUPOS_EDAD.find(c=>c.id===a.nivel);
+              const edad = (()=>{ try{ return a.fechaNacimiento ? calcularEdad(a.fechaNacimiento)+"a" : ""; }catch(e){ return ""; }})();
               return <label key={a.id} style={{display:"flex",alignItems:"center",gap:10,
                 background:sel?"#e8f5eb":"#fff",borderRadius:8,padding:"8px 10px",
                 marginBottom:4,cursor:"pointer",
                 border:sel?"2px solid #1a5c2a":"2px solid #f0f0f0"}}>
                 <input type="checkbox" checked={sel} onChange={()=>toggleAlumno(a.id)}
                   style={{width:16,height:16}}/>
-                <FotoAlumno foto={a.foto} nombre={a.nombre} size={26}/>
+                <div style={{width:26,height:26,borderRadius:"50%",background:G.fairway,
+                  color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:11,fontWeight:700,flexShrink:0}}>
+                  {(a.nombre||"?")[0].toUpperCase()}
+                </div>
                 <span style={{fontWeight:600,fontSize:13,flex:1}}>{a.nombre}</span>
-                {a.fechaNacimiento&&<span style={{fontSize:11,color:G.soft}}>{calcularEdad(a.fechaNacimiento)}a</span>}
+                {edad&&<span style={{fontSize:11,color:G.soft}}>{edad}</span>}
                 {catA&&<span style={{fontSize:10,background:catA.color,color:"#fff",
                   borderRadius:6,padding:"1px 6px"}}>{catA.emoji} {catA.nombre}</span>}
               </label>;
@@ -2546,6 +2595,43 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
   const edadForm = calcularEdad(form.fechaNacimiento);
   const menorForm = edadForm!==null && edadForm<18;
 
+  function exportarCSV(){
+    const listaExportar = tabTipo==="infantil" ? alumnosInfantil : alumnosAdultos;
+    const cabecera = [
+      "Nombre","Tipo escuela","Fecha nacimiento","Edad","Nivel/Grupo","Activo",
+      "Teléfono","Email","Fecha alta","RGPD","Imagen autorizada","Autorización legal",
+      "Alergias","Intolerancias","Lesiones","Equipo",
+      "Tutor 1 nombre","Tutor 1 relación","Tutor 1 teléfono","Tutor 1 email",
+      "Tutor 2 nombre","Tutor 2 relación","Tutor 2 teléfono","Tutor 2 email",
+      "Notas"
+    ];
+    function esc(v){ const s=String(v||""); return s.includes(",")||s.includes("\n")||s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s; }
+    const filas = listaExportar.map(a=>{
+      const edad = calcularEdad(a.fechaNacimiento);
+      const t1 = (a.tutores||[])[0]||{};
+      const t2 = (a.tutores||[])[1]||{};
+      return [
+        a.nombre, a.tipoEscuela==="adultos"?"Adultos":"Infantil",
+        a.fechaNacimiento||"", edad!==null?edad:"",
+        a.nivel||a.grupo||"", a.activo?"Sí":"No",
+        a.telefono||"", a.email||"", a.fechaAlta||"",
+        a.rgpdAceptado?"Sí":"No", a.imagenAutorizada?"Sí":"No", a.firmaLegal?"Sí":"No",
+        a.alergias||"", a.intolerancias||"", a.lesiones||"", a.equipo||"",
+        t1.nombre||"", t1.relacion||"", t1.telefono||"", t1.email||"",
+        t2.nombre||"", t2.relacion||"", t2.telefono||"", t2.email||"",
+        a.notas||""
+      ].map(esc).join(",");
+    });
+    const csv = "\uFEFF" + [cabecera.join(","), ...filas].join("\r\n");
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `alumnos_${tabTipo}_${today()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return <div>
     {/* Header con tipo de escuela */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
@@ -2566,18 +2652,21 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
         placeholder="🔍 Buscar alumno..."
         style={{flex:1,minWidth:150,border:"1.5px solid #d0e0d0",borderRadius:8,
           padding:"8px 12px",fontSize:14,fontFamily:"inherit"}}/>
-      {tabTipo==="infantil"&&<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
+      {<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
         {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
       </Btn>}
+      <Btn color="secondary" onClick={exportarCSV} title="Exportar listado a CSV (Excel)">
+        📥 Exportar CSV
+      </Btn>
       <Btn onClick={openNew}>+ Nuevo alumno</Btn>
     </div>
 
     {/* Vista de estructura de grupos */}
-    {tabTipo==="infantil"&&vistaEstructura&&<EstructuraInfantil
-      data={data} setData={setData} alumnos={alumnosInfantil}/>}
+    {vistaEstructura&&<EstructuraInfantil
+      data={data} setData={setData} alumnos={alumnos.filter(a=>a.activo)}/>}
 
     {/* Info de la escuela seleccionada */}
-    {!(tabTipo==="infantil"&&vistaEstructura)&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
+    {!vistaEstructura&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
       padding:"8px 14px",marginBottom:14,fontSize:12,
       color:tabTipo==="infantil"?"#3a7abf":G.fairway,fontWeight:600}}>
       {tabTipo==="infantil"
@@ -2586,7 +2675,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
     </div>}
 
     {/* Lista de alumnos */}
-    {!(tabTipo==="infantil"&&vistaEstructura)&&(alumnosMostrar.length===0
+    {!vistaEstructura&&(alumnosMostrar.length===0
       ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
           <div style={{fontSize:28,marginBottom:8}}>{tabTipo==="infantil"?"🧒":"🏌️"}</div>
           <div style={{fontWeight:700}}>Sin alumnos en {tabTipo==="infantil"?"la Escuela Infantil":"la Escuela de Adultos"}</div>
@@ -3220,229 +3309,774 @@ function ModClases({data,setData,profesorId=null,modoAdmin=false}){
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN: ESTADÍSTICAS
 // ═══════════════════════════════════════════════════════════════════
+// ── Helpers estadísticas ──────────────────────────────────────────
+const PARES_CAMPO = [4,3,5,4,4,3,4,5,4, 4,3,5,4,4,3,4,5,4]; // par por defecto 72
+const FALLO_TEE_OPTS = [
+  {val:"izquierda",icon:"↩️",label:"Izq"},
+  {val:"recto",    icon:"⬆️", label:"Recto"},
+  {val:"derecha",  icon:"↪️", label:"Der"},
+  {val:"corto",    icon:"⬇️", label:"Corto"},
+  {val:"largo",    icon:"⬆️⬆️",label:"Largo"},
+];
+function falloTeeLabel(v){
+  const o=FALLO_TEE_OPTS.find(x=>x.val===v);
+  return o?`${o.icon} ${o.label}`:v||"—";
+}
+function hoyoVacio(n){
+  return {n,golpes:"",putts:"",fairway:"",gir:"",penalizaciones:"",falloTee:""};
+}
+function initHoyos(num){
+  return Array.from({length:num},(_,i)=>hoyoVacio(i+1));
+}
+
+function Spark({values,color}){
+  const nums=(values||[]).map(Number).filter(v=>!isNaN(v));
+  if(nums.length<2) return null;
+  const mx=Math.max(...nums),mn=Math.min(...nums),rng=mx-mn||1;
+  const w=100,h=28,p=3;
+  const pts=nums.map((v,i)=>`${p+(i/(nums.length-1))*(w-p*2)},${p+(1-(v-mn)/rng)*(h-p*2)}`).join(" ");
+  const last=pts.split(" ").at(-1).split(",");
+  return <svg width={w} height={h} style={{display:"block"}}>
+    <polyline fill="none" stroke={color} strokeWidth="2" points={pts}/>
+    <circle cx={last[0]} cy={last[1]} r="3" fill={color}/>
+  </svg>;
+}
+
+function BarChart({pct,color,label}){
+  const v=Math.min(100,Math.max(0,Number(pct)||0));
+  return <div style={{marginBottom:6}}>
+    <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:G.soft,marginBottom:2}}>
+      <span>{label}</span><span style={{fontWeight:700,color}}>{v}%</span>
+    </div>
+    <div style={{background:"#eee",borderRadius:6,height:8}}>
+      <div style={{background:color,width:`${v}%`,height:8,borderRadius:6,transition:"width .3s"}}/>
+    </div>
+  </div>;
+}
+
 function ModEstadisticas({data,setData}){
-  const alumnos = (data.alumnos||[]).filter(a=>a.activo);
-  const stats   = data.estadisticas||[];
+  const alumnos=(data.alumnos||[]).filter(a=>a.activo);
+  const stats=data.estadisticas||[];
+  const [alumnoSel,setAlumnoSel]=useState("");
+  const [vista,setVista]=useState("rondas"); // rondas | informe
+  const [modal,setModal]=useState(null); // null | "nueva" | "editar" | "hoyo"
+  const [form,setForm]=useState({});
+  const [hoyos,setHoyos]=useState([]); // array de 9 o 18 hoyos
+  const [hoyoActual,setHoyoActual]=useState(0); // índice hoyo activo
+  const [modoEntrada,setModoEntrada]=useState("resumen"); // resumen | hoyo
+  const [periodoInforme,setPeriodoInforme]=useState("rondas"); // rondas | mensual
+  const [verDetalle,setVerDetalle]=useState(null);
 
-  const [alumnoSel, setAlumnoSel] = useState("");
-  const [modal,     setModal]     = useState(false);
-  const [form,      setForm]      = useState({});
+  useEffect(()=>{ if(alumnos.length>0&&!alumnoSel) setAlumnoSel(alumnos[0].id); },[alumnos.length]);
 
-  // Auto-select first alumno
-  useEffect(()=>{
-    if(alumnos.length>0 && !alumnoSel){
-      setAlumnoSel(alumnos[0].id);
-    }
-  },[alumnos.length]);
-
-  const alumnoActual = alumnos.find(a=>a.id===alumnoSel);
-  const alumnoStats  = stats
-    .filter(s=>s.alumnoId===alumnoSel)
-    .sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  const alumnoActual=alumnos.find(a=>a.id===alumnoSel);
+  const alumnoStats=stats.filter(s=>s.alumnoId===alumnoSel).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+  const últimas10=alumnoStats.slice(0,10).reverse();
 
   function abrirNueva(){
-    setForm({
-      alumnoId: alumnoSel,
-      fecha:    today(),
-      hoyos:    "18",
-      golpes:   "",
-      fairwaysPorcentaje: "",
-      greensRegulacion:   "",
-      putts:    "",
-      bunkers:  "",
-      handicap: "",
-      handicapExacto: "",
-      handicapJuego:  "",
-      paloTee: "Driver",
-      falloTee: "",
-      notas:    "",
-    });
-    setModal(true);
+    const numH=18;
+    setForm({alumnoId:alumnoSel,fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:"",handicapExacto:"",handicapJuego:"",notas:"",campo:""});
+    setHoyos(initHoyos(numH));
+    setHoyoActual(0);
+    setModoEntrada("hoyo");
+    setModal("nueva");
+  }
+
+  function cambiarNumHoyos(n){
+    setForm(f=>({...f,hoyos:String(n)}));
+    setHoyos(initHoyos(n));
+    setHoyoActual(0);
+  }
+
+  function actualizarHoyo(idx,campo,val){
+    setHoyos(h=>h.map((hh,i)=>i===idx?{...hh,[campo]:val}:hh));
+  }
+
+  function calcularTotalesHoyos(){
+    const golpesTot=hoyos.reduce((s,h)=>s+(Number(h.golpes)||0),0);
+    const puttsTot=hoyos.reduce((s,h)=>s+(Number(h.putts)||0),0);
+    const fairwaysOk=hoyos.filter(h=>h.fairway==="si").length;
+    const girOk=hoyos.filter(h=>h.gir==="si").length;
+    const penTot=hoyos.reduce((s,h)=>s+(Number(h.penalizaciones)||0),0);
+    const numH=hoyos.length;
+    return {
+      golpes:golpesTot||"",
+      putts:puttsTot||"",
+      fairwaysPorcentaje:numH>0?Math.round((fairwaysOk/numH)*100):"",
+      greensRegulacion:numH>0?Math.round((girOk/numH)*100):"",
+      bunkers:penTot||"",
+    };
   }
 
   function guardar(){
     if(!form.fecha) return;
-    const reg = {...form, alumnoId: alumnoSel, id: form.id||uid()};
-    const updated = stats.some(s=>s.id===reg.id)
-      ? stats.map(s=>s.id===reg.id ? reg : s)
-      : [...stats, reg];
-    setData({...data, estadisticas: updated});
-    setModal(false);
+    const totales=modoEntrada==="hoyo"?calcularTotalesHoyos():{};
+    const reg={...form,...totales,alumnoId:alumnoSel,id:form.id||uid(),hoyosDetalle:modoEntrada==="hoyo"?hoyos:[]};
+    const updated=stats.some(s=>s.id===reg.id)?stats.map(s=>s.id===reg.id?reg:s):[...stats,reg];
+    setData({...data,estadisticas:updated});
+    setModal(null);
   }
 
-  function editar(s){ setForm({...s}); setModal(true); }
+  function editar(s){
+    setForm({...s});
+    setHoyos(s.hoyosDetalle&&s.hoyosDetalle.length>0?s.hoyosDetalle:initHoyos(Number(s.hoyos)||18));
+    setModoEntrada(s.hoyosDetalle&&s.hoyosDetalle.length>0?"hoyo":"resumen");
+    setHoyoActual(0);
+    setModal("editar");
+  }
 
   function eliminar(id){
-    if(golfConfirm("¿Eliminar esta ronda?"))
-      setData({...data, estadisticas: stats.filter(s=>s.id!==id)});
+    if(window.confirm("¿Eliminar esta ronda?")) setData({...data,estadisticas:stats.filter(s=>s.id!==id)});
   }
 
-  // Mini sparkline chart
-  function Spark({values, color}){
-    if(!values||values.length<2) return null;
-    const nums = values.map(Number).filter(v=>!isNaN(v));
-    if(nums.length<2) return null;
-    const mx=Math.max(...nums), mn=Math.min(...nums), rng=mx-mn||1;
-    const w=100, h=28, p=3;
-    const pts=nums.map((v,i)=>`${p+(i/(nums.length-1))*(w-p*2)},${p+(1-(v-mn)/rng)*(h-p*2)}`).join(" ");
-    const [lx,ly]=pts.split(" ").at(-1).split(",");
-    return <svg width={w} height={h} style={{display:"block"}}>
-      <polyline fill="none" stroke={color} strokeWidth="2" points={pts}/>
-      <circle cx={lx} cy={ly} r="3" fill={color}/>
-    </svg>;
+  // ── Cálculo informe acumulado ──
+  function calcInforme(){
+    const rondasOrd=[...alumnoStats].reverse();
+    // Por ronda
+    const porRonda=rondasOrd.map(s=>({
+      fecha:s.fecha,
+      golpes:Number(s.golpes)||0,
+      putts:Number(s.putts)||0,
+      fairways:Number(s.fairwaysPorcentaje)||0,
+      gir:Number(s.greensRegulacion)||0,
+      hcp:Number(s.handicapJuego)||0,
+    }));
+    // Por mes
+    const porMes={};
+    rondasOrd.forEach(s=>{
+      const mes=(s.fecha||"").slice(0,7);
+      if(!mes) return;
+      if(!porMes[mes]) porMes[mes]={mes,golpes:[],putts:[],fairways:[],gir:[],count:0};
+      if(s.golpes) porMes[mes].golpes.push(Number(s.golpes));
+      if(s.putts) porMes[mes].putts.push(Number(s.putts));
+      if(s.fairwaysPorcentaje) porMes[mes].fairways.push(Number(s.fairwaysPorcentaje));
+      if(s.greensRegulacion) porMes[mes].gir.push(Number(s.greensRegulacion));
+      porMes[mes].count++;
+    });
+    const avg=arr=>arr.length>0?Math.round(arr.reduce((a,b)=>a+b,0)/arr.length):0;
+    const meses=Object.values(porMes).map(m=>({mes:m.mes,golpes:avg(m.golpes),putts:avg(m.putts),fairways:avg(m.fairways),gir:avg(m.gir),rondas:m.count}));
+    return {porRonda,meses};
   }
 
-  // Stats summary for selected alumno
-  const últimas10 = alumnoStats.slice(0,10).reverse();
+  const informe=calcInforme();
 
-  if(alumnos.length===0) return (
-    <div style={{textAlign:"center",padding:40,color:G.soft}}>
-      <div style={{fontSize:32,marginBottom:12}}>📊</div>
-      <div style={{fontWeight:700,marginBottom:8}}>Sin alumnos registrados</div>
-      <div style={{fontSize:13}}>Añade alumnos en la pestaña <b>Alumnos</b> para poder registrar estadísticas.</div>
-    </div>
-  );
+  if(alumnos.length===0) return <div style={{textAlign:"center",padding:40,color:G.soft}}>
+    <div style={{fontSize:32,marginBottom:12}}>📊</div>
+    <div style={{fontWeight:700}}>Sin alumnos registrados</div>
+  </div>;
 
   return <div>
-    {/* Selector alumno + botón */}
-    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
-      <div style={{flex:1,minWidth:180}}>
-        <select value={alumnoSel} onChange={e=>setAlumnoSel(e.target.value)}
-          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
-            padding:"9px 12px",fontSize:15,background:"#fff",fontFamily:"inherit",fontWeight:600,color:G.fairway}}>
-          {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
-        </select>
+    {/* Cabecera */}
+    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+      <select value={alumnoSel} onChange={e=>setAlumnoSel(e.target.value)}
+        style={{flex:1,minWidth:180,border:"1.5px solid #d0e0d0",borderRadius:8,
+          padding:"9px 12px",fontSize:15,background:"#fff",fontFamily:"inherit",fontWeight:600,color:G.fairway}}>
+        {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+      </select>
+      <div style={{display:"flex",gap:6}}>
+        {[["rondas","📋 Rondas"],["informe","📊 Informe"],["asistencia","📅 Asistencia"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setVista(id)}
+            style={{background:vista===id?G.fairway:"#f0f0f0",color:vista===id?"#fff":"#555",
+              border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {label}
+          </button>
+        ))}
       </div>
-      <Btn onClick={abrirNueva} color="primary">+ Registrar ronda</Btn>
+      <Btn onClick={abrirNueva}>+ Nueva ronda</Btn>
     </div>
 
-    {/* Gráficas resumen */}
-    {alumnoStats.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}}>
-      {[
-        ["Golpes",     últimas10.map(s=>s.golpes),        G.fairway],
-        ["Hcp Exacto", últimas10.map(s=>s.handicapExacto), G.flag],
-        ["Hcp Juego",  últimas10.map(s=>s.handicapJuego),  G.danger],
-        ["Putts",      últimas10.map(s=>s.putts),           G.sky],
-        ["GIR %",      últimas10.map(s=>s.greensRegulacion),G.grass],
-      ].map(([label,vals,color])=>(
-        <Card key={label} style={{padding:10}}>
-          <div style={{fontSize:11,color:G.soft,marginBottom:4}}>{label}</div>
-          <Spark values={vals} color={color}/>
-          <div style={{fontSize:14,fontWeight:700,color,marginTop:2}}>
-            {vals.filter(Boolean).length>0
-              ? vals.filter(Boolean).at(-1)
-              : "—"}
-          </div>
-        </Card>
-      ))}
+    {/* ── VISTA RONDAS ── */}
+    {vista==="rondas"&&<div>
+      {/* Sparklines resumen */}
+      {últimas10.length>1&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8,marginBottom:14}}>
+        {[
+          ["Golpes",últimas10.map(s=>s.golpes),G.fairway],
+          ["Putts",últimas10.map(s=>s.putts),G.sky],
+          ["Fairways %",últimas10.map(s=>s.fairwaysPorcentaje),G.grass],
+          ["GIR %",últimas10.map(s=>s.greensRegulacion),G.flag],
+          ["Hcp",últimas10.map(s=>s.handicapJuego),G.danger],
+        ].map(([label,vals,color])=>(
+          <Card key={label} style={{padding:10}}>
+            <div style={{fontSize:10,color:G.soft,marginBottom:3}}>{label}</div>
+            <Spark values={vals} color={color}/>
+            <div style={{fontSize:15,fontWeight:800,color,marginTop:2}}>{vals.filter(Boolean).at(-1)||"—"}</div>
+          </Card>
+        ))}
+      </div>}
+
+      {/* Lista rondas */}
+      {alumnoStats.length===0
+        ?<div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:28,marginBottom:8}}>⛳</div>
+          <div style={{fontWeight:700}}>Sin rondas · Pulsa "+ Nueva ronda"</div>
+        </div>
+        :alumnoStats.map(s=>(
+          <Card key={s.id} style={{marginBottom:10,cursor:"pointer"}} onClick={()=>setVerDetalle(verDetalle===s.id?null:s.id)}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:700,color:G.ink,fontSize:14,marginBottom:6}}>
+                  📅 {fmtDate(s.fecha)} · {s.hoyos} hoyos {s.campo&&`· ${s.campo}`}
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                  {[
+                    ["Golpes",s.golpes,G.fairway],
+                    ["Putts",s.putts,G.sky],
+                    ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
+                    ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
+                    ["Hcp",s.handicapJuego,G.danger],
+                    ["Palo Tee",s.paloTee,"#555"],
+                    ["Fallo Tee",falloTeeLabel(s.falloTee),G.flag],
+                  ].map(([k,v,c])=>(
+                    <div key={k} style={{textAlign:"center",minWidth:50}}>
+                      <div style={{fontSize:16,fontWeight:800,color:c}}>{v||"—"}</div>
+                      <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+                {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>"{s.notas}"</div>}
+
+                {/* Detalle hoyo a hoyo */}
+                {verDetalle===s.id&&s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{background:G.mist}}>
+                        {["Hoyo","Par","Golpes","Putts","FW","GIR","Pen.","Fallo Tee"].map(h=>(
+                          <th key={h} style={{padding:"4px 6px",textAlign:"center",color:G.soft,fontWeight:600}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {s.hoyosDetalle.map((h,i)=>{
+                        const par=PARES_CAMPO[i]||4;
+                        const golpes=Number(h.golpes)||0;
+                        const diff=golpes-par;
+                        const bgGolpe=golpes===0?"":diff<=-2?"#gold":diff===-1?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0";
+                        return <tr key={i} style={{borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa"}}>
+                          <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:G.fairway}}>{h.n}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center",color:G.soft}}>{par}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,
+                            background:golpes>0?(diff<0?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0"):"",
+                            borderRadius:4,color:diff<0?G.grass:diff>0?"#c0392b":G.ink}}>
+                            {h.golpes||"—"}{golpes>0&&diff!==0&&<span style={{fontSize:9}}>{diff>0?`+${diff}`:diff}</span>}
+                          </td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.putts||"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.fairway==="si"?"✅":h.fairway==="no"?"❌":"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.gir==="si"?"✅":h.gir==="no"?"❌":"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{h.penalizaciones||"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"center"}}>{falloTeeLabel(h.falloTee)}</td>
+                        </tr>;
+                      })}
+                      {/* Totales */}
+                      <tr style={{background:G.mist,fontWeight:700}}>
+                        <td colSpan={2} style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>TOTAL</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>{s.golpes||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{s.putts||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.grass}}>{s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.flag}}>{s.greensRegulacion?s.greensRegulacion+"%":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{s.bunkers||"—"}</td>
+                        <td/>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>}
+                {s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{fontSize:11,color:G.sky,marginTop:4}}>
+                  {verDetalle===s.id?"▲ Ocultar detalle":"▼ Ver hoyo a hoyo"}
+                </div>}
+              </div>
+              <div style={{display:"flex",gap:5,flexShrink:0}}>
+                <Btn small color="secondary" onClick={e=>{e.stopPropagation();editar(s);}}>✎</Btn>
+                <Btn small color="danger" onClick={e=>{e.stopPropagation();eliminar(s.id);}}>✕</Btn>
+              </div>
+            </div>
+          </Card>
+        ))
+      }
     </div>}
 
-    {/* Lista de rondas */}
-    {alumnoStats.length===0
-      ? <div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
-          <div style={{fontSize:28,marginBottom:8}}>⛳</div>
-          <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Sin rondas registradas</div>
-          <div style={{fontSize:13}}>Pulsa <b>"+ Registrar ronda"</b> para añadir la primera ronda de <b>{alumnoActual?.nombre}</b>.</div>
+    {/* ── VISTA INFORME ── */}
+    {vista==="informe"&&<div>
+      {alumnoStats.length<2
+        ?<div style={{textAlign:"center",padding:36,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:28,marginBottom:8}}>📊</div>
+          <div style={{fontWeight:700}}>Necesitas al menos 2 rondas para generar el informe</div>
         </div>
-      : <div style={{display:"grid",gap:10}}>
-          {alumnoStats.map(s=>(
-            <Card key={s.id}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
-                <div>
-                  <div style={{fontWeight:700,color:G.ink,fontSize:15,marginBottom:6}}>
-                    📅 {s.fecha} · {s.hoyos} hoyos
-                  </div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
-                    {[
-                      ["Golpes",     s.golpes,                                              G.fairway],
-                      ["Fairways",   s.fairwaysPorcentaje ? s.fairwaysPorcentaje+"%" : "—", G.grass],
-                      ["GIR",        s.greensRegulacion   ? s.greensRegulacion+"%"   : "—", G.sky],
-                      ["Putts",      s.putts,                                               G.flag],
-                      ["Bunkers",    s.bunkers,                                             G.purple],
-                      ["Hcp Exacto", s.handicapExacto,                                     G.danger],
-                      ["Hcp Juego",  s.handicapJuego,                                      "#e67e22"],
-                      ["Palo Tee",   s.paloTee,                                             G.sky],
-                      ["Fallo Tee",  s.falloTee ? s.falloTee+"%" : "—",                    G.flag],
-                    ].map(([k,v,c])=>(
-                      <div key={k} style={{textAlign:"center",minWidth:44}}>
-                        <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
-                        <div style={{fontSize:10,color:G.soft}}>{k}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:8,fontStyle:"italic"}}>"{s.notas}"</div>}
-                </div>
-                <div style={{display:"flex",gap:6,flexShrink:0}}>
-                  <Btn small color="secondary" onClick={()=>editar(s)}>✎</Btn>
-                  <Btn small color="danger"    onClick={()=>eliminar(s.id)}>✕</Btn>
-                </div>
+        :<div>
+          {/* Selector periodo */}
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            {[["rondas","📋 Por ronda"],["mensual","📅 Por mes"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setPeriodoInforme(id)}
+                style={{background:periodoInforme===id?G.fairway:"#f0f0f0",color:periodoInforme===id?"#fff":"#555",
+                  border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* KPIs acumulados */}
+          {(()=>{
+            const vals=alumnoStats;
+            const avg=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; };
+            const best=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?Math.min(...v):"—"; };
+            return <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:8,marginBottom:16}}>
+              {[
+                ["Media Golpes",avg("golpes"),G.fairway,"⛳"],
+                ["Mejor Ronda",best("golpes"),G.grass,"🏆"],
+                ["Media Putts",avg("putts"),G.sky,"🎯"],
+                ["Media FW %",avg("fairwaysPorcentaje")+"%",G.grass,"↑"],
+                ["Media GIR %",avg("greensRegulacion")+"%",G.flag,"🟢"],
+                ["Hcp Actual",vals[0]?.handicapJuego||"—",G.danger,"📉"],
+                ["Rondas",vals.length,G.ink,"📋"],
+              ].map(([label,val,color,icon])=>(
+                <Card key={label} style={{textAlign:"center",padding:10}}>
+                  <div style={{fontSize:16,marginBottom:2}}>{icon}</div>
+                  <div style={{fontSize:18,fontWeight:800,color}}>{val}</div>
+                  <div style={{fontSize:10,color:G.soft,marginTop:2}}>{label}</div>
+                </Card>
+              ))}
+            </div>;
+          })()}
+
+          {/* Gráfico por ronda */}
+          {periodoInforme==="rondas"&&<div>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>📈 Evolución por ronda</div>
+            {/* Golpes */}
+            <Card style={{marginBottom:10}}>
+              <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:8}}>GOLPES POR RONDA</div>
+              <div style={{display:"flex",alignItems:"flex-end",gap:4,height:80,paddingBottom:4}}>
+                {informe.porRonda.map((r,i)=>{
+                  const mx=Math.max(...informe.porRonda.map(x=>x.golpes));
+                  const mn=Math.min(...informe.porRonda.filter(x=>x.golpes).map(x=>x.golpes));
+                  const h=r.golpes>0?Math.round(20+((r.golpes-mn)/(mx-mn||1))*60):4;
+                  return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                    <div style={{fontSize:9,color:G.fairway,fontWeight:700}}>{r.golpes||""}</div>
+                    <div style={{width:"100%",background:G.fairway,height:h,borderRadius:"3px 3px 0 0",opacity:0.8+i*0.02}}/>
+                    <div style={{fontSize:8,color:G.soft,transform:"rotate(-45deg)",transformOrigin:"left",marginTop:2,whiteSpace:"nowrap"}}>
+                      {r.fecha?.slice(5)}
+                    </div>
+                  </div>;
+                })}
               </div>
+            </Card>
+            {/* Barras de porcentajes */}
+            <Card style={{marginBottom:10}}>
+              <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:10}}>PORCENTAJES POR RONDA</div>
+              {informe.porRonda.map((r,i)=>(
+                <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<informe.porRonda.length-1?"1px solid #f0f0f0":"none"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:G.ink,marginBottom:6}}>
+                    📅 {r.fecha} — {r.golpes||"—"} golpes
+                  </div>
+                  <BarChart pct={r.fairways} color={G.grass} label="Fairways"/>
+                  <BarChart pct={r.gir} color={G.flag} label="GIR"/>
+                </div>
+              ))}
+            </Card>
+            {/* Putts */}
+            <Card>
+              <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:8}}>PUTTS POR RONDA</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {informe.porRonda.map((r,i)=>(
+                  <div key={i} style={{textAlign:"center",minWidth:48}}>
+                    <div style={{fontSize:18,fontWeight:800,color:G.sky}}>{r.putts||"—"}</div>
+                    <div style={{fontSize:9,color:G.soft}}>{r.fecha?.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>}
+
+          {/* Gráfico mensual */}
+          {periodoInforme==="mensual"&&<div>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>📅 Tendencia mensual</div>
+            {informe.meses.map((m,i)=>(
+              <Card key={i} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <div style={{fontWeight:700,color:G.ink}}>{m.mes}</div>
+                  <span style={{background:G.mist,borderRadius:8,padding:"2px 8px",fontSize:11,color:G.soft}}>{m.rondas} ronda{m.rondas!==1?"s":""}</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:10}}>
+                  {[["Media Golpes",m.golpes,G.fairway],["Media Putts",m.putts,G.sky],["FW %",m.fairways+"%",G.grass],["GIR %",m.gir+"%",G.flag]].map(([k,v,c])=>(
+                    <div key={k} style={{textAlign:"center"}}>
+                      <div style={{fontSize:20,fontWeight:800,color:c}}>{v||"—"}</div>
+                      <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                    </div>
+                  ))}
+                </div>
+                <BarChart pct={m.fairways} color={G.grass} label="Media Fairways"/>
+                <BarChart pct={m.gir} color={G.flag} label="Media GIR"/>
+              </Card>
+            ))}
+          </div>}
+        </div>
+      }
+    </div>}
+
+    {/* ── VISTA ASISTENCIA ── */}
+    {vista==="asistencia"&&(()=>{
+      const todasClases = data.clases||[];
+      const clasesAlumno = alumnoSel
+        ? todasClases.filter(c=>c.alumnoId===alumnoSel)
+        : todasClases;
+
+      // Obtener últimos 12 meses
+      const hoy = today();
+      const meses12 = [];
+      for(let i=11;i>=0;i--){
+        const d = new Date(hoy);
+        d.setDate(1);
+        d.setMonth(d.getMonth()-i);
+        meses12.push(d.toISOString().slice(0,7));
+      }
+
+      // Agrupar clases por mes
+      const porMes = meses12.map(mes=>{
+        const del_mes = clasesAlumno.filter(c=>(c.fecha||"").startsWith(mes));
+        const realizadas = del_mes.filter(c=>c.asistio).length;
+        const programadas = del_mes.length;
+        const pct = programadas>0 ? Math.round((realizadas/programadas)*100) : null;
+        return {mes, programadas, realizadas, pct};
+      });
+
+      const maxProg = Math.max(...porMes.map(m=>m.programadas), 1);
+      const totalRealizadas = porMes.reduce((s,m)=>s+m.realizadas,0);
+      const totalProgramadas = porMes.reduce((s,m)=>s+m.programadas,0);
+      const pctGlobal = totalProgramadas>0 ? Math.round((totalRealizadas/totalProgramadas)*100) : 0;
+
+      // Clases próximas (futuras)
+      const proximas = clasesAlumno.filter(c=>c.fecha>hoy).length;
+      // Clases pendientes de cobro (pasadas, sin asistio)
+      const pendCobro = clasesAlumno.filter(c=>c.fecha<=hoy&&!c.asistio).length;
+
+      return <div>
+        {/* KPIs */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10,marginBottom:20}}>
+          {[
+            [totalRealizadas,"Clases realizadas",G.grass,"✅"],
+            [totalProgramadas,"Total programadas",G.fairway,"📋"],
+            [pctGlobal+"%","Asistencia global",pctGlobal>=80?G.grass:pctGlobal>=60?"#e67e22":G.danger,"📊"],
+            [proximas,"Próximas clases",G.sky,"📅"],
+            [pendCobro,"Pendientes de cobro",G.danger,"⏳"],
+          ].map(([v,l,c,ico])=>(
+            <Card key={l} style={{textAlign:"center",borderTop:`3px solid ${c}`}}>
+              <div style={{fontSize:20,marginBottom:4}}>{ico}</div>
+              <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+              <div style={{fontSize:11,color:G.soft,marginTop:2}}>{l}</div>
             </Card>
           ))}
         </div>
-    }
 
-    {/* Modal registrar / editar ronda */}
-    {modal&&<Modal title={form.id?"Editar ronda":"Registrar nueva ronda"} onClose={()=>setModal(false)} wide>
-      {/* Alumno y fecha */}
-      <div style={{background:G.mist,borderRadius:10,padding:"10px 14px",marginBottom:14,
+        {/* Gráfico de barras */}
+        <Card style={{marginBottom:16}}>
+          <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:4}}>
+            📊 Clases realizadas vs. programadas — últimos 12 meses
+          </div>
+          <div style={{fontSize:11,color:G.soft,marginBottom:14,display:"flex",gap:16}}>
+            <span><span style={{display:"inline-block",width:12,height:12,background:G.fairway,borderRadius:2,marginRight:4,verticalAlign:"middle"}}/>Programadas</span>
+            <span><span style={{display:"inline-block",width:12,height:12,background:G.grass,borderRadius:2,marginRight:4,verticalAlign:"middle"}}/>Realizadas</span>
+          </div>
+          {totalProgramadas===0
+            ? <div style={{textAlign:"center",padding:24,color:G.soft,fontSize:13}}>
+                Sin clases registradas en los últimos 12 meses
+              </div>
+            : <div style={{display:"flex",alignItems:"flex-end",gap:6,height:160,paddingBottom:28,overflowX:"auto"}}>
+                {porMes.map((m,i)=>{
+                  const hProg = m.programadas>0 ? Math.round((m.programadas/maxProg)*120)+8 : 0;
+                  const hReal = m.programadas>0 ? Math.round((m.realizadas/maxProg)*120) : 0;
+                  const mesLabel = m.mes.slice(5)+"/"+m.mes.slice(2,4);
+                  return <div key={i} style={{flex:"0 0 auto",width:36,display:"flex",flexDirection:"column",alignItems:"center",gap:0}}>
+                    {/* Valor realizadas */}
+                    {m.programadas>0&&<div style={{fontSize:9,color:G.grass,fontWeight:700,marginBottom:2}}>{m.realizadas}</div>}
+                    {/* Barra programadas (fondo) */}
+                    <div style={{position:"relative",width:"100%",display:"flex",flexDirection:"column",alignItems:"center"}}>
+                      <div style={{width:28,height:hProg,background:m.programadas>0?"#d4e6d4":G.mist,borderRadius:"4px 4px 0 0",position:"relative",overflow:"hidden"}}>
+                        {/* Barra realizadas (encima) */}
+                        <div style={{position:"absolute",bottom:0,left:0,right:0,
+                          height:hReal,background:m.pct>=80?G.grass:m.pct>=60?"#e67e22":m.pct>0?G.danger:G.mist,
+                          borderRadius:"4px 4px 0 0",transition:"height .3s"}}/>
+                      </div>
+                    </div>
+                    {/* Etiqueta mes */}
+                    <div style={{fontSize:8,color:G.soft,marginTop:3,textAlign:"center",transform:"rotate(-35deg)",transformOrigin:"top center",whiteSpace:"nowrap"}}>
+                      {mesLabel}
+                    </div>
+                    {/* Porcentaje */}
+                    {m.pct!==null&&m.programadas>0&&<div style={{fontSize:8,fontWeight:700,
+                      color:m.pct>=80?G.grass:m.pct>=60?"#e67e22":G.danger,marginTop:10}}>
+                      {m.pct}%
+                    </div>}
+                  </div>;
+                })}
+              </div>
+          }
+        </Card>
+
+        {/* Tabla detallada por mes */}
+        <Card>
+          <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:12}}>📋 Detalle mensual</div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead>
+                <tr style={{background:G.mist}}>
+                  {["Mes","Programadas","Realizadas","Pendientes","% Asistencia"].map(h=>(
+                    <th key={h} style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:G.fairway,borderBottom:"2px solid #d0e0d0"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {porMes.filter(m=>m.programadas>0).reverse().map((m,i)=>{
+                  const pend = m.programadas - m.realizadas;
+                  const color = m.pct>=80?G.grass:m.pct>=60?"#e67e22":G.danger;
+                  return <tr key={m.mes} style={{background:i%2===0?"white":"#f9fbf9",borderBottom:"1px solid #f0f0f0"}}>
+                    <td style={{padding:"8px 10px",fontWeight:600}}>{m.mes}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center"}}>{m.programadas}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center",color:G.grass,fontWeight:700}}>{m.realizadas}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center",color:pend>0?G.danger:G.soft}}>{pend>0?pend:"—"}</td>
+                    <td style={{padding:"8px 10px",textAlign:"center"}}>
+                      {m.pct!==null
+                        ? <span style={{background:color,color:"white",borderRadius:6,padding:"2px 8px",fontSize:12,fontWeight:700}}>{m.pct}%</span>
+                        : "—"}
+                    </td>
+                  </tr>;
+                })}
+                {porMes.filter(m=>m.programadas>0).length===0&&<tr>
+                  <td colSpan={5} style={{textAlign:"center",padding:20,color:G.soft}}>Sin clases en los últimos 12 meses</td>
+                </tr>}
+              </tbody>
+              <tfoot>
+                <tr style={{background:G.mist,fontWeight:800}}>
+                  <td style={{padding:"8px 10px",color:G.fairway}}>TOTAL</td>
+                  <td style={{padding:"8px 10px",textAlign:"center"}}>{totalProgramadas}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:G.grass}}>{totalRealizadas}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center",color:totalProgramadas-totalRealizadas>0?G.danger:G.soft}}>{totalProgramadas-totalRealizadas||"—"}</td>
+                  <td style={{padding:"8px 10px",textAlign:"center"}}>
+                    <span style={{background:pctGlobal>=80?G.grass:pctGlobal>=60?"#e67e22":G.danger,color:"white",borderRadius:6,padding:"2px 8px",fontWeight:700}}>{pctGlobal}%</span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </Card>
+      </div>;
+    })()}
+
+    {/* ── MODAL NUEVA/EDITAR RONDA ── */}
+    {(modal==="nueva"||modal==="editar")&&<Modal
+      title={modal==="nueva"?"Nueva ronda":"Editar ronda"}
+      onClose={()=>setModal(null)} wide>
+
+      {/* Cabecera */}
+      <div style={{background:G.mist,borderRadius:10,padding:"8px 14px",marginBottom:12,
         fontSize:14,fontWeight:600,color:G.fairway}}>
-        👤 {alumnoActual?.nombre||"Alumno"}
+        👤 {alumnoActual?.nombre}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
+
+      {/* Fecha, hoyos, campo */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
         <Field label="Fecha *">
           <Input type="date" value={form.fecha||today()} onChange={v=>setForm(f=>({...f,fecha:v}))}/>
         </Field>
-        <Field label="Hoyos jugados">
-          <select value={form.hoyos||"18"} onChange={e=>setForm(f=>({...f,hoyos:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
-              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-            <option value="9">9 hoyos</option>
-            <option value="18">18 hoyos</option>
-          </select>
+        <Field label="Hoyos">
+          <div style={{display:"flex",gap:6}}>
+            {[9,18].map(n=>(
+              <button key={n} type="button" onClick={()=>cambiarNumHoyos(n)}
+                style={{flex:1,background:form.hoyos===String(n)?G.fairway:"#f0f0f0",
+                  color:form.hoyos===String(n)?"#fff":"#555",border:"none",
+                  borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                {n}H
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Campo (opcional)">
+          <Input value={form.campo||""} onChange={v=>setForm(f=>({...f,campo:v}))} placeholder="Nombre del campo"/>
         </Field>
       </div>
 
-      {/* Stats principales */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:4}}>
-        {[
-          ["golpes",             "Golpes totales",  "number"],
-          ["fairwaysPorcentaje", "Fairways %",      "number"],
-          ["greensRegulacion",   "GIR %",           "number"],
-          ["putts",              "Putts",           "number"],
-          ["bunkers",            "Bunkers",         "number"],
-          ["handicapExacto",     "Hándicap exacto", "number"],
-          ["handicapJuego",      "Hándicap juego",  "number"],
-        ].map(([key,label,type])=>(
-          <Field key={key} label={label}>
-            <Input type={type} value={form[key]||""}
-              onChange={v=>setForm(f=>({...f,[key]:v}))}
-              placeholder="—"/>
-          </Field>
+      {/* Modo entrada */}
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {[["hoyo","⛳ Hoyo a hoyo"],["resumen","📊 Resumen total"]].map(([id,label])=>(
+          <button key={id} type="button" onClick={()=>setModoEntrada(id)}
+            style={{flex:1,background:modoEntrada===id?G.fairway:"#f0f0f0",
+              color:modoEntrada===id?"#fff":"#555",border:"none",borderRadius:8,
+              padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            {label}
+          </button>
         ))}
       </div>
 
-      {/* Palo desde el tee y fallo */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
-        <Field label="Palo usado desde el tee">
+      {/* ── Entrada hoyo a hoyo ── */}
+      {modoEntrada==="hoyo"&&<div>
+        {/* Navegación hoyos */}
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+          {hoyos.map((h,i)=>{
+            const ok=h.golpes&&h.putts;
+            const par=PARES_CAMPO[i]||4;
+            const diff=Number(h.golpes)-par;
+            const color=!h.golpes?"#e0e0e0":diff<0?G.grass:diff===0?G.fairway:diff===1?"#e67e22":"#c0392b";
+            return <button key={i} type="button" onClick={()=>setHoyoActual(i)}
+              style={{minWidth:34,height:34,background:hoyoActual===i?G.fairway:ok?color:"#f0f0f0",
+                color:hoyoActual===i||ok?"#fff":"#888",border:"none",borderRadius:8,
+                fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              {i+1}
+            </button>;
+          })}
+        </div>
+
+        {/* Formulario hoyo activo */}
+        {(()=>{
+          const h=hoyos[hoyoActual];
+          const par=PARES_CAMPO[hoyoActual]||4;
+          return <div style={{background:"#f8fdf8",borderRadius:12,padding:14,marginBottom:10,
+            border:`2px solid ${G.grass}`}}>
+            <div style={{fontWeight:700,color:G.fairway,fontSize:15,marginBottom:12}}>
+              Hoyo {hoyoActual+1} · Par {par}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Golpes">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"golpes",Math.max(1,Number(h.golpes||par)-1))}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:28,fontWeight:800,
+                    color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#c0392b"}}>
+                    {h.golpes||par}
+                  </div>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"golpes",Number(h.golpes||par)+1)}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                </div>
+                {h.golpes&&<div style={{textAlign:"center",fontSize:11,color:Number(h.golpes)-par<0?G.grass:Number(h.golpes)-par>0?"#c0392b":G.soft,marginTop:2,fontWeight:700}}>
+                  {Number(h.golpes)-par===0?"Par":Number(h.golpes)-par>0?"+"+( Number(h.golpes)-par):Number(h.golpes)-par}
+                </div>}
+              </Field>
+              <Field label="Putts">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"putts",Math.max(0,Number(h.putts||2)-1))}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:28,fontWeight:800,color:G.sky}}>
+                    {h.putts||"—"}
+                  </div>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"putts",Number(h.putts||1)+1)}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                </div>
+              </Field>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Fairway">
+                <div style={{display:"flex",gap:6}}>
+                  {[["si","✅ Sí"],["no","❌ No"],["","-"]].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>actualizarHoyo(hoyoActual,"fairway",v)}
+                      style={{flex:1,background:h.fairway===v?G.fairway:"#f0f0f0",
+                        color:h.fairway===v?"#fff":"#555",border:"none",borderRadius:8,
+                        padding:"7px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <Field label="GIR (Green en Regulación)">
+                <div style={{display:"flex",gap:6}}>
+                  {[["si","✅ Sí"],["no","❌ No"],["","-"]].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>actualizarHoyo(hoyoActual,"gir",v)}
+                      style={{flex:1,background:h.gir===v?G.fairway:"#f0f0f0",
+                        color:h.gir===v?"#fff":"#555",border:"none",borderRadius:8,
+                        padding:"7px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Field label="Penalizaciones">
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"penalizaciones",Math.max(0,Number(h.penalizaciones||0)-1))}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:24,fontWeight:800,color:"#c0392b"}}>{h.penalizaciones||0}</div>
+                  <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"penalizaciones",Number(h.penalizaciones||0)+1)}
+                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                </div>
+              </Field>
+              <Field label="Fallo tee">
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {FALLO_TEE_OPTS.map(({val,icon,label})=>(
+                    <button key={val} type="button"
+                      onClick={()=>actualizarHoyo(hoyoActual,"falloTee",h.falloTee===val?"":val)}
+                      style={{flex:1,minWidth:40,background:h.falloTee===val?G.fairway:"#f0f0f0",
+                        color:h.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
+                        padding:"5px 2px",fontSize:10,fontWeight:700,cursor:"pointer",
+                        display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                      <span style={{fontSize:14}}>{icon}</span>{label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+
+            {/* Navegación siguiente/anterior */}
+            <div style={{display:"flex",gap:8,justifyContent:"space-between",marginTop:8}}>
+              <Btn color="secondary" onClick={()=>setHoyoActual(Math.max(0,hoyoActual-1))} disabled={hoyoActual===0}>← Anterior</Btn>
+              <div style={{fontSize:12,color:G.soft,alignSelf:"center"}}>
+                {hoyos.filter(h=>h.golpes).length}/{hoyos.length} completados
+              </div>
+              <Btn color="primary" onClick={()=>setHoyoActual(Math.min(hoyos.length-1,hoyoActual+1))} disabled={hoyoActual===hoyos.length-1}>Siguiente →</Btn>
+            </div>
+          </div>;
+        })()}
+
+        {/* Resumen parcial */}
+        {hoyos.some(h=>h.golpes)&&(()=>{
+          const tot=calcularTotalesHoyos();
+          return <div style={{background:G.mist,borderRadius:10,padding:"8px 12px",marginBottom:10}}>
+            <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:6}}>PARCIAL</div>
+            <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+              {[["Golpes",tot.golpes,G.fairway],["Putts",tot.putts,G.sky],["FW",tot.fairwaysPorcentaje?tot.fairwaysPorcentaje+"%":"—",G.grass],["GIR",tot.greensRegulacion?tot.greensRegulacion+"%":"—",G.flag]].map(([k,v,c])=>(
+                <div key={k} style={{textAlign:"center"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div>
+                  <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                </div>
+              ))}
+            </div>
+          </div>;
+        })()}
+      </div>}
+
+      {/* ── Entrada resumen total ── */}
+      {modoEntrada==="resumen"&&<div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
+          {[["golpes","Golpes totales","number"],["putts","Putts totales","number"],
+            ["fairwaysPorcentaje","Fairways %","number"],["greensRegulacion","GIR %","number"],
+            ["bunkers","Penalizaciones","number"]].map(([key,label,type])=>(
+            <Field key={key} label={label}>
+              <Input type={type} value={form[key]||""} onChange={v=>setForm(f=>({...f,[key]:v}))} placeholder="—"/>
+            </Field>
+          ))}
+        </div>
+      </div>}
+
+      {/* Campos comunes */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <Field label="Palo desde el tee">
           <select value={form.paloTee||"Driver"} onChange={e=>setForm(f=>({...f,paloTee:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
-            {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>
-              <option key={p} value={p}>{p}</option>)}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+            {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>(
+              <option key={p} value={p}>{p}</option>
+            ))}
           </select>
         </Field>
-        <Field label="Fallo desde el tee (%)">
-          <Input type="number" value={form.falloTee||""} onChange={v=>setForm(f=>({...f,falloTee:v}))} placeholder="0-100"/>
+        <Field label="Hcp exacto (ej: 14,3)">
+          <Input type="text" value={form.handicapExacto||""} onChange={v=>setForm(f=>({...f,handicapExacto:v}))} placeholder="Ej: 14,3"/>
+        </Field>
+        <Field label="Hcp de juego (-8 a 60)">
+          <Input type="number" value={form.handicapJuego||""} onChange={v=>setForm(f=>({...f,handicapJuego:v}))} placeholder="0" min="-8" max="60" step="1"/>
         </Field>
       </div>
-
-      <Field label="Notas de la ronda">
-        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))}
-          rows={2} placeholder="Observaciones, condiciones del campo, sensaciones..."/>
+      <Field label="Notas">
+        <Textarea value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} rows={2} placeholder="Observaciones, condiciones, sensaciones..."/>
       </Field>
 
-      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
-        <Btn color="secondary" onClick={()=>setModal(false)}>Cancelar</Btn>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:14}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
         <Btn onClick={guardar} disabled={!form.fecha}>💾 Guardar ronda</Btn>
       </div>
     </Modal>}
@@ -3451,11 +4085,650 @@ function ModEstadisticas({data,setData}){
 
 
 // ═══════════════════════════════════════════════════════════════════
-// ADMIN: VÍDEO ANÁLISIS
+// SUBIDA DE VÍDEOS AL ALMACENAMIENTO (presigned URL → GCS)
 // ═══════════════════════════════════════════════════════════════════
+// ── Diagnóstico persistente (sobrevive recargas del iPhone) ──────────
+function dbgLog(msg){
+  try{
+    const arr=JSON.parse(localStorage.getItem("gv_dbg")||"[]");
+    arr.push(new Date().toLocaleTimeString()+"  "+msg);
+    while(arr.length>30) arr.shift();
+    localStorage.setItem("gv_dbg",JSON.stringify(arr));
+  }catch(_){}
+}
+function dbgRead(){ try{return JSON.parse(localStorage.getItem("gv_dbg")||"[]");}catch(_){return[];} }
+function dbgClear(){ try{localStorage.removeItem("gv_dbg");}catch(_){} }
+function esAppInstalada(){
+  try{
+    return (typeof navigator!=="undefined" && navigator.standalone===true) ||
+      (typeof window!=="undefined" && window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  }catch(_){ return false; }
+}
+// Se ejecuta una vez por cada carga de página; una recarga aparecerá como línea nueva.
+try{ if(typeof window!=="undefined") dbgLog("═ app cargada ("+(esAppInstalada()?"INSTALADA":"navegador")+") ═"); }catch(_){}
+// Detectores para saber qué hace iOS al elegir un vídeo (sin recargar la app).
+try{
+  if(typeof window!=="undefined"){
+    window.addEventListener("pageshow", (ev)=>{ if(ev && ev.persisted) dbgLog("⟲ RESTAURADA de caché (iOS descartó la página al elegir vídeo)"); });
+    window.addEventListener("pagehide", (ev)=>{ dbgLog("página oculta"+(ev && ev.persisted?" (guardada en caché)":" (descartada)")); });
+    document.addEventListener("visibilitychange", ()=>{ dbgLog("visibilidad: "+document.visibilityState); });
+  }
+}catch(_){}
+
+async function subirVideoAStorage(file, onProgress){
+  dbgLog("subida Firebase Storage: iniciando…");
+  // Nombre único para evitar colisiones
+  const ext = (file.name||"video").split(".").pop().toLowerCase() || "mp4";
+  const nombre = `videos/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const fileRef = storageRef(storage, nombre);
+  const metadata = { contentType: file.type || "video/mp4" };
+
+  return new Promise((resolve, reject)=>{
+    const uploadTask = uploadBytesResumable(fileRef, file, metadata);
+    uploadTask.on("state_changed",
+      snapshot=>{
+        const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+        if(onProgress) onProgress(pct);
+        dbgLog(`subida: ${pct}%`);
+      },
+      error=>{
+        dbgLog("subida ERROR: " + error.message);
+        reject(new Error("Error al subir el vídeo: " + error.message));
+      },
+      async ()=>{
+        try{
+          const url = await getDownloadURL(uploadTask.snapshot.ref);
+          dbgLog("subida OK: " + url.slice(0,60));
+          resolve(url);
+        } catch(e){
+          reject(new Error("Error obteniendo URL del vídeo: " + e.message));
+        }
+      }
+    );
+  });
+}
+
+// Con Firebase Storage los vídeos ya se sirven directamente desde Google CDN,
+// compatible con todos los navegadores. No necesitamos transcodificación en servidor.
+async function optimizarVideoEnServidor(videoUrl){
+  dbgLog("optimizar: Firebase Storage sirve directamente, sin transcodificación necesaria");
+  return videoUrl; // La URL de Firebase ya es reproducible
+}
+
+// Comprime/reescala el vídeo EN EL DISPOSITIVO antes de subirlo.
+// Reduce mucho el tamaño (carga rápida en 4G) y lo convierte a un formato
+// reproducible en la web (usa el decodificador nativo, que en iPhone lee HEVC).
+async function comprimirVideo(file, onProgress){
+  if(typeof MediaRecorder === "undefined" || !HTMLCanvasElement.prototype.captureStream)
+    throw new Error("sin-soporte");
+
+  const url = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.src = url;
+  video.muted = true; video.defaultMuted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline",""); video.setAttribute("muted","");
+  video.preload = "auto";
+  video.style.cssText = "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1";
+  document.body.appendChild(video);
+
+  let rec=null, stream=null;
+  const cleanup = ()=>{
+    try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(_){}
+    try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(_){}
+    try{ video.pause(); }catch(_){}
+    try{ document.body.removeChild(video); }catch(_){}
+    URL.revokeObjectURL(url);
+  };
+
+  try{
+    await new Promise((res,rej)=>{
+      video.onloadedmetadata = ()=>res();
+      video.onerror = ()=>rej(new Error("No se pudo leer el vídeo."));
+      setTimeout(()=>rej(new Error("Tiempo agotado leyendo el vídeo.")), 30000);
+    });
+
+    const w = video.videoWidth, h = video.videoHeight;
+    if(!w || !h) throw new Error("Sin dimensiones de vídeo.");
+    const dur = isFinite(video.duration) ? video.duration : 0;
+
+    const MAX_DIM = 854; // ~480p en el lado largo (suficiente para analizar el swing)
+    const scale = Math.min(1, MAX_DIM/Math.max(w,h));
+    const tw = Math.max(2, Math.round(w*scale/2)*2);
+    const th = Math.max(2, Math.round(h*scale/2)*2);
+    const canvas = document.createElement("canvas");
+    canvas.width = tw; canvas.height = th;
+    const ctx = canvas.getContext("2d");
+    const fps = 30;
+    stream = canvas.captureStream(fps);
+
+    const mimes = ["video/mp4;codecs=avc1.42E01E","video/mp4","video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"];
+    let mime = "";
+    if(MediaRecorder.isTypeSupported) mime = mimes.find(m=>MediaRecorder.isTypeSupported(m)) || "";
+    rec = new MediaRecorder(stream, mime ? {mimeType:mime, videoBitsPerSecond:2500000} : {videoBitsPerSecond:2500000});
+    const chunks=[];
+    rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+
+    let finished=false;
+    const recStopped = new Promise(res=>{ rec.onstop=()=>res(); });
+    const stopAll = ()=>{ if(finished) return; finished=true; try{ if(rec.state!=="inactive") rec.stop(); }catch(_){} };
+
+    rec.start(1000);
+
+    const draw = ()=>{
+      if(finished) return;
+      try{ ctx.drawImage(video,0,0,tw,th); }catch(_){}
+      if(onProgress && dur) onProgress(Math.min(99, Math.round((video.currentTime/dur)*100)));
+      requestAnimationFrame(draw);
+    };
+
+    await video.play();
+    requestAnimationFrame(draw);
+
+    await new Promise((res)=>{
+      video.onended = ()=>res();
+      const cap = dur>0 ? dur*1000*3 + 20000 : 600000; // watchdog por si no termina
+      setTimeout(()=>res(), cap);
+    });
+
+    stopAll();
+    await recStopped;
+
+    const outMp4 = mime.indexOf("mp4")>=0;
+    const outType = outMp4 ? "video/mp4" : "video/webm";
+    const ext = outMp4 ? "mp4" : "webm";
+    const blob = new Blob(chunks, {type: outType});
+    if(!blob.size) throw new Error("La compresión no produjo datos.");
+    const base = ((file.name||"video").replace(/\.[^.]+$/,"")) || "video";
+    return new File([blob], base+"-comp."+ext, {type: outType});
+  } finally {
+    cleanup();
+  }
+}
+
+function VideoUploader({ value, onChange }){
+  const [subiendo, setSubiendo] = useState(false);
+  const [prog, setProg] = useState(0);
+  const [fase, setFase] = useState("subir"); // comprimir | subir
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+  const MAX_MB = 200;       // tamaño máximo del archivo final que se sube
+  const MAX_SRC_MB = 2000;  // tamaño máximo del archivo original que aceptamos comprimir
+
+  async function onFile(e){
+    setErr(""); setSubiendo(true); setFase("subir"); setProg(0);
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if(!file){
+      setSubiendo(false);
+      setErr("No se recibió el vídeo desde la galería. Vuelve a tocar el botón y elige \"Seleccionar archivo\", o graba el vídeo de nuevo.");
+      return;
+    }
+    // iOS a veces entrega el vídeo con type vacío al elegirlo de la galería:
+    // aceptamos si el tipo es de vídeo O si la extensión es de vídeo.
+    const nombre = (file.name||"").toLowerCase();
+    const esVideo = (file.type && file.type.startsWith("video/")) ||
+      /\.(mp4|mov|m4v|3gp|3g2|avi|mkv|webm|qt|hevc|mpg|mpeg|ts)$/.test(nombre);
+    if(!esVideo){ setSubiendo(false); setErr("Selecciona un archivo de vídeo."); return; }
+    if(file.size > MAX_SRC_MB*1024*1024){
+      setSubiendo(false);
+      setErr(`El vídeo pesa ${(file.size/1024/1024).toFixed(0)} MB y es demasiado grande. Graba un vídeo más corto.`);
+      return;
+    }
+    try{
+      // 1) Comprimir en el dispositivo (reduce tamaño y convierte a formato compatible)
+      let toUpload = file;
+      setFase("comprimir");
+      try{
+        const comp = await comprimirVideo(file, setProg);
+        if(comp && comp.size > 0) toUpload = comp; // usar siempre el comprimido si se generó
+      }catch(_){ /* si la compresión falla, subimos el original */ }
+
+      if(toUpload.size > MAX_MB*1024*1024){
+        setErr(`El vídeo sigue pesando ${(toUpload.size/1024/1024).toFixed(0)} MB (límite ${MAX_MB} MB). Graba un vídeo más corto o en menor resolución.`);
+        setSubiendo(false); return;
+      }
+
+      // 2) Subir
+      setFase("subir"); setProg(0);
+      const url = await subirVideoAStorage(toUpload, setProg);
+
+      // 3) Optimizar en el servidor: garantiza reproducción en iPhone/web
+      //    (convierte a H.264 MP4). Si fallara, se usa el vídeo subido tal cual.
+      let finalUrl = url;
+      try{
+        setFase("optimizar"); setProg(0);
+        finalUrl = await optimizarVideoEnServidor(url);
+      }catch(_){ /* si la optimización falla, usamos el vídeo subido */ }
+      onChange(finalUrl);
+    }catch(e2){
+      setErr(e2.message || "No se pudo subir el vídeo.");
+    }
+    setSubiendo(false);
+  }
+
+  const tieneVideo = !!value;
+
+  return <div>
+    {!subiendo && <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+      <label style={{position:"relative",display:"inline-flex",alignItems:"center",gap:6,background:G.grass,color:"#fff",
+        borderRadius:9,padding:"9px 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+        📂 {tieneVideo ? "Cambiar vídeo" : "Subir vídeo del dispositivo"}
+        <input ref={fileRef} type="file" accept="video/*"
+          onClick={()=>dbgLog("input activado (abriendo galería)")}
+          onChange={onFile}
+          style={{position:"absolute",width:1,height:1,padding:0,margin:-1,overflow:"hidden",clip:"rect(0 0 0 0)",whiteSpace:"nowrap",border:0}}/>
+      </label>
+      {tieneVideo && <>
+        <a href={value} target="_blank" rel="noreferrer" style={{background:G.purple,color:"#fff",
+          borderRadius:8,padding:"8px 14px",textDecoration:"none",fontSize:13,fontWeight:600}}>▶ Ver</a>
+        <button type="button" onClick={()=>onChange("")} style={{background:"none",border:"none",
+          color:G.danger,cursor:"pointer",fontSize:13,fontWeight:600}}>✕ Quitar</button>
+      </>}
+    </div>}
+
+    {subiendo && <div style={{padding:"6px 0"}}>
+      <div style={{fontSize:13,color:G.fairway,fontWeight:600,marginBottom:6}}>
+        {fase==="comprimir" ? "Preparando vídeo… "+prog+"%"
+          : fase==="subir" ? "Subiendo vídeo… "+prog+"%"
+          : "Optimizando para la web…"}
+      </div>
+      <div style={{height:8,background:"#e8e8e8",borderRadius:6,overflow:"hidden"}}>
+        <div style={{height:"100%",width:(fase==="optimizar"?100:prog)+"%",background:G.grass,transition:"width .2s"}}/>
+      </div>
+      {fase==="comprimir" && <div style={{fontSize:11,color:G.soft,marginTop:6}}>Comprimiendo el vídeo para que cargue rápido… no cierres esta pantalla.</div>}
+      {fase==="optimizar" && <div style={{fontSize:11,color:G.soft,marginTop:6}}>Convirtiendo el vídeo a un formato compatible con todos los móviles… puede tardar un poco, no cierres esta pantalla.</div>}
+    </div>}
+
+    {tieneVideo && !subiendo && <div style={{fontSize:11,color:G.grass,marginTop:6}}>✅ Vídeo guardado en la app.</div>}
+
+    {err && <div style={{fontSize:12,color:G.danger,marginTop:6}}>⚠️ {err}</div>}
+
+    <div style={{margin:"10px 0 6px",color:G.soft,fontSize:11}}>— o pega un enlace directo a un archivo de vídeo (.mp4/.mov) —</div>
+    <Input value={value||""} onChange={v=>onChange(v)} placeholder="https://…"/>
+    {value && /youtube\.com|youtu\.be|vimeo\.com|drive\.google\.com|dropbox\.com/i.test(value) &&
+      <div style={{fontSize:11,color:G.danger,marginTop:6}}>⚠️ Los enlaces de YouTube, Vimeo, Google Drive o Dropbox no se pueden reproducir en la app. Mejor sube el vídeo desde el dispositivo.</div>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ANALIZADOR DE VÍDEO INTERACTIVO (líneas de colores + reproducción)
+// ═══════════════════════════════════════════════════════════════════
+function AnalizadorVideo({initialUrl="", onClose}){
+  const videoRef  = useRef(null);
+  const canvasRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [dbg,setDbg] = useState(dbgRead());
+  useEffect(()=>{ const id=setInterval(()=>setDbg(dbgRead()),1000); return ()=>clearInterval(id); },[]);
+  const [src,setSrc]         = useState(initialUrl);
+  const [urlInput,setUrlInput] = useState("");
+  const [playing,setPlaying] = useState(false);
+  const [dur,setDur]         = useState(0);
+  const [cur,setCur]         = useState(0);
+  const [speed,setSpeed]     = useState(1);
+  const [color,setColor]     = useState("#ff2d2d");
+  const [grosor,setGrosor]   = useState(4);
+  const [tool,setTool]       = useState("linea"); // linea | libre
+  const [err,setErr]         = useState("");
+  const [loading,setLoading] = useState(false);   // vídeo cargando
+  const [subiendo,setSubiendo] = useState(false); // preparando (subir+optimizar)
+  const [fase,setFase]       = useState("subir");  // comprimir | subir | optimizar
+  const [prog,setProg]       = useState(0);
+  const [strokes,setStrokes] = useState([]);      // trazos confirmados
+  const drawing   = useRef(false);
+  const curStroke = useRef(null);
+  const loadTimeoutRef = useRef(null);
+  function clearLoadTimeout(){ if(loadTimeoutRef.current){ clearTimeout(loadTimeoutRef.current); loadTimeoutRef.current=null; } }
+
+  const COLORS = ["#ff2d2d","#ffd400","#22c55e","#3b82f6","#ffffff","#111111"];
+  const FPS = 30;
+
+  // Limpiar object URL al desmontar / cambiar
+  useEffect(()=>()=>{ if(src && src.startsWith("blob:")) URL.revokeObjectURL(src); },[src]);
+
+  function resetReproduccion(){ clearLoadTimeout(); setErr(""); setLoading(false); setCur(0); setDur(0); setPlaying(false); }
+  function esEnlaceNoDirecto(u){
+    return /youtube\.com|youtu\.be|vimeo\.com|drive\.google\.com|dropbox\.com/i.test(u);
+  }
+  async function loadFile(e){
+    dbgLog("onChange DISPARADO"); setDbg(dbgRead());
+    // Feedback inmediato: en cuanto se elige un archivo mostramos estado,
+    // así sabemos con certeza que la selección se ha registrado.
+    if(src && src.startsWith("blob:")) URL.revokeObjectURL(src);
+    setStrokes([]); curStroke.current=null; clearLoadTimeout();
+    setCur(0); setDur(0); setPlaying(false);
+    setErr(""); setSubiendo(true); setFase("subir"); setProg(0);
+    const f=e.target.files?.[0];
+    if(e.target) e.target.value="";
+    if(!f){
+      dbgLog("archivo VACÍO (galería no entregó nada)"); setDbg(dbgRead());
+      setSubiendo(false);
+      setErr("No se recibió el vídeo desde la galería. Vuelve a tocar \"Subir vídeo del dispositivo\" y elige \"Seleccionar archivo\", o graba el vídeo de nuevo.");
+      return;
+    }
+    dbgLog("archivo recibido: "+(f.name||"sin-nombre")+" · "+Math.round((f.size||0)/1024/1024)+"MB · tipo:"+(f.type||"vacío")); setDbg(dbgRead());
+    // iOS a veces entrega el vídeo con type vacío: aceptamos por extensión.
+    const nombre=(f.name||"").toLowerCase();
+    const esVideo=(f.type && f.type.startsWith("video/")) ||
+      /\.(mp4|mov|m4v|3gp|3g2|avi|mkv|webm|qt|hevc|mpg|mpeg|ts)$/.test(nombre);
+    if(!esVideo){ dbgLog("rechazado: no parece vídeo"); setDbg(dbgRead()); setSubiendo(false); setErr("Selecciona un archivo de vídeo."); return; }
+    // Subir + convertir a H.264 en el servidor: garantiza reproducción en iPhone,
+    // porque reproducir el archivo local (HEVC) no funciona en Safari.
+    try{
+      const url=await subirVideoAStorage(f,setProg); setDbg(dbgRead());
+      let finalUrl=url;
+      try{ setFase("optimizar"); setProg(0); finalUrl=await optimizarVideoEnServidor(url); }
+      catch(_){ dbgLog("optimizar falló, uso el vídeo subido tal cual"); /* si la conversión falla, usamos el vídeo subido tal cual */ }
+      setDbg(dbgRead());
+      dbgLog("LISTO, mostrando reproductor"); setDbg(dbgRead());
+      setSubiendo(false);
+      setSrc(finalUrl);
+    }catch(e2){
+      dbgLog("ERROR: "+(e2?.message||"desconocido")); setDbg(dbgRead());
+      setSubiendo(false);
+      setErr(e2?.message || "No se pudo preparar el vídeo. Inténtalo de nuevo.");
+    }
+  }
+  function loadUrl(){
+    if(!urlInput.trim()) return;
+    if(esEnlaceNoDirecto(urlInput)){
+      setErr("Los enlaces de YouTube, Vimeo, Google Drive o Dropbox no se pueden reproducir aquí. Descarga el vídeo y súbelo desde el dispositivo, o pega un enlace directo a un archivo .mp4/.mov.");
+      return;
+    }
+    setStrokes([]); curStroke.current=null; resetReproduccion();
+    setSrc(urlInput.trim());
+  }
+
+  // Cargando + tiempo de espera: si el vídeo no carga en 25s, avisar
+  useEffect(()=>{
+    clearLoadTimeout();
+    if(!src){ setLoading(false); return; }
+    setErr(""); setLoading(true);
+    loadTimeoutRef.current=setTimeout(()=>{
+      loadTimeoutRef.current=null;
+      const v=videoRef.current;
+      if(v && v.readyState>=2){ setLoading(false); return; } // ya cargó, no avisar
+      setLoading(false);
+      setErr("El vídeo tarda demasiado en cargar. Puede que el formato no sea compatible con la web (los vídeos de iPhone en alta eficiencia/HEVC a veces no se reproducen) o que el archivo sea muy grande. Prueba a grabar en modo \"Más compatible\" en los ajustes de la cámara del iPhone, o sube un vídeo más ligero.");
+    }, 25000);
+    return ()=>clearLoadTimeout();
+  },[src]);
+
+  // ── Canvas: tamaño y redibujado ───────────────────────────────────
+  function resizeCanvas(){
+    const v=videoRef.current, c=canvasRef.current;
+    if(!v||!c) return;
+    const r=v.getBoundingClientRect();
+    if(r.width===0||r.height===0) return;
+    // Solo redimensionar si el tamaño cambió de verdad (evita borrar al reproducir)
+    const newW=Math.round(r.width), newH=Math.round(r.height);
+    if(c.width===newW && c.height===newH){ redraw(); return; }
+    // Guardar el dibujo actual antes de redimensionar
+    const savedStrokes = strokes;
+    c.width=newW; c.height=newH;
+    // Redibujar con los trazos guardados
+    setTimeout(()=>redraw(), 0);
+  }
+  function redraw(){
+    const c=canvasRef.current; if(!c) return;
+    const ctx=c.getContext("2d");
+    ctx.clearRect(0,0,c.width,c.height);
+    const all = curStroke.current ? [...strokes, curStroke.current] : strokes;
+    all.forEach(s=>{
+      const pts=s.pts; if(!pts||!pts.length) return;
+      ctx.strokeStyle=s.color; ctx.lineWidth=s.grosor;
+      ctx.lineCap="round"; ctx.lineJoin="round";
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x*c.width, pts[0].y*c.height);
+      for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x*c.width, pts[i].y*c.height);
+      ctx.stroke();
+    });
+  }
+  useEffect(()=>{ redraw(); },[strokes]);
+  useEffect(()=>{
+    // Observar cambios reales de layout del contenedor, no del vídeo
+    const target = canvasRef.current?.parentElement || videoRef.current;
+    const ro=new ResizeObserver(()=>resizeCanvas());
+    if(target) ro.observe(target);
+    window.addEventListener("resize",resizeCanvas);
+    // Inicializar canvas cuando el vídeo tenga dimensiones
+    const v=videoRef.current;
+    if(v){
+      v.addEventListener("loadedmetadata", resizeCanvas);
+      v.addEventListener("resize", resizeCanvas);
+    }
+    return ()=>{
+      ro.disconnect();
+      window.removeEventListener("resize",resizeCanvas);
+      if(v){
+        v.removeEventListener("loadedmetadata", resizeCanvas);
+        v.removeEventListener("resize", resizeCanvas);
+      }
+    };
+  },[src]);
+
+  // ── Dibujo ────────────────────────────────────────────────────────
+  function ptFromEvent(e){
+    const c=canvasRef.current; const r=c.getBoundingClientRect();
+    const t=e.touches&&e.touches[0];
+    const cx=(t?t.clientX:e.clientX)-r.left;
+    const cy=(t?t.clientY:e.clientY)-r.top;
+    return { x:Math.max(0,Math.min(1,cx/r.width)), y:Math.max(0,Math.min(1,cy/r.height)) };
+  }
+  function down(e){
+    if(!src) return;
+    e.preventDefault();
+    drawing.current=true;
+    curStroke.current={ color, grosor, pts:[ptFromEvent(e)] };
+    redraw();
+  }
+  function move(e){
+    if(!drawing.current) return;
+    e.preventDefault();
+    const p=ptFromEvent(e);
+    if(tool==="linea") curStroke.current.pts=[curStroke.current.pts[0], p];
+    else curStroke.current.pts.push(p);
+    redraw();
+  }
+  function up(){
+    if(!drawing.current) return;
+    drawing.current=false;
+    if(curStroke.current && curStroke.current.pts.length>1){
+      setStrokes(s=>[...s, curStroke.current]);
+    }
+    curStroke.current=null;
+    redraw();
+  }
+  function undo(){ setStrokes(s=>s.slice(0,-1)); }
+  function limpiar(){ setStrokes([]); }
+
+  // ── Reproducción ──────────────────────────────────────────────────
+  function togglePlay(){ const v=videoRef.current; if(!v) return; v.paused?v.play():v.pause(); }
+  function step(d){ const v=videoRef.current; if(!v) return; v.pause(); v.currentTime=Math.max(0,Math.min(v.duration||0, v.currentTime+d/FPS)); }
+  function restart(){ const v=videoRef.current; if(!v) return; v.currentTime=0; }
+  function setSpd(s){ setSpeed(s); if(videoRef.current) videoRef.current.playbackRate=s; }
+  function seek(e){ const v=videoRef.current; if(!v) return; v.currentTime=Number(e.target.value); }
+  useEffect(()=>{ if(videoRef.current) videoRef.current.playbackRate=speed; },[src]);
+
+  // Atajos de teclado
+  useEffect(()=>{
+    function onKey(e){
+      if(e.target.tagName==="INPUT") return;
+      if(e.key===" "){ e.preventDefault(); togglePlay(); }
+      else if(e.key==="ArrowLeft"){ e.preventDefault(); step(-1); }
+      else if(e.key==="ArrowRight"){ e.preventDefault(); step(1); }
+      else if(e.key==="Escape"){ onClose&&onClose(); }
+    }
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[]);
+
+  function fmtT(t){ t=t||0; const m=Math.floor(t/60); const s=Math.floor(t%60); return `${m}:${String(s).padStart(2,"0")}`; }
+
+  const ctrlBtn={background:"#2a2f33",color:"#fff",border:"none",borderRadius:9,minWidth:44,height:42,fontSize:17,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 10px"};
+
+  return <div style={{position:"fixed",inset:0,background:"rgba(10,15,12,.97)",zIndex:1000,display:"flex",flexDirection:"column"}}>
+    {/* Barra superior */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",background:G.fairway,color:"#fff",flexShrink:0}}>
+      <span style={{fontWeight:700,fontSize:15}}>🎥 Analizador de vídeo</span>
+      <div style={{display:"flex",gap:8}}>
+        {src&&<button onClick={()=>{setSrc("");setStrokes([]);curStroke.current=null;}} style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"none",borderRadius:8,padding:"6px 12px",fontSize:13,fontWeight:600,cursor:"pointer"}}>📂 Otro vídeo</button>}
+        <button onClick={onClose} style={{background:"rgba(255,255,255,.15)",color:"#fff",border:"none",borderRadius:8,padding:"6px 12px",fontSize:13,fontWeight:600,cursor:"pointer"}}>✕ Cerrar</button>
+      </div>
+    </div>
+
+    {!src ? (
+      /* Pantalla de carga */
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:"#fff",borderRadius:16,padding:28,maxWidth:440,width:"100%",textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:8}}>🎬</div>
+          {subiendo ? (
+            <>
+              <h3 style={{margin:"0 0 6px",color:G.fairway}}>Preparando tu vídeo…</h3>
+              <p style={{fontSize:13,color:G.soft,margin:"0 0 16px"}}>
+                {fase==="optimizar"
+                  ? "Optimizando para la web (esto tarda unos segundos)…"
+                  : "Subiendo vídeo… "+prog+"%"}
+              </p>
+              <div style={{height:8,background:"#eee",borderRadius:99,overflow:"hidden"}}>
+                <div style={{height:"100%",width:(fase==="optimizar"?100:prog)+"%",background:G.grass,
+                  transition:"width .2s",borderRadius:99}}/>
+              </div>
+              <p style={{fontSize:12,color:G.soft,margin:"14px 0 0"}}>No cierres esta ventana.</p>
+            </>
+          ) : (
+            <>
+              <h3 style={{margin:"0 0 6px",color:G.fairway}}>Cargar un vídeo para analizar</h3>
+              <p style={{fontSize:13,color:G.soft,margin:"0 0 18px"}}>Sube un vídeo desde tu dispositivo o pega un enlace. Luego podrás dibujar líneas de colores y reproducirlo a cámara lenta.</p>
+              <label onClick={()=>dbgLog("toque en botón subir")}
+                style={{position:"relative",display:"inline-block",background:G.grass,color:"#fff",borderRadius:10,padding:"12px 22px",fontSize:15,fontWeight:700,cursor:"pointer"}}>
+                📂 Subir vídeo del dispositivo
+                <input ref={fileInputRef} type="file" accept="video/*"
+                  onClick={()=>dbgLog("input activado (abriendo galería)")}
+                  onChange={loadFile}
+                  style={{position:"absolute",width:1,height:1,padding:0,margin:-1,overflow:"hidden",clip:"rect(0 0 0 0)",whiteSpace:"nowrap",border:0}}/>
+              </label>
+              <div style={{marginTop:16,padding:"12px 14px",background:"#F1F6F1",border:"1px dashed "+G.grass,borderRadius:10,textAlign:"left"}}>
+                <div style={{fontSize:13,fontWeight:700,color:G.fairway,marginBottom:8}}>Si el botón de arriba no abre nada, usa este selector clásico:</div>
+                <input type="file" accept="video/*"
+                  onClick={()=>dbgLog("selector clásico tocado")}
+                  onChange={loadFile}
+                  style={{fontSize:15,maxWidth:"100%"}}/>
+              </div>
+              {esAppInstalada() && (
+                <div style={{marginTop:14,background:"#FFF7E6",border:"1px solid #F0C36D",borderRadius:10,padding:"10px 12px",fontSize:12.5,color:"#7A5A00",textAlign:"left"}}>
+                  Estás usando la app instalada en la pantalla de inicio. En iPhone, subir vídeos desde aquí a veces falla. Si no funciona, ábrela en Safari:
+                  <a href={typeof window!=="undefined"?window.location.href:"#"} target="_blank" rel="noopener noreferrer"
+                     style={{display:"block",marginTop:8,background:G.purple,color:"#fff",textDecoration:"none",borderRadius:8,padding:"9px 14px",fontWeight:700,textAlign:"center"}}>
+                    🧭 Abrir en Safari para subir el vídeo
+                  </a>
+                </div>
+              )}
+              <div style={{margin:"18px 0 8px",color:G.soft,fontSize:12}}>— o pega un enlace —</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="https://…"
+                  style={{flex:1,border:"1px solid #ccc",borderRadius:8,padding:"9px 12px",fontSize:14,fontFamily:"inherit",boxSizing:"border-box"}}/>
+                <button onClick={loadUrl} style={{background:G.purple,color:"#fff",border:"none",borderRadius:8,padding:"0 16px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Cargar</button>
+              </div>
+              {err && <div style={{marginTop:14,color:G.danger,fontSize:13,fontWeight:600}}>⚠️ {err}</div>}
+              <div style={{marginTop:18,textAlign:"left",background:"#f6f6f6",border:"1px solid #e2e2e2",borderRadius:8,padding:"8px 10px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <b style={{fontSize:11,color:"#555"}}>Diagnóstico (para el técnico)</b>
+                  <button type="button" onClick={()=>{ dbgClear(); setDbg([]); }} style={{fontSize:10,background:"none",border:"1px solid #ccc",borderRadius:6,padding:"2px 8px",cursor:"pointer",color:"#666"}}>Limpiar</button>
+                </div>
+                <div style={{maxHeight:150,overflow:"auto",fontFamily:"monospace",fontSize:10,color:"#333",lineHeight:1.5}}>
+                  {dbg.length===0 ? <div style={{color:"#999"}}>— sin registros aún —</div>
+                    : dbg.map((l,i)=><div key={i}>{l}</div>)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    ) : (
+      <>
+        {/* Zona de vídeo + dibujo */}
+        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:10,minHeight:0,overflow:"hidden"}}>
+          <div style={{position:"relative",display:"inline-block",maxWidth:"100%",maxHeight:"100%"}}>
+            <video ref={videoRef} src={src} playsInline preload="metadata"
+              onLoadedMetadata={e=>{setErr(""); setDur(e.target.duration||0); e.target.playbackRate=speed; resizeCanvas();}}
+              onLoadedData={()=>{clearLoadTimeout(); setLoading(false);}}
+              onCanPlay={()=>{clearLoadTimeout(); setLoading(false);}}
+              onTimeUpdate={e=>setCur(e.target.currentTime||0)}
+              onError={()=>{clearLoadTimeout(); setLoading(false); setErr("No se pudo cargar este vídeo. Puede que el formato no sea compatible (los vídeos de iPhone en alta eficiencia/HEVC a veces no se reproducen en la web) o, si es un enlace, que no apunte a un archivo de vídeo directo. Prueba a subir el archivo desde tu dispositivo.");}}
+              onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}
+              style={{display:"block",maxWidth:"100%",maxHeight:"78vh",borderRadius:8,background:"#000"}}/>
+            <canvas ref={canvasRef}
+              onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={up}
+              onTouchStart={down} onTouchMove={move} onTouchEnd={up}
+              style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none"}}/>
+            {loading&&!err&&<div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",flexDirection:"column",gap:12,alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+              <div style={{width:46,height:46,border:"4px solid rgba(255,255,255,.25)",borderTop:"4px solid #fff",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+              <div style={{color:"rgba(255,255,255,.85)",fontSize:13}}>Cargando vídeo…</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>}
+            {err&&<div style={{position:"absolute",top:0,left:0,right:0,bottom:0,display:"flex",alignItems:"center",justifyContent:"center",padding:20,textAlign:"center"}}>
+              <div style={{background:"rgba(0,0,0,.8)",color:"#fff",borderRadius:12,padding:"16px 20px",maxWidth:380,fontSize:13,lineHeight:1.5}}>⚠️ {err}</div>
+            </div>}
+          </div>
+        </div>
+
+        {/* Herramientas de dibujo */}
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",justifyContent:"center",padding:"8px 12px",background:"#15191c",flexShrink:0}}>
+          <div style={{display:"flex",gap:5}}>
+            {COLORS.map(c=>(
+              <button key={c} onClick={()=>setColor(c)} title={c}
+                style={{width:26,height:26,borderRadius:"50%",background:c,cursor:"pointer",
+                  border:color===c?"3px solid #fff":"2px solid #555"}}/>
+            ))}
+            <label style={{width:26,height:26,borderRadius:"50%",overflow:"hidden",border:"2px solid #555",cursor:"pointer",position:"relative",display:"inline-block"}}>
+              <span style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#fff",pointerEvents:"none"}}>🎨</span>
+              <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{opacity:0,width:"100%",height:"100%",cursor:"pointer"}}/>
+            </label>
+          </div>
+          <div style={{width:1,height:24,background:"#3a3f43"}}/>
+          <button onClick={()=>setTool("linea")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="linea"?G.grass:"#2a2f33"}}>📏 Línea</button>
+          <button onClick={()=>setTool("libre")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="libre"?G.grass:"#2a2f33"}}>✏️ Libre</button>
+          <div style={{display:"flex",alignItems:"center",gap:6,color:"#bbb",fontSize:12}}>
+            Grosor
+            <input type="range" min={1} max={12} value={grosor} onChange={e=>setGrosor(Number(e.target.value))} style={{width:80}}/>
+          </div>
+          <div style={{width:1,height:24,background:"#3a3f43"}}/>
+          <button onClick={undo} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px"}}>↩ Deshacer</button>
+          <button onClick={limpiar} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:"#7a2a2a"}}>🗑 Limpiar</button>
+        </div>
+
+        {/* Barra de progreso */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 16px",background:"#15191c",flexShrink:0}}>
+          <span style={{color:"#bbb",fontSize:12,minWidth:38,textAlign:"right"}}>{fmtT(cur)}</span>
+          <input type="range" min={0} max={dur||0} step={0.01} value={cur} onChange={seek} style={{flex:1}}/>
+          <span style={{color:"#bbb",fontSize:12,minWidth:38}}>{fmtT(dur)}</span>
+        </div>
+
+        {/* Controles de reproducción */}
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"center",padding:"10px 12px 14px",background:"#15191c",flexShrink:0}}>
+          <button onClick={restart} title="Al inicio" style={ctrlBtn}>⏮</button>
+          <button onClick={()=>step(-5)} title="Retroceder" style={ctrlBtn}>⏪</button>
+          <button onClick={()=>step(-1)} title="Fotograma atrás" style={ctrlBtn}>◀|</button>
+          <button onClick={togglePlay} style={{...ctrlBtn,background:G.grass,minWidth:64,fontSize:22}}>{playing?"⏸":"▶"}</button>
+          <button onClick={()=>step(1)} title="Fotograma adelante" style={ctrlBtn}>|▶</button>
+          <button onClick={()=>step(5)} title="Avanzar" style={ctrlBtn}>⏩</button>
+          <div style={{width:1,height:24,background:"#3a3f43",margin:"0 4px"}}/>
+          <span style={{color:"#bbb",fontSize:12}}>Velocidad</span>
+          {[0.25,0.5,1].map(s=>(
+            <button key={s} onClick={()=>setSpd(s)} style={{...ctrlBtn,minWidth:0,height:36,fontSize:13,fontWeight:600,padding:"0 12px",background:speed===s?G.purple:"#2a2f33"}}>{s===1?"1x":s+"x"}</button>
+          ))}
+        </div>
+      </>
+    )}
+  </div>;
+}
+
 function ModAnalisis({data,setData}){
+  const [analizar,setAnalizar]=useState(null); // {url} | null
   const [modal,setModal]=useState(null);
   const [verModal,setVerModal]=useState(null);
+  const [repApp,setRepApp]=useState(false); // optimizando vídeo existente
   const [form,setForm]=useState({});
   const [alumnoSel,setAlumnoSel]=useState("todos");
   const [aiLoading,setAiLoading]=useState(false);
@@ -3505,6 +4778,7 @@ function ModAnalisis({data,setData}){
     <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
       <Sel value={alumnoSel} onChange={setAlumnoSel} options={[{value:"todos",label:"Todos"},...alumnos.map(a=>({value:a.id,label:a.nombre}))]}/>
       <Btn color="purple" onClick={()=>{setForm(blank());setModal("new");}}>+ Nuevo análisis</Btn>
+      <Btn color="sky" onClick={()=>setAnalizar({url:""})}>🎥 Analizar vídeo</Btn>
     </div>
     <div style={{display:"grid",gap:10}}>
       {filtrados.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30}}>Sin análisis.</div>}
@@ -3541,7 +4815,23 @@ function ModAnalisis({data,setData}){
           <div key={k}><span style={{fontSize:11,color:G.soft}}>{k}</span><div style={{fontWeight:700}}>{v}</div></div>
         ))}
       </div>
-      {verItem.videoUrl&&<div style={{marginBottom:14}}><a href={verItem.videoUrl} target="_blank" rel="noreferrer" style={{background:G.purple,color:G.white,borderRadius:8,padding:"8px 16px",textDecoration:"none",fontSize:14,fontWeight:600,display:"inline-block"}}>▶ Abrir vídeo</a></div>}
+      {verItem.videoUrl&&<div style={{marginBottom:14}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <a href={verItem.videoUrl} target="_blank" rel="noreferrer" style={{background:G.purple,color:G.white,borderRadius:8,padding:"8px 16px",textDecoration:"none",fontSize:14,fontWeight:600,display:"inline-block"}}>▶ Abrir vídeo</a>
+          <button onClick={()=>setAnalizar({url:verItem.videoUrl})} style={{background:G.sky,color:G.white,border:"none",borderRadius:8,padding:"8px 16px",fontSize:14,fontWeight:600,cursor:"pointer"}}>🎥 Analizar</button>
+          <button disabled={repApp} onClick={async()=>{
+            setRepApp(true);
+            try{
+              const nuevaUrl=await optimizarVideoEnServidor(verItem.videoUrl);
+              setData({...data,analisis:(data.analisis||[]).map(x=>x.id===verItem.id?{...x,videoUrl:nuevaUrl}:x)});
+              alert("✅ Vídeo optimizado. Ya debería reproducirse correctamente. Pulsa \"Analizar\".");
+            }catch(e){
+              alert("No se pudo optimizar el vídeo. "+(e.message||""));
+            }finally{ setRepApp(false); }
+          }} style={{background:repApp?G.soft:G.flag,color:G.white,border:"none",borderRadius:8,padding:"8px 16px",fontSize:14,fontWeight:600,cursor:repApp?"default":"pointer"}}>{repApp?"Optimizando…":"🔧 Optimizar para web"}</button>
+        </div>
+        <div style={{fontSize:11,color:G.soft,marginTop:6}}>Si el vídeo no se reproduce (típico en vídeos antiguos de iPhone), pulsa <b>🔧 Optimizar para web</b> una vez y luego <b>Analizar</b>.</div>
+      </div>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <div style={{background:G.mist,borderRadius:10,padding:12}}>
           <div style={{fontSize:12,fontWeight:700,color:G.grass,marginBottom:6}}>✔ Positivos</div>
@@ -3580,7 +4870,10 @@ function ModAnalisis({data,setData}){
         <Field label="Palo"><Sel value={form.palo||"7-hierro"} onChange={v=>setForm({...form,palo:v})} options={PALO_OPTIONS.map(p=>({value:p,label:p}))}/></Field>
         <Field label="Valoración"><Sel value={form.valoracion||"3"} onChange={v=>setForm({...form,valoracion:v})} options={["1","2","3","4","5"].map(v=>({value:v,label:"★".repeat(Number(v))+" ("+v+")"}))}/></Field>
       </div>
-      <Field label="URL vídeo"><Input value={form.videoUrl||""} onChange={v=>setForm({...form,videoUrl:v})} placeholder="https://…"/></Field>
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:12,fontWeight:600,color:G.soft,display:"block",marginBottom:6}}>🎬 VÍDEO</label>
+        <VideoUploader value={form.videoUrl||""} onChange={u=>setForm({...form,videoUrl:u})}/>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <div><div style={{fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>✔ POSITIVOS</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosBuenos||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosBuenos",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.grass:"#e8e8e8",color:s?G.white:G.soft}}>{a}</button>;})}</div>
@@ -3609,6 +4902,8 @@ function ModAnalisis({data,setData}){
         <Btn color="purple" onClick={save}>Guardar</Btn>
       </div>
     </Modal>}
+
+    {analizar&&<AnalizadorVideo initialUrl={analizar.url||""} onClose={()=>setAnalizar(null)}/>}
   </div>;
 }
 
@@ -3755,6 +5050,123 @@ function ModPagos({data,setData}){
     const a=document.createElement("a");a.href=url;a.download="contabilidad-academia.csv";a.click();URL.revokeObjectURL(url);
   }
 
+  // ── Informe PDF pagos pendientes ─────────────────────────────────
+  async function generarPDFPendientes(){
+    await cargarJsPDF();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const VERDE = [15, 80, 30];
+    const DORADO= [180, 140, 60];
+    const ROJO  = [192, 57, 43];
+    const BLANCO= [255, 255, 255];
+    const GRIS  = [245, 247, 245];
+
+    const hoy = today();
+    const mesActual = hoy.slice(0,7);
+
+    // Clases pasadas sin cobrar con precio > 0
+    const clases = data.clases||[];
+    const pendientes = clases.filter(c=>
+      !c.asistio && c.fecha <= hoy && Number(c.precio||0)>0
+    );
+
+    // Agrupar por alumno
+    const porAlumno = {};
+    pendientes.forEach(c=>{
+      const al = alumnos.find(a=>a.id===c.alumnoId);
+      const nombre = al?.nombre||"Alumno desconocido";
+      const tel    = al?.telefono||"";
+      if(!porAlumno[nombre]) porAlumno[nombre]={nombre,tel,clases:[],total:0};
+      porAlumno[nombre].clases.push(c);
+      porAlumno[nombre].total += Number(c.precio||0);
+    });
+    const filas = Object.values(porAlumno).sort((a,b)=>b.total-a.total);
+    const totalGlobal = filas.reduce((s,f)=>s+f.total,0);
+
+    // ── Cabecera ──
+    doc.setFillColor(...VERDE);
+    doc.rect(0, 0, W, 32, "F");
+    doc.setFillColor(...DORADO);
+    doc.rect(0, 32, W, 2, "F");
+
+    doc.setTextColor(...BLANCO);
+    doc.setFontSize(16); doc.setFont("helvetica","bold");
+    doc.text("GOLF CIUDAD REAL C.D.", W/2, 12, {align:"center"});
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text("PGA de España  ·  Academia Profesional de Golf", W/2, 19, {align:"center"});
+    doc.setFontSize(11); doc.setFont("helvetica","bold");
+    doc.text("INFORME DE PAGOS PENDIENTES", W/2, 27, {align:"center"});
+
+    // ── Subheader ──
+    doc.setFillColor(...GRIS);
+    doc.rect(0, 34, W, 12, "F");
+    doc.setTextColor(60,60,60);
+    doc.setFontSize(9); doc.setFont("helvetica","normal");
+    doc.text(`Fecha del informe: ${hoy}`, 14, 41);
+    doc.text(`Clases pendientes: ${pendientes.length}`, W/2, 41, {align:"center"});
+    doc.text(`Total pendiente: ${totalGlobal.toFixed(2)} EUR`, W-14, 41, {align:"right"});
+
+    let y = 52;
+
+    if(filas.length===0){
+      doc.setTextColor(...VERDE);
+      doc.setFontSize(13); doc.setFont("helvetica","bold");
+      doc.text("No hay pagos pendientes. ¡Todo al dia!", W/2, y+20, {align:"center"});
+    } else {
+      filas.forEach((f,idx)=>{
+        // Comprobar salto de pagina
+        if(y > 255){
+          doc.addPage();
+          y = 14;
+        }
+
+        // Fila alumno
+        doc.setFillColor(idx%2===0?240:248, idx%2===0?247:250, idx%2===0?240:248);
+        const bloqueH = 8 + f.clases.length * 6;
+        doc.rect(10, y-4, W-20, bloqueH, "F");
+
+        doc.setFontSize(10); doc.setFont("helvetica","bold");
+        doc.setTextColor(...VERDE);
+        doc.text(f.nombre, 14, y+1);
+        if(f.tel){
+          doc.setFontSize(8); doc.setFont("helvetica","normal");
+          doc.setTextColor(100,100,100);
+          doc.text("Tel: "+f.tel, 14, y+6);
+        }
+        // Total alumno
+        doc.setFontSize(10); doc.setFont("helvetica","bold");
+        doc.setTextColor(...ROJO);
+        doc.text(f.total.toFixed(2)+" EUR", W-14, y+1, {align:"right"});
+
+        y += 10;
+
+        // Clases de este alumno
+        f.clases.forEach(c=>{
+          if(y > 265){ doc.addPage(); y = 14; }
+          doc.setFontSize(8); doc.setFont("helvetica","normal");
+          doc.setTextColor(80,80,80);
+          const label = `  • ${c.fecha}  ${c.hora||""}  ${c.tipo||""}  ${c.zona||""}`;
+          doc.text(label, 16, y);
+          doc.text(Number(c.precio).toFixed(2)+" EUR", W-14, y, {align:"right"});
+          y += 6;
+        });
+        y += 4;
+      });
+
+      // ── Pie totales ──
+      if(y > 255){ doc.addPage(); y = 14; }
+      doc.setFillColor(...VERDE);
+      doc.rect(10, y, W-20, 10, "F");
+      doc.setFontSize(11); doc.setFont("helvetica","bold");
+      doc.setTextColor(...BLANCO);
+      doc.text("TOTAL PENDIENTE", 14, y+7);
+      doc.text(totalGlobal.toFixed(2)+" EUR", W-14, y+7, {align:"right"});
+    }
+
+    doc.save(`pagos_pendientes_${hoy}.pdf`);
+  }
+
   // ── Colores tabs ─────────────────────────────────────────────────
   const TABS=[
     {id:"resumen",label:"📊 Resumen"},
@@ -3787,11 +5199,18 @@ function ModPagos({data,setData}){
     </div>
     {(filtroDesde||filtroHasta)&&<button onClick={()=>{setFiltroDesde("");setFiltroHasta("");}}
       style={{background:"#eee",border:"none",borderRadius:6,padding:"5px 10px",fontSize:12,cursor:"pointer"}}>✕ Limpiar</button>}
-    <button onClick={exportarCSV}
-      style={{background:"#217346",color:"#fff",border:"none",borderRadius:6,
-        padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer",marginLeft:"auto"}}>
-      📊 Exportar CSV
-    </button>
+    <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+      <button onClick={exportarCSV}
+        style={{background:"#217346",color:"#fff",border:"none",borderRadius:6,
+          padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📊 Exportar CSV
+      </button>
+      <button onClick={generarPDFPendientes}
+        style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:6,
+          padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        📄 PDF Pendientes
+      </button>
+    </div>
   </div>;
 
   // ── RENDER ───────────────────────────────────────────────────────
@@ -4733,38 +6152,221 @@ function CambiarPinAlumno({data,setData,alumnoId}){
 // ── Vista simplificada del informe para el alumno ────────────────
 function InformePreviewAlumno({rpt, data}){
   const [abierto, setAbierto] = useState(false);
+  const alumno = (data.alumnos||[]).find(a=>a.id===rpt.alumnoId);
+  const stats  = (data.estadisticas||[]).filter(s=>s.alumnoId===rpt.alumnoId&&
+    (!rpt.fechaDesde||s.fecha>=rpt.fechaDesde)&&(!rpt.fechaHasta||s.fecha<=rpt.fechaHasta));
+  const secs = rpt.secciones||[];
 
   function descargarPDF(){
-    const alumno = (data.alumnos||[]).find(a=>a.id===rpt.alumnoId);
     generarPDFInforme(rpt, alumno?.nombre||"alumno");
   }
+
+  const SecTitle=({children,color=G.fairway})=><div style={{
+    background:`linear-gradient(135deg,${color},${color}dd)`,
+    color:"#fff",borderRadius:"10px 10px 0 0",padding:"10px 18px",
+    fontWeight:800,fontSize:14,marginTop:16}}>
+    {children}
+  </div>;
+
+  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #e0eee0",
+    borderTop:"none",borderRadius:"0 0 10px 10px",padding:14,marginBottom:4}}>
+    {children}
+  </div>;
 
   return <div>
     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
       <Btn small color="sky" onClick={()=>setAbierto(!abierto)}>{abierto?"▲ Cerrar":"👁 Ver informe"}</Btn>
       <Btn small color="secondary" onClick={descargarPDF}>⬇️ Descargar PDF</Btn>
     </div>
-    {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12,padding:16,background:G.mist,borderRadius:10,fontSize:13}}>
-      <div style={{fontWeight:800,fontSize:16,color:G.fairway,marginBottom:8}}>{rpt.titulo}</div>
-      {rpt.resumenTexto&&<div style={{marginBottom:10}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📝 Resumen</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.resumenTexto}</p>
+
+    {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12}}>
+
+      {/* ── PORTADA ── */}
+      {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
+        borderRadius:14,padding:"24px 20px",marginBottom:4,textAlign:"center",color:"#fff"}}>
+        <div style={{display:"flex",justifyContent:"center",gap:14,marginBottom:14,alignItems:"center"}}>
+          <img src={LOGO_GCR} alt="GCR" style={{height:48,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
+          <img src={LOGO_PGA} alt="PGA" style={{height:44,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
+        </div>
+        <div style={{fontSize:19,fontWeight:800,marginBottom:5}}>{rpt.titulo}</div>
+        <div style={{fontSize:14,opacity:.85,marginBottom:4}}>{alumno?.nombre}</div>
+        {alumno&&<div style={{fontSize:12,opacity:.7,marginBottom:6}}>
+          {alumno.nivel&&`Grupo: ${GRUPOS_EDAD.find(g=>g.id===alumno.nivel)?.nombre||alumno.nivel} · `}
+          {alumno.tipoEscuela==="adultos"?"Escuela de Adultos":"Escuela Infantil"}
+        </div>}
+        {rpt.fechaDesde&&<div style={{fontSize:12,opacity:.7}}>
+          Período: {fmtDate(rpt.fechaDesde)} → {fmtDate(rpt.fechaHasta)}
+        </div>}
+        <div style={{fontSize:11,opacity:.6,marginTop:4}}>Informe generado: {fmtDate(rpt.fechaCreacion)}</div>
       </div>}
-      {rpt.objetivosLogrados&&<div style={{marginBottom:8}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>✅ Objetivos logrados</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
-      </div>}
-      {rpt.objetivosProximos&&<div style={{marginBottom:8}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>🎯 Próximos objetivos</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
-      </div>}
-      {rpt.planTrabajo&&<div style={{marginBottom:8}}>
-        <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📋 Plan de trabajo</div>
-        <p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
-      </div>}
-      <div style={{marginTop:12,borderTop:"1px solid #ccc",paddingTop:8,fontSize:12,color:G.soft}}>
-        {rpt.firmaTexto?.split("\n").map((l,i)=><div key={i}>{l}</div>)}
-      </div>
+
+      {/* ── RESUMEN ── */}
+      {secs.includes("resumen")&&rpt.resumenTexto&&<>
+        <SecTitle>📝 Resumen ejecutivo</SecTitle>
+        <SecBody><p style={{margin:0,lineHeight:1.7,whiteSpace:"pre-wrap",fontSize:13}}>{rpt.resumenTexto}</p></SecBody>
+      </>}
+
+      {/* ── HCP ── */}
+      {secs.includes("hcp")&&<>
+        <SecTitle color="#2e7d3c">📈 Evolución del hándicap</SecTitle>
+        <SecBody><HcpChart stats={stats}/></SecBody>
+      </>}
+
+      {/* ── ESTADÍSTICAS ── */}
+      {secs.includes("estadisticas")&&<>
+        <SecTitle color="#3a7abf">📊 Estadísticas del período</SecTitle>
+        <SecBody>
+          <StatsResumen stats={stats}/>
+          {stats.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead>
+                <tr style={{background:G.fairway,color:"#fff"}}>
+                  {["Fecha","Hoyos","Golpes","FW%","GIR%","Putts","Hcp"].map(h=>(
+                    <th key={h} style={{padding:"5px 6px",textAlign:"center"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {stats.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map((s,i)=>(
+                  <tr key={i} style={{background:i%2?"#f9f9f9":"#fff"}}>
+                    {[s.fecha,s.hoyos,s.golpes,s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",
+                      s.greensRegulacion?s.greensRegulacion+"%":"—",s.putts,s.handicapJuego||s.handicap||"—"].map((v,j)=>(
+                      <td key={j} style={{padding:"4px 6px",textAlign:"center",borderBottom:"1px solid #eee"}}>{v||"—"}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>}
+        </SecBody>
+      </>}
+
+      {/* ── TÉCNICO ── */}
+      {secs.includes("tecnico")&&Object.keys(rpt.areasEval||{}).length>0&&<>
+        <SecTitle color="#7b5ea7">🏌️ Análisis técnico</SecTitle>
+        <SecBody>
+          <div style={{display:"grid",gap:8}}>
+            {AREAS_TECNICAS.filter(a=>rpt.areasEval?.[a]?.val).map(area=>{
+              const ev=rpt.areasEval[area];
+              const vi=VALORACIONES.find(v=>v.id===ev.val);
+              return <div key={area} style={{display:"flex",gap:12,alignItems:"center",
+                background:"#f9f9f9",borderRadius:8,padding:"7px 10px",
+                borderLeft:`4px solid ${vi?.color||"#ddd"}`}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:600,fontSize:12}}>{area}</div>
+                  {ev.notas&&<div style={{fontSize:11,color:"#555",marginTop:2}}>{ev.notas}</div>}
+                </div>
+                <div style={{fontWeight:700,color:vi?.color,fontSize:12,flexShrink:0}}>{vi?.label}</div>
+              </div>;
+            })}
+          </div>
+        </SecBody>
+      </>}
+
+      {/* ── IMÁGENES ── */}
+      {secs.includes("imagenes")&&(rpt.imagenesData||[]).length>0&&<>
+        <SecTitle color="#c8a84b">📷 Imágenes</SecTitle>
+        <SecBody>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8}}>
+            {(rpt.imagenesData||[]).map((img,i)=>(
+              <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
+                <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
+                {img.caption&&<div style={{padding:"5px 8px",fontSize:11,color:"#555",background:"#fafafa"}}>
+                  {img.caption}
+                </div>}
+              </div>
+            ))}
+          </div>
+        </SecBody>
+      </>}
+
+      {/* ── VÍDEOS ── */}
+      {secs.includes("videos")&&(rpt.videosNotas||[]).length>0&&<>
+        <SecTitle color="#c0392b">🎬 Vídeos de análisis</SecTitle>
+        <SecBody>
+          {(rpt.videosNotas||[]).map((vid,i)=>(
+            <div key={i} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid #eee"}}>
+              <div style={{fontWeight:700,color:G.ink,marginBottom:4,fontSize:13}}>
+                {vid.titulo||"Vídeo "+(i+1)} {vid.fecha&&`· ${vid.fecha}`}
+              </div>
+              {vid.url&&<a href={vid.url} target="_blank" rel="noopener noreferrer"
+                style={{fontSize:12,color:G.sky,display:"block",marginBottom:6,
+                  wordBreak:"break-all"}}>🔗 {vid.url}</a>}
+              {vid.url&&vid.url.includes("youtube")&&<div style={{marginBottom:6,borderRadius:8,overflow:"hidden"}}>
+                <iframe src={vid.url.replace("watch?v=","embed/").replace("youtu.be/","youtube.com/embed/")}
+                  width="100%" height="180" frameBorder="0" allowFullScreen style={{borderRadius:8,display:"block"}}/>
+              </div>}
+              {vid.notas&&<div style={{fontSize:12,color:"#555",lineHeight:1.6,
+                background:"#f9f9f9",borderRadius:8,padding:"7px 10px",whiteSpace:"pre-wrap"}}>
+                {vid.notas}
+              </div>}
+            </div>
+          ))}
+        </SecBody>
+      </>}
+
+      {/* ── EJERCICIOS ── */}
+      {secs.includes("ejercicios")&&<>
+        <SecTitle color="#d4651a">🏋️ Ejercicios del período</SecTitle>
+        <SecBody>
+          {(data.asignaciones||[]).filter(a=>a.alumnoId===rpt.alumnoId&&a.completado).length===0
+            ? <div style={{color:G.soft,fontSize:12}}>Sin ejercicios completados en este período.</div>
+            : <div style={{display:"grid",gap:6}}>
+                {(data.asignaciones||[])
+                  .filter(a=>a.alumnoId===rpt.alumnoId&&a.completado)
+                  .map((a,i)=>{
+                    const ej=(data.ejerciciosCurso||EJERCICIOS_CURSO||[]).find(e=>e.id===a.ejId)||
+                              (EJERCICIOS_BIBLIOTECA||[]).find(e=>e.id===a.ejId);
+                    return ej?<div key={i} style={{background:G.mist,borderRadius:8,
+                      padding:"5px 10px",fontSize:12}}>
+                      ✅ {ej.nombre} <span style={{color:G.soft,fontSize:10}}>— {a.fecha}</span>
+                    </div>:null;
+                  }).filter(Boolean)}
+              </div>
+          }
+        </SecBody>
+      </>}
+
+      {/* ── OBJETIVOS ── */}
+      {secs.includes("objetivos")&&(rpt.objetivosLogrados||rpt.objetivosProximos||rpt.planTrabajo)&&<>
+        <SecTitle>🎯 Objetivos y plan de trabajo</SecTitle>
+        <SecBody>
+          {rpt.objetivosLogrados&&<div style={{marginBottom:12}}>
+            <div style={{fontWeight:700,color:G.grass,marginBottom:5,fontSize:13}}>✅ Logros conseguidos</div>
+            <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosLogrados}</p>
+          </div>}
+          {rpt.objetivosProximos&&<div style={{marginBottom:12}}>
+            <div style={{fontWeight:700,color:G.sky,marginBottom:5,fontSize:13}}>🚀 Próximos objetivos</div>
+            <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
+          </div>}
+          {rpt.planTrabajo&&<div>
+            <div style={{fontWeight:700,color:"#7b5ea7",marginBottom:5,fontSize:13}}>📋 Plan de trabajo</div>
+            <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
+          </div>}
+        </SecBody>
+      </>}
+
+      {/* ── FIRMA ── */}
+      {secs.includes("firma")&&<>
+        <SecTitle>✍️ Firma del profesor</SecTitle>
+        <SecBody>
+          <div style={{display:"flex",alignItems:"center",gap:14,padding:"6px 0"}}>
+            <img src={LOGO_GCR} alt="GCR" style={{height:44,objectFit:"contain"}}/>
+            <div>
+              <div style={{fontWeight:700,color:G.fairway,fontSize:14}}>
+                {rpt.firmaTexto?.split("\n")[0]||"José Manuel Caballero Fernández"}
+              </div>
+              {rpt.firmaTexto?.split("\n").slice(1).map((l,i)=>(
+                <div key={i} style={{fontSize:12,color:"#555",marginTop:2}}>{l}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{fontSize:11,color:G.soft,marginTop:8,borderTop:"1px solid #eee",paddingTop:8}}>
+            Fecha del informe: {fmtDate(rpt.fechaCreacion)}
+          </div>
+        </SecBody>
+      </>}
+
     </div>}
   </div>;
 }
@@ -4774,6 +6376,58 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const [modalSolicitud,setModalSolicitud]=useState(false);
   const [formSolicitud,setFormSolicitud]=useState({fecha:"",hora:"10:00",tipo:"Individual",zona:"Campo de prácticas",notas:""});
   const [solicitudEnviada,setSolicitudEnviada]=useState(false);
+  const [verModalStat,setVerModalStat]=useState(false);
+  const [statForm,setStatForm]=useState({fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:""});
+  const [vistaStatAlumno,setVistaStatAlumno]=useState("lista");
+  const [verDetalleAlumno,setVerDetalleAlumno]=useState(null);
+  const [hoyosAlumno,setHoyosAlumno]=useState(initHoyos(18));
+  const [hoyoActualAlumno,setHoyoActualAlumno]=useState(0);
+  const [modoEntradaAlumno,setModoEntradaAlumno]=useState("hoyo");
+  const {mostrarBanner,mostrarModal,UI:NotifUI} = useNotifManager();
+
+  // ── Detección de cambios para notificaciones al alumno ────────────
+  const prevClasesAlumno   = useRef((data.clases||[]).filter(c=>c.alumnoId===alumnoId).length);
+  const prevInformesAlumno = useRef((data.informes||[]).filter(i=>i.alumnoId===alumnoId&&i.publicado).length);
+  const prevMsgsAlumno     = useRef((data.mensajes||[]).filter(m=>m.destinatario===alumnoId&&!m.leido).length);
+  const prevArchivosAlumno = useRef((data.archivosProfesor||[]).filter(a=>
+    a.destinatarios==="todos"||a.destinatarios==="activos"||(a.alumnosSelec||[]).includes(alumnoId)).length);
+
+  useEffect(()=>{
+    const clasesAlumno=(data.clases||[]).filter(c=>c.alumnoId===alumnoId).length;
+    const informesAlumno=(data.informes||[]).filter(i=>i.alumnoId===alumnoId&&i.publicado).length;
+    const msgsAlumno=(data.mensajes||[]).filter(m=>m.destinatario===alumnoId&&!m.leido).length;
+    const archivosAlumno=(data.archivosProfesor||[]).filter(a=>
+      a.destinatarios==="todos"||a.destinatarios==="activos"||(a.alumnosSelec||[]).includes(alumnoId)).length;
+
+    // Nueva clase → Modal importante
+    if(clasesAlumno>prevClasesAlumno.current){
+      const miClases=(data.clases||[]).filter(c=>c.alumnoId===alumnoId);
+      const ultima=miClases.at(-1);
+      mostrarModal("clase","¡Nueva clase programada!",
+        "Tu profesor ha programado una nueva clase para ti.",
+        `📅 ${fmtDate(ultima?.fecha)} · ${ultima?.horaInicio||ultima?.hora||""} · ${ultima?.zona||""}`,
+        ()=>setTab("calendario"));
+    }
+    // Nuevo informe → Modal importante
+    if(informesAlumno>prevInformesAlumno.current){
+      mostrarModal("informe","¡Nuevo informe disponible!",
+        "Tu profesor ha publicado un nuevo informe de seguimiento para ti.",
+        "",()=>setTab("informes"));
+    }
+    // Nuevo mensaje → Banner
+    if(msgsAlumno>prevMsgsAlumno.current){
+      mostrarBanner("mensaje","Nuevo mensaje de tu profesor","Tienes un mensaje sin leer",()=>setTab("mensajes"));
+    }
+    // Nuevo archivo → Banner
+    if(archivosAlumno>prevArchivosAlumno.current){
+      mostrarBanner("archivo","Nuevo archivo disponible","Tu profesor te ha enviado un archivo",()=>setTab("inicio"));
+    }
+
+    prevClasesAlumno.current=clasesAlumno;
+    prevInformesAlumno.current=informesAlumno;
+    prevMsgsAlumno.current=msgsAlumno;
+    prevArchivosAlumno.current=archivosAlumno;
+  },[data]);
   const alumno=data.alumnos.find(a=>a.id===alumnoId);
   const analisis=(data.analisis||[]).filter(a=>a.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
   const estadisticas=(data.estadisticas||[]).filter(s=>s.alumnoId===alumnoId).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -4858,10 +6512,11 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
     {id:"stats",label:"Estadísticas",icon:"📊"},
     {id:"informes",label:"Informes",icon:"📋"},
     {id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
-    {id:"mensajes",label:"Mensajes",icon:"✉️"},
+    {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
     {id:"miperfil",label:"Mi PIN",icon:"🔐"},
   ];
   const permisos = data.permisosPortal || {};
+  // Si un permiso no está definido explícitamente como false, se muestra
   const ATABS = ATABS_ALL.filter(t => permisos[t.id] !== false);
   // Si la pestaña activa queda oculta, ir a la primera visible
   useEffect(()=>{
@@ -4873,6 +6528,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   ];
 
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
+    {NotifUI}
     {/* Header */}
     <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:680,margin:"0 auto"}}>
@@ -5171,20 +6827,383 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
       {/* STATS */}
       {tab==="stats"&&<div>
-        <h3 style={{margin:"0 0 14px",color:G.fairway}}>📊 Mis estadísticas</h3>
-        {estadisticas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>Sin rondas registradas todavía.</div>}
-        {estadisticas.map(s=>(
-          <Card key={s.id} style={{marginBottom:10}}>
-            <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {s.fecha} · {s.hoyos} hoyos</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:14}}>
-              {[["Golpes",s.golpes,G.fairway],["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.sky],["Putts",s.putts,G.flag],["Hcp",s.handicap,G.danger]].map(([k,v,c])=>(
-                <div key={k} style={{textAlign:"center"}}><div style={{fontSize:18,fontWeight:800,color:c}}>{v||"—"}</div><div style={{fontSize:11,color:G.soft}}>{k}</div></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+          <h3 style={{margin:0,color:G.fairway}}>📊 Mis estadísticas</h3>
+          <div style={{display:"flex",gap:6}}>
+            {[["lista","📋 Rondas"],["informe","📊 Informe"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setVistaStatAlumno(id)}
+                style={{background:vistaStatAlumno===id?G.fairway:"#f0f0f0",color:vistaStatAlumno===id?"#fff":"#555",
+                  border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                {label}
+              </button>
+            ))}
+            <Btn small onClick={()=>{setStatForm({fecha:today(),hoyos:"18",paloTee:"Driver",falloTee:""});setHoyosAlumno(initHoyos(18));setHoyoActualAlumno(0);setModoEntradaAlumno("hoyo");setVerModalStat(true);}}>+ Nueva ronda</Btn>
+          </div>
+        </div>
+
+        {estadisticas.length===0&&<div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:10}}>
+          Sin rondas registradas todavía. ¡Pulsa "+ Nueva ronda" para añadir la primera!
+        </div>}
+
+        {/* ── VISTA LISTA ── */}
+        {vistaStatAlumno==="lista"&&estadisticas.length>0&&<div>
+          {/* Sparklines */}
+          {estadisticas.length>1&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:8,marginBottom:14}}>
+            {[
+              ["Golpes",estadisticas.slice(0,10).reverse().map(s=>s.golpes),G.fairway],
+              ["Putts",estadisticas.slice(0,10).reverse().map(s=>s.putts),G.sky],
+              ["Fairways %",estadisticas.slice(0,10).reverse().map(s=>s.fairwaysPorcentaje),G.grass],
+              ["GIR %",estadisticas.slice(0,10).reverse().map(s=>s.greensRegulacion),G.flag],
+            ].map(([label,vals,color])=>(
+              <Card key={label} style={{padding:8}}>
+                <div style={{fontSize:9,color:G.soft,marginBottom:2}}>{label}</div>
+                <Spark values={vals} color={color}/>
+                <div style={{fontSize:13,fontWeight:800,color,marginTop:2}}>{vals.filter(Boolean).at(-1)||"—"}</div>
+              </Card>
+            ))}
+          </div>}
+
+          {estadisticas.map(s=>(
+            <Card key={s.id} style={{marginBottom:10,cursor:"pointer"}} onClick={()=>setVerDetalleAlumno(verDetalleAlumno===s.id?null:s.id)}>
+              <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>📅 {fmtDate(s.fecha)} · {s.hoyos} hoyos {s.campo&&`· ${s.campo}`}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                {[["Golpes",s.golpes,G.fairway],["Putts",s.putts,G.sky],
+                  ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
+                  ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
+                  ["Hcp Exacto",s.handicapExacto,G.danger],["Hcp Juego",s.handicapJuego,"#e67e22"],
+                  ["Fallo Tee",falloTeeLabel(s.falloTee),G.flag],
+                ].map(([k,v,c])=>(
+                  <div key={k} style={{textAlign:"center",minWidth:50}}>
+                    <div style={{fontSize:16,fontWeight:800,color:c}}>{v||"—"}</div>
+                    <div style={{fontSize:10,color:G.soft}}>{k}</div>
+                  </div>
+                ))}
+              </div>
+              {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:6,fontStyle:"italic"}}>"{s.notas}"</div>}
+
+              {/* Detalle hoyo a hoyo */}
+              {verDetalleAlumno===s.id&&s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{marginTop:12,overflowX:"auto"}} onClick={e=>e.stopPropagation()}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead>
+                    <tr style={{background:G.mist}}>
+                      {["Hoyo","Par","Golpes","Putts","FW","GIR","Pen.","Fallo Tee"].map(h=>(
+                        <th key={h} style={{padding:"4px 6px",textAlign:"center",color:G.soft,fontWeight:600}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.hoyosDetalle.map((h,i)=>{
+                      const par=PARES_CAMPO[i]||4;
+                      const golpes=Number(h.golpes)||0;
+                      const diff=golpes-par;
+                      return <tr key={i} style={{borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa"}}>
+                        <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:G.fairway}}>{h.n}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",color:G.soft}}>{par}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,
+                          background:golpes>0?(diff<0?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0"):"",
+                          borderRadius:4,color:diff<0?G.grass:diff>0?"#c0392b":G.ink}}>
+                          {h.golpes||"—"}{golpes>0&&diff!==0&&<span style={{fontSize:9}}>{diff>0?`+${diff}`:diff}</span>}
+                        </td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.putts||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.fairway==="si"?"✅":h.fairway==="no"?"❌":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.gir==="si"?"✅":h.gir==="no"?"❌":"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{h.penalizaciones||"—"}</td>
+                        <td style={{padding:"4px 6px",textAlign:"center"}}>{falloTeeLabel(h.falloTee)}</td>
+                      </tr>;
+                    })}
+                    <tr style={{background:G.mist,fontWeight:700}}>
+                      <td colSpan={2} style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>TOTAL</td>
+                      <td style={{padding:"4px 6px",textAlign:"center",color:G.fairway}}>{s.golpes||"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center"}}>{s.putts||"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center",color:G.grass}}>{s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center",color:G.flag}}>{s.greensRegulacion?s.greensRegulacion+"%":"—"}</td>
+                      <td style={{padding:"4px 6px",textAlign:"center"}}>{s.bunkers||"—"}</td>
+                      <td/>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>}
+              {s.hoyosDetalle&&s.hoyosDetalle.length>0&&<div style={{fontSize:11,color:G.sky,marginTop:4}}>
+                {verDetalleAlumno===s.id?"▲ Ocultar detalle":"▼ Ver hoyo a hoyo"}
+              </div>}
+
+              {!s.enviadoProfesor&&<div style={{marginTop:8}} onClick={e=>e.stopPropagation()}>
+                <Btn small color="sky" onClick={()=>{
+                  const updated=(data.estadisticas||[]).map(x=>x.id===s.id?{...x,enviadoProfesor:true,fechaEnvio:new Date().toISOString()}:x);
+                  setData({...data,estadisticas:updated});
+                  const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(s.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
+                  setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
+                  alert("✅ Estadísticas enviadas a tu profesor.");
+                }}>📤 Enviar al profesor</Btn>
+              </div>}
+              {s.enviadoProfesor&&<div style={{fontSize:11,color:G.grass,marginTop:6,fontWeight:600}}>✅ Enviadas al profesor el {fmtDate(s.fechaEnvio?.slice(0,10)||"")}</div>}
+            </Card>
+          ))}
+        </div>}
+
+        {/* ── VISTA INFORME ── */}
+        {vistaStatAlumno==="informe"&&<div>
+          {estadisticas.length<2
+            ?<div style={{textAlign:"center",padding:30,background:G.mist,borderRadius:10,color:G.soft}}>
+              Necesitas al menos 2 rondas para generar el informe.
+            </div>
+            :(()=>{
+              const vals=estadisticas;
+              const avg=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; };
+              const best=key=>{ const v=vals.map(s=>Number(s[key])).filter(v=>v>0); return v.length>0?Math.min(...v):"—"; };
+              const porRonda=[...vals].reverse().map(s=>({fecha:s.fecha,golpes:Number(s.golpes)||0,putts:Number(s.putts)||0,fairways:Number(s.fairwaysPorcentaje)||0,gir:Number(s.greensRegulacion)||0}));
+              return <div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:8,marginBottom:16}}>
+                  {[["Media Golpes",avg("golpes"),G.fairway,"⛳"],["Mejor Ronda",best("golpes"),G.grass,"🏆"],
+                    ["Media Putts",avg("putts"),G.sky,"🎯"],["Media FW %",avg("fairwaysPorcentaje")+"%",G.grass,"↑"],
+                    ["Media GIR %",avg("greensRegulacion")+"%",G.flag,"🟢"],["Rondas",vals.length,G.ink,"📋"],
+                  ].map(([label,val,color,icon])=>(
+                    <Card key={label} style={{textAlign:"center",padding:8}}>
+                      <div style={{fontSize:14}}>{icon}</div>
+                      <div style={{fontSize:16,fontWeight:800,color}}>{val}</div>
+                      <div style={{fontSize:9,color:G.soft,marginTop:2}}>{label}</div>
+                    </Card>
+                  ))}
+                </div>
+                <Card style={{marginBottom:10}}>
+                  <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:8}}>GOLPES POR RONDA</div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:4,height:70,paddingBottom:4}}>
+                    {porRonda.map((r,i)=>{
+                      const mx=Math.max(...porRonda.map(x=>x.golpes));
+                      const mn=Math.min(...porRonda.filter(x=>x.golpes).map(x=>x.golpes));
+                      const h=r.golpes>0?Math.round(16+((r.golpes-mn)/(mx-mn||1))*50):4;
+                      return <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                        <div style={{fontSize:8,color:G.fairway,fontWeight:700}}>{r.golpes||""}</div>
+                        <div style={{width:"100%",background:G.fairway,height:h,borderRadius:"3px 3px 0 0"}}/>
+                        <div style={{fontSize:7,color:G.soft}}>{r.fecha?.slice(5)}</div>
+                      </div>;
+                    })}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:10}}>PORCENTAJES POR RONDA</div>
+                  {porRonda.map((r,i)=>(
+                    <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<porRonda.length-1?"1px solid #f0f0f0":"none"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:G.ink,marginBottom:6}}>📅 {r.fecha}</div>
+                      <BarChart pct={r.fairways} color={G.grass} label="Fairways"/>
+                      <BarChart pct={r.gir} color={G.flag} label="GIR"/>
+                    </div>
+                  ))}
+                </Card>
+              </div>;
+            })()
+          }
+        </div>}
+
+        {/* Modal nueva ronda alumno */}
+        {verModalStat&&<Modal title="📊 Registrar nueva ronda" onClose={()=>setVerModalStat(false)} wide>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Field label="Fecha *">
+              <Input type="date" value={statForm.fecha||today()} onChange={v=>setStatForm(f=>({...f,fecha:v}))}/>
+            </Field>
+            <Field label="Hoyos">
+              <div style={{display:"flex",gap:6}}>
+                {[9,18].map(n=>(
+                  <button key={n} type="button" onClick={()=>{setStatForm(f=>({...f,hoyos:String(n)}));setHoyosAlumno(initHoyos(n));setHoyoActualAlumno(0);}}
+                    style={{flex:1,background:statForm.hoyos===String(n)?G.fairway:"#f0f0f0",
+                      color:statForm.hoyos===String(n)?"#fff":"#555",border:"none",
+                      borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                    {n}H
+                  </button>
+                ))}
+              </div>
+            </Field>
+          </div>
+          <Field label="Campo (opcional)">
+            <Input value={statForm.campo||""} onChange={v=>setStatForm(f=>({...f,campo:v}))} placeholder="Nombre del campo"/>
+          </Field>
+
+          {/* Modo entrada */}
+          <div style={{display:"flex",gap:6,marginBottom:14}}>
+            {[["hoyo","⛳ Hoyo a hoyo"],["resumen","📊 Resumen total"]].map(([id,label])=>(
+              <button key={id} type="button" onClick={()=>setModoEntradaAlumno(id)}
+                style={{flex:1,background:modoEntradaAlumno===id?G.fairway:"#f0f0f0",
+                  color:modoEntradaAlumno===id?"#fff":"#555",border:"none",borderRadius:8,
+                  padding:"9px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Entrada hoyo a hoyo ── */}
+          {modoEntradaAlumno==="hoyo"&&<div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:10}}>
+              {hoyosAlumno.map((h,i)=>{
+                const ok=h.golpes&&h.putts;
+                const par=PARES_CAMPO[i]||4;
+                const diff=Number(h.golpes)-par;
+                const color=!h.golpes?"#e0e0e0":diff<0?G.grass:diff===0?G.fairway:diff===1?"#e67e22":"#c0392b";
+                return <button key={i} type="button" onClick={()=>setHoyoActualAlumno(i)}
+                  style={{minWidth:32,height:32,background:hoyoActualAlumno===i?G.fairway:ok?color:"#f0f0f0",
+                    color:hoyoActualAlumno===i||ok?"#fff":"#888",border:"none",borderRadius:8,
+                    fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  {i+1}
+                </button>;
+              })}
+            </div>
+
+            {(()=>{
+              const h=hoyosAlumno[hoyoActualAlumno];
+              const par=PARES_CAMPO[hoyoActualAlumno]||4;
+              return <div style={{background:"#f8fdf8",borderRadius:12,padding:12,marginBottom:10,border:`2px solid ${G.grass}`}}>
+                <div style={{fontWeight:700,color:G.fairway,fontSize:14,marginBottom:10}}>Hoyo {hoyoActualAlumno+1} · Par {par}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <Field label="Golpes">
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,golpes:Math.max(1,Number(x.golpes||par)-1)}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#c0392b"}}>{h.golpes||par}</div>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,golpes:Number(x.golpes||par)+1}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                    </div>
+                  </Field>
+                  <Field label="Putts">
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,putts:Math.max(0,Number(x.putts||2)-1)}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:G.sky}}>{h.putts||"—"}</div>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,putts:Number(x.putts||1)+1}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                    </div>
+                  </Field>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                  <Field label="Fairway">
+                    <div style={{display:"flex",gap:5}}>
+                      {[["si","✅"],["no","❌"],["","-"]].map(([v,l])=>(
+                        <button key={v} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,fairway:v}:x))}
+                          style={{flex:1,background:h.fairway===v?G.fairway:"#f0f0f0",color:h.fairway===v?"#fff":"#555",
+                            border:"none",borderRadius:8,padding:"6px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label="GIR">
+                    <div style={{display:"flex",gap:5}}>
+                      {[["si","✅"],["no","❌"],["","-"]].map(([v,l])=>(
+                        <button key={v} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,gir:v}:x))}
+                          style={{flex:1,background:h.gir===v?G.fairway:"#f0f0f0",color:h.gir===v?"#fff":"#555",
+                            border:"none",borderRadius:8,padding:"6px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                  <Field label="Penalizaciones">
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,penalizaciones:Math.max(0,Number(x.penalizaciones||0)-1)}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:18,fontWeight:800,color:"#c0392b"}}>{h.penalizaciones||0}</div>
+                      <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,penalizaciones:Number(x.penalizaciones||0)+1}:x))}
+                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                    </div>
+                  </Field>
+                  <Field label="Fallo tee">
+                    <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                      {FALLO_TEE_OPTS.map(({val,icon})=>(
+                        <button key={val} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,falloTee:x.falloTee===val?"":val}:x))}
+                          style={{flex:1,minWidth:30,background:h.falloTee===val?G.fairway:"#f0f0f0",
+                            color:h.falloTee===val?"#fff":"#555",border:"none",borderRadius:6,
+                            padding:"5px 2px",fontSize:13,cursor:"pointer"}}>{icon}</button>
+                      ))}
+                    </div>
+                  </Field>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
+                  <Btn small color="secondary" onClick={()=>setHoyoActualAlumno(Math.max(0,hoyoActualAlumno-1))} disabled={hoyoActualAlumno===0}>← Ant</Btn>
+                  <div style={{fontSize:11,color:G.soft,alignSelf:"center"}}>{hoyosAlumno.filter(h=>h.golpes).length}/{hoyosAlumno.length}</div>
+                  <Btn small onClick={()=>setHoyoActualAlumno(Math.min(hoyosAlumno.length-1,hoyoActualAlumno+1))} disabled={hoyoActualAlumno===hoyosAlumno.length-1}>Sig →</Btn>
+                </div>
+              </div>;
+            })()}
+          </div>}
+
+          {/* ── Entrada resumen ── */}
+          {modoEntradaAlumno==="resumen"&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:10}}>
+            {[["golpes","Golpes totales"],["putts","Putts"],["fairwaysPorcentaje","Fairways %"],
+              ["greensRegulacion","GIR %"],["bunkers","Penalizaciones"]].map(([key,label])=>(
+              <Field key={key} label={label}>
+                <Input type="number" value={statForm[key]||""} onChange={v=>setStatForm(f=>({...f,[key]:v}))} placeholder="—"/>
+              </Field>
+            ))}
+          </div>}
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Field label="Hcp exacto (ej: 14,3)">
+              <Input type="text" value={statForm.handicapExacto||""} onChange={v=>setStatForm(f=>({...f,handicapExacto:v}))} placeholder="Ej: 14,3"/>
+            </Field>
+            <Field label="Hcp de juego (-8 a 60)">
+              <Input type="number" value={statForm.handicapJuego||""} onChange={v=>setStatForm(f=>({...f,handicapJuego:v}))} placeholder="0" min="-8" max="60" step="1"/>
+            </Field>
+          </div>
+          <Field label="Palo desde el tee">
+            <select value={statForm.paloTee||"Driver"} onChange={e=>setStatForm(f=>({...f,paloTee:e.target.value}))}
+              style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+              {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>(
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </Field>
+          {modoEntradaAlumno==="resumen"&&<Field label="Fallo desde el tee">
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {FALLO_TEE_OPTS.map(({val,icon,label})=>(
+                <button key={val} type="button"
+                  onClick={()=>setStatForm(f=>({...f,falloTee:f.falloTee===val?"":val}))}
+                  style={{flex:1,minWidth:52,background:statForm.falloTee===val?G.fairway:"#f0f0f0",
+                    color:statForm.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
+                    padding:"7px 4px",fontSize:11,fontWeight:700,cursor:"pointer",
+                    display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  <span style={{fontSize:16}}>{icon}</span>{label}
+                </button>
               ))}
             </div>
-            {s.palo&&s.distancia&&<div style={{fontSize:12,color:G.soft,marginTop:6}}>🏌️ {s.palo}: {s.distancia}m</div>}
-            {s.notas&&<div style={{fontSize:12,color:"#555",marginTop:4}}>{s.notas}</div>}
-          </Card>
-        ))}
+          </Field>}
+          <Field label="Notas">
+            <Textarea value={statForm.notas||""} onChange={v=>setStatForm(f=>({...f,notas:v}))} rows={2} placeholder="Condiciones, sensaciones..."/>
+          </Field>
+          <div style={{display:"flex",gap:10,marginTop:14,flexWrap:"wrap"}}>
+            <Btn color="secondary" onClick={()=>setVerModalStat(false)}>Cancelar</Btn>
+            <Btn color="secondary" onClick={()=>{
+              if(!statForm.fecha) return;
+              const totales=modoEntradaAlumno==="hoyo"?(()=>{
+                const golpesTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.golpes)||0),0);
+                const puttsTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.putts)||0),0);
+                const fwOk=hoyosAlumno.filter(h=>h.fairway==="si").length;
+                const girOk=hoyosAlumno.filter(h=>h.gir==="si").length;
+                const penTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.penalizaciones)||0),0);
+                const numH=hoyosAlumno.length;
+                return {golpes:golpesTot||"",putts:puttsTot||"",fairwaysPorcentaje:numH>0?Math.round((fwOk/numH)*100):"",greensRegulacion:numH>0?Math.round((girOk/numH)*100):"",bunkers:penTot||""};
+              })():{};
+              const nueva={...statForm,...totales,alumnoId,id:uid(),enviadoProfesor:false,hoyosDetalle:modoEntradaAlumno==="hoyo"?hoyosAlumno:[]};
+              setData({...data,estadisticas:[...(data.estadisticas||[]),nueva]});
+              setVerModalStat(false);
+              setStatForm({fecha:today(),hoyos:"18"});
+            }}>💾 Guardar</Btn>
+            <Btn onClick={()=>{
+              if(!statForm.fecha) return;
+              const totales=modoEntradaAlumno==="hoyo"?(()=>{
+                const golpesTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.golpes)||0),0);
+                const puttsTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.putts)||0),0);
+                const fwOk=hoyosAlumno.filter(h=>h.fairway==="si").length;
+                const girOk=hoyosAlumno.filter(h=>h.gir==="si").length;
+                const penTot=hoyosAlumno.reduce((s,h)=>s+(Number(h.penalizaciones)||0),0);
+                const numH=hoyosAlumno.length;
+                return {golpes:golpesTot||"",putts:puttsTot||"",fairwaysPorcentaje:numH>0?Math.round((fwOk/numH)*100):"",greensRegulacion:numH>0?Math.round((girOk/numH)*100):"",bunkers:penTot||""};
+              })():{};
+              const nueva={...statForm,...totales,alumnoId,id:uid(),enviadoProfesor:true,fechaEnvio:new Date().toISOString(),hoyosDetalle:modoEntradaAlumno==="hoyo"?hoyosAlumno:[]};
+              setData({...data,estadisticas:[...(data.estadisticas||[]),nueva]});
+              const notif={id:uid(),tipo:"stat_alumno",mensaje:`📊 ${data.alumnos?.find(a=>a.id===alumnoId)?.nombre||"Alumno"} ha enviado sus estadísticas del ${fmtDate(statForm.fecha)}`,fecha:new Date().toISOString(),leida:false,alumnoId};
+              setData(d=>({...d,notificacionesAlumno:[...(d.notificacionesAlumno||[]),notif]}));
+              setVerModalStat(false);
+              setStatForm({fecha:today(),hoyos:"18"});
+              alert("✅ Ronda guardada y enviada a tu profesor.");
+            }}>📤 Guardar y enviar al profesor</Btn>
+          </div>
+        </Modal>}
       </div>}
     </div>
   </div>;
@@ -7826,7 +9845,102 @@ descripcion:"Secuencia de activación completa: 1min rotación cervical, 1min ca
 ejecucion:["1min: rotación cervical","1min: cat-cow","1min: hip circles","1min: hip hinge","1min: rotación torácica","1min: hip flexor stretch","1min: equilibrio un pie","1min: rotación con palo","2min: swing suave progresivo"],
 variantes:["5 minutos (versión rápida)","15 minutos (versión completa)","Con énfasis en área más rígida"],
 esquema:"🏆 10min completos · Cabeza→Cadera→Piernas · Pre-ronda perfecta",
-tags:["físico","pre-ronda","activación","rutina completa"]}
+tags:["físico","pre-ronda","activación","rutina completa"]},
+// ── EJERCICIOS HABITUALES ADICIONALES ──
+{id:"hab01",cat:"Físico",nivel:"Todos",nombre:"Calentamiento físico de golf — 5 minutos",icono:"🔥",
+duracion:"5 min",material:"Palo de golf",series:"1 ronda completa",
+objetivo:"Activar todo el cuerpo antes de jugar o entrenar en solo 5 minutos.",
+descripcion:"Secuencia rápida y eficaz para calentar las principales cadenas musculares del golf. Imprescindible antes de cualquier sesión o ronda.",
+ejecucion:[
+  "1min — Rotaciones de cuello (5 der + 5 izq) + hombros (10 círculos cada brazo)",
+  "1min — Hip circles: 10 círculos de cadera horario + 10 antihorario",
+  "1min — Cat-cow: 10 repeticiones lentas en el suelo o de pie",
+  "1min — Rotación de tronco con palo en hombros: 15 repeticiones lentas",
+  "1min — Swings progresivos: 5 al 40%, 5 al 70%, 5 al 90%"
+],
+variantes:["10 minutos (doble repetición)","Solo en verde de prácticas (sin suelo)","Con banda elástica añadida"],
+esquema:"🔥 1'Cuello+Hombros → 1'Caderas → 1'Columna → 1'Rotación → 1'Swings prog.",
+tags:["físico","calentamiento","5 minutos","pre-ronda","activación"]},
+
+{id:"hab02",cat:"Juego Largo",nivel:"Todos",nombre:"Valoración inicial — Swing de juego largo",icono:"📋",
+duracion:"30 min",material:"Set completo, campo de prácticas, vídeo",
+objetivo:"Evaluar el nivel actual del swing de juego largo y establecer la línea de trabajo.",
+descripcion:"Sesión de diagnóstico completo del swing con hierros y maderas. Se evalúa la postura, el grip, el plano del swing, el impacto y el follow-through. Se graba en vídeo para el análisis posterior.",
+ejecucion:[
+  "5 bolas con hierro 7 — evaluar postura y grip de partida",
+  "5 bolas con hierro 7 — evaluar el plano del backswing (vídeo lateral)",
+  "5 bolas con hierro 7 — evaluar la posición de impacto (vídeo frontal)",
+  "5 bolas con madera de calle — evaluar la transición",
+  "5 bolas con driver — evaluar el swing completo",
+  "Análisis de vídeo con el alumno: identificar los 2-3 puntos prioritarios"
+],
+variantes:["Solo con hierro 7","Con sensor de swing (Garmin, Trackman)","Comparativa inicio/fin de temporada"],
+esquema:"📋 Hierro 7(postura+plano+impacto) → Madera → Driver → Análisis vídeo → Plan",
+tags:["valoración","swing","juego largo","diagnóstico","inicial"]},
+
+{id:"hab03",cat:"Approach Bajo",nivel:"Todos",nombre:"Valoración inicial — Juego corto",icono:"📋",
+duracion:"30 min",material:"Wedges completos, pelotas, zona de chipping y bunker",
+objetivo:"Evaluar el nivel actual del juego corto y establecer las prioridades de mejora.",
+descripcion:"Sesión de diagnóstico del juego corto: chip, pitch, bunker y sensibilidad. Se evalúa la técnica, la selección de palo y el control de distancias.",
+ejecucion:[
+  "10 chips desde 5m con hierro 8 — evaluar técnica básica y bola primero",
+  "10 pitches desde 20m con 56° — evaluar control de distancia",
+  "10 pitches desde 40m con PW — evaluar la trayectoria",
+  "5 salidas de bunker greenside — evaluar técnica de arena",
+  "5 flops desde hierba alta junto al green — evaluar lob shot",
+  "Análisis con el alumno: up & down % estimado y puntos a mejorar"
+],
+variantes:["Solo chips y pitches (sin bunker)","Con medición de distancias","Comparativa con estadísticas de ronda"],
+esquema:"📋 Chip(5m) → Pitch(20m) → Pitch(40m) → Bunker → Flop → Análisis up&down",
+tags:["valoración","juego corto","chip","pitch","bunker","diagnóstico","inicial"]},
+
+{id:"hab04",cat:"Putt",nivel:"Todos",nombre:"Valoración inicial — Putt",icono:"📋",
+duracion:"25 min",material:"Putter, 6 bolas, tees",
+objetivo:"Evaluar el nivel actual del putting y establecer las prioridades de mejora.",
+descripcion:"Sesión de diagnóstico completo del putting: técnica, lectura de greens, distancias y presión. Se identifican los puntos débiles y se establece el plan de mejora.",
+ejecucion:[
+  "Evaluación técnica: observar el grip, la postura y la posición de los ojos sobre la bola",
+  "10 putts desde 1m — evaluar la consistencia en corto y la cara del putter",
+  "10 putts desde 3m — evaluar la línea y el ritmo",
+  "10 putts desde 6m — evaluar el control de distancia (zona muerta)",
+  "5 putts desde 10m — evaluar el lag putt",
+  "Análisis: número de putts por hoyo estimado y puntos prioritarios"
+],
+variantes:["Solo distancias cortas","Con gate drill (2 tees)","Midiendo el stimpmeter del green"],
+esquema:"📋 Técnica → 1m(consistencia) → 3m(línea) → 6m(distancia) → 10m(lag) → Plan",
+tags:["valoración","putt","diagnóstico","inicial","green"]},
+
+{id:"hab05",cat:"Estrategia",nivel:"Todos",nombre:"Estrategia de juego en el campo",icono:"🗺️",
+duracion:"45 min",material:"Yardage book o app GPS, libreta",
+objetivo:"Diseñar y aplicar un plan estratégico personalizado para una ronda real.",
+descripcion:"Sesión de análisis estratégico del campo hoyo a hoyo. Se trabaja la toma de decisiones, la gestión del riesgo y la selección de objetivos según el nivel del jugador. Puede hacerse en el campo o en sala antes de la ronda.",
+ejecucion:[
+  "Revisar el scorecard: identificar par de cada hoyo, índice de dificultad y distancias",
+  "Hoyo a hoyo: definir la zona objetivo del tee shot según el viento y el OB",
+  "Identificar el mejor ángulo de ataque al green en cada hoyo",
+  "Definir la estrategia en los par 3 (¿centro del green o atacar el hoyo?)",
+  "Identificar los 3 hoyos clave donde se pueden ganar o perder más golpes",
+  "Establecer el par personal según el handicap del jugador"
+],
+variantes:["Solo 9 hoyos","Para competición específica","Con análisis de estadísticas previas en ese campo"],
+esquema:"🗺️ Scorecard → Tee shots → Ángulos green → Par 3 → Hoyos clave → Par personal",
+tags:["estrategia","campo","plan de juego","toma de decisiones","pre-ronda"]},
+
+{id:"hab06",cat:"Juego Largo",nivel:"Intermedio",nombre:"Trabajo de efectos de bola",icono:"↩️",
+duracion:"45 min",material:"Hierro 6 o 7, 20 bolas, campo de prácticas",
+objetivo:"Dominar los efectos de draw y fade de forma controlada y reproducible.",
+descripcion:"Sesión progresiva para aprender a curvar la bola intencionalmente. Primero se entiende el concepto (cara vs camino del swing), luego se practica cada efecto de forma aislada y finalmente se integran en situaciones de juego.",
+ejecucion:[
+  "5 bolas rectas: establecer el golpe de referencia neutro",
+  "5 bolas draw: pies 10° cerrados, cara cuadrada al objetivo, camino inside-out",
+  "5 bolas draw: observar la cantidad de curva y ajustar",
+  "5 bolas fade: pies 10° abiertos, cara cuadrada al objetivo, camino outside-in",
+  "5 bolas fade: observar y ajustar la cantidad de curva",
+  "5 bolas: alternar draw y fade a voluntad sobre el mismo objetivo"
+],
+variantes:["Solo draw","Solo fade","Con hierro 5 o madera","Sobre objetivo a 150m con obstáculo lateral"],
+esquema:"↩️ Neutro×5 → Draw×10(ajustar) → Fade×10(ajustar) → Alternado×5 · Cara vs Camino",
+tags:["juego largo","draw","fade","efectos","curva","control"]}
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -8214,7 +10328,20 @@ function ModMensajeria({data,setData}){
 
   function eliminarMsg(id){
     if(!confirm("¿Eliminar este mensaje?")) return;
+    // Borrar de Firebase
+    const fbMsg = fbMensajes.find(m=>m.id===id);
+    if(fbMsg?._fbId) deleteDoc(doc(db,"mensajes",fbMsg._fbId)).catch(e=>console.warn(e));
     setData({...data,mensajes:mensajes.filter(m=>m.id!==id)});
+  }
+
+  function eliminarEnvio(asunto, fecha){
+    if(!confirm("¿Eliminar este mensaje enviado?")) return;
+    const fechaBase = fecha?.slice(0,16);
+    // Borrar todas las copias de Firebase
+    fbMensajes
+      .filter(m=>m.de==="profesor"&&m.asunto===asunto&&m.fecha?.slice(0,16)===fechaBase)
+      .forEach(m=>{ if(m._fbId) deleteDoc(doc(db,"mensajes",m._fbId)).catch(e=>console.warn(e)); });
+    setData({...data,mensajes:mensajes.filter(m=>!(m.de==="profesor"&&m.asunto===asunto&&m.fecha?.slice(0,16)===fechaBase))});
   }
 
   function openNuevo(){
@@ -8281,7 +10408,7 @@ function ModMensajeria({data,setData}){
           <div style={{fontSize:13,color:"#555",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.cuerpo}</div>
           {m.adjuntoNombre&&<div style={{fontSize:12,color:G.sky,marginTop:4}}>📎 {m.adjuntoNombre}</div>}
         </div>
-        <Btn small color="danger" onClick={e=>{e.stopPropagation();eliminarMsg(m.id);}}>✕</Btn>
+        <Btn small color="danger" onClick={e=>{e.stopPropagation();tipo==="enviado"?eliminarEnvio(m.asunto,m.fecha):eliminarMsg(m.id);}}>✕</Btn>
       </div>
     </div>;
   };
@@ -10781,7 +12908,7 @@ function ModInformes({data,setData}){
                 <div style={{display:"flex",gap:6,flexDirection:"column",flexShrink:0}}>
                   <Btn small onClick={()=>{setInforme(r.id);setVista("editor");}}>✎ Editar</Btn>
                   <Btn small color="sky" onClick={()=>{setInforme(r.id);setVista("preview");}}>👁 Ver</Btn>
-                  <Btn small color="danger" onClick={()=>{if(golfConfirm("¿Eliminar este informe?"))eliminarInforme(r.id);}}>🗑</Btn>
+                  <Btn small color="danger" onClick={()=>{if(window.confirm("¿Eliminar este informe? Esta acción no se puede deshacer."))eliminarInforme(r.id);}}>🗑</Btn>
                 </div>
               </div>
             </Card>;
@@ -11013,7 +13140,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
             {(rpt.imagenesData||[]).map((img,i)=>(
               <div key={i} style={{background:"#fff",borderRadius:12,overflow:"hidden",
                 boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>
-                <img src={img.base64} alt="" style={{width:"100%",height:160,objectFit:"cover"}}/>
+                <img src={img.base64} alt="" style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
                 <div style={{padding:10}}>
                   <Input value={img.caption||""} onChange={v=>updCaption(i,v)}
                     placeholder="Descripción de la foto..."/>
@@ -11262,7 +13389,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
           {(rpt.imagenesData||[]).map((img,i)=>(
             <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
-              <img src={img.base64} alt={img.caption||""} style={{width:"100%",height:140,objectFit:"cover"}}/>
+              <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
               {img.caption&&<div style={{padding:"6px 10px",fontSize:12,color:"#555",background:"#fafafa"}}>
                 {img.caption}
               </div>}
@@ -11597,8 +13724,9 @@ const ADMIN_TABS=[
   {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️"},
   {id:"informes",label:"Informes",icon:"📑"},
   {id:"archivos",label:"Archivos",icon:"📁"},
-  {id:"mensajes",label:"Mensajes",icon:"✉️"},
+  {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
   {id:"tareas",label:"Tareas",icon:"📋"},
+  {id:"bonos",label:"Bonos",icon:"🎫"},
   {id:"pagos",label:"Pagos",icon:"💶"},
   {id:"ajustes",label:"Ajustes",icon:"⚙️"},
 // ── POLLITOS ampliación (p051-p075) ──────────────────────────────
@@ -11742,9 +13870,9 @@ const ADMIN_TABS=[
 // ═══════════════════════════════════════════════════════════════════
 // COMPONENTE: CAMPANA DE NOTIFICACIONES
 // ═══════════════════════════════════════════════════════════════════
-function NotifBell({notifs, pendientesCount=0}){
+function NotifBell({notifs, pendientesCount=0, mensajesNoLeidos=0}){
   const [open, setOpen] = useState(false);
-  const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount);
+  const noLeidas = Math.max((notifs||[]).filter(n=>!n.leida).length, pendientesCount) + mensajesNoLeidos;
 
   async function marcarLeida(id){
     try {
@@ -12227,8 +14355,729 @@ function ModArchivos({data,setData}){
   </div>;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// PDF: INFORME DE BONOS
+// ═══════════════════════════════════════════════════════════════════
+async function generarPDFBonos(bonos, alumnos, filtroAlumnoId="todos"){
+  await cargarJsPDF();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const VERDE  = [15, 80, 30];
+  const DORADO = [180, 140, 60];
+  const GRIS   = [245, 247, 245];
+  const BLANCO = [255, 255, 255];
+  const SUAVE  = [120, 120, 120];
+
+  const hoy = (new Date()).toISOString().slice(0,10);
+
+  // Filtrar y agrupar por alumno
+  let lista = filtroAlumnoId==="todos" ? bonos : bonos.filter(b=>b.alumnoId===filtroAlumnoId);
+  const porAlumno = {};
+  lista.forEach(b=>{
+    if(!porAlumno[b.alumnoId]) porAlumno[b.alumnoId]=[];
+    porAlumno[b.alumnoId].push(b);
+  });
+  const alumnosData = Object.keys(porAlumno)
+    .map(id=>{
+      const al = alumnos.find(a=>a.id===id);
+      const bs = porAlumno[id].sort((a,b2)=>(b2.fechaCompra||"").localeCompare(a.fechaCompra||""));
+      const totalClases = bs.reduce((s,b)=>s+Number(b.clases),0);
+      const totalUsadas = bs.reduce((s,b)=>s+b.usadas,0);
+      const totalPrecio = bs.reduce((s,b)=>s+Number(b.precio||0),0);
+      return { nombre:al?.nombre||"Alumno", telefono:al?.telefono||"", bonos:bs, totalClases, totalUsadas, totalPrecio };
+    })
+    .sort((a,b)=>a.nombre.localeCompare(b.nombre));
+
+  // Totales globales
+  const totalBonosActivos = lista.filter(b=>b.usadas<Number(b.clases)).length;
+  const totalClasesVendidas = lista.reduce((s,b)=>s+Number(b.clases),0);
+  const totalClasesUsadas   = lista.reduce((s,b)=>s+b.usadas,0);
+  const totalIngresos       = lista.reduce((s,b)=>s+Number(b.precio||0),0);
+
+  // ── Cabecera ──
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 0, W, 32, "F");
+  doc.setFillColor(...DORADO);
+  doc.rect(0, 32, W, 2, "F");
+  doc.setTextColor(...BLANCO);
+  doc.setFontSize(16); doc.setFont("helvetica","bold");
+  doc.text("GOLF CIUDAD REAL C.D.", W/2, 11, {align:"center"});
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text("PGA de Espana  ·  Academia Profesional de Golf", W/2, 18, {align:"center"});
+  doc.setFontSize(11); doc.setFont("helvetica","bold");
+  doc.text("INFORME DE BONOS DE CLASES", W/2, 27, {align:"center"});
+
+  // ── Subheader ──
+  doc.setFillColor(...GRIS);
+  doc.rect(0, 34, W, 12, "F");
+  doc.setTextColor(60,60,60);
+  doc.setFontSize(9); doc.setFont("helvetica","normal");
+  doc.text(`Fecha: ${hoy}`, 14, 41);
+  doc.text(`Bonos activos: ${totalBonosActivos}`, W/2, 41, {align:"center"});
+  doc.text(`Total ingresos: ${totalIngresos.toFixed(2)} EUR`, W-14, 41, {align:"right"});
+
+  // ── KPIs ──
+  let y = 54;
+  const kpis = [
+    ["Bonos totales", lista.length],
+    ["Bonos activos", totalBonosActivos],
+    ["Clases vendidas", totalClasesVendidas],
+    ["Clases usadas", totalClasesUsadas],
+    ["Clases restantes", totalClasesVendidas-totalClasesUsadas],
+  ];
+  const kw = (W-28)/kpis.length;
+  kpis.forEach(([label,val],i)=>{
+    const x=14+i*kw;
+    doc.setFillColor(i%2===0?238:248, i%2===0?246:252, i%2===0?238:248);
+    doc.rect(x, y, kw-2, 16, "F");
+    doc.setTextColor(...VERDE); doc.setFontSize(13); doc.setFont("helvetica","bold");
+    doc.text(String(val), x+kw/2-1, y+8, {align:"center"});
+    doc.setTextColor(...SUAVE); doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text(label, x+kw/2-1, y+13, {align:"center"});
+  });
+  y += 22;
+
+  // ── Por alumno ──
+  alumnosData.forEach((a, ai)=>{
+    if(y > 255){ doc.addPage(); y=14; }
+
+    // Bloque alumno - cabecera
+    doc.setFillColor(...VERDE);
+    doc.rect(10, y, W-20, 9, "F");
+    doc.setTextColor(...BLANCO); doc.setFontSize(10); doc.setFont("helvetica","bold");
+    doc.text(a.nombre, 14, y+6);
+    if(a.telefono){
+      doc.setFontSize(8); doc.setFont("helvetica","normal");
+      doc.text(`Tel: ${a.telefono}`, W-14, y+6, {align:"right"});
+    }
+    y += 11;
+
+    // Resumen alumno
+    doc.setFillColor(230, 245, 230);
+    doc.rect(10, y, W-20, 7, "F");
+    doc.setTextColor(40,80,40); doc.setFontSize(8); doc.setFont("helvetica","normal");
+    doc.text(`${a.bonos.length} bono(s)  ·  ${a.totalClases} clases compradas  ·  ${a.totalUsadas} usadas  ·  ${a.totalClases-a.totalUsadas} restantes${a.totalPrecio>0?"  ·  "+a.totalPrecio.toFixed(2)+" EUR":""}`, 14, y+4.5);
+    y += 9;
+
+    // Bonos del alumno
+    a.bonos.forEach((b,bi)=>{
+      if(y > 270){ doc.addPage(); y=14; }
+      const agotado = b.usadas >= Number(b.clases);
+      const pct = Math.round(((b.usadas||0)/Number(b.clases))*100);
+      doc.setFillColor(bi%2===0?252:246, bi%2===0?252:250, bi%2===0?252:246);
+      doc.rect(12, y, W-24, 14, "F");
+      // Punto de estado
+      doc.setFillColor(...(agotado?SUAVE:VERDE));
+      doc.circle(17, y+5, 2, "F");
+      // Pack y tipo
+      doc.setTextColor(40,40,40); doc.setFontSize(9); doc.setFont("helvetica","bold");
+      doc.text(`Pack ${b.clases} clases  -  ${b.tipo||"Individual"}`, 22, y+5);
+      // Estado
+      doc.setFontSize(8); doc.setFont("helvetica","normal");
+      doc.setTextColor(agotado?120:15, agotado?120:100, agotado?120:40);
+      doc.text(agotado?"Completado":"Activo", 22, y+10);
+      // Fecha y precio
+      doc.setTextColor(...SUAVE);
+      if(b.fechaCompra) doc.text(`Compra: ${b.fechaCompra}`, W/2, y+5, {align:"center"});
+      if(b.precio) doc.text(`${Number(b.precio).toFixed(2)} EUR`, W-14, y+5, {align:"right"});
+      // Progreso texto
+      doc.setTextColor(60,60,60);
+      doc.text(`${b.usadas||0}/${b.clases} clases usadas (${pct}%)`, W/2, y+10, {align:"center"});
+      // Barra de progreso
+      const barX=14, barY=y+11.5, barW=W-28, barH=2;
+      doc.setFillColor(220,220,220); doc.rect(barX, barY, barW, barH, "F");
+      doc.setFillColor(...(agotado?SUAVE:VERDE)); doc.rect(barX, barY, barW*(pct/100), barH, "F");
+      y += 16;
+    });
+    y += 4;
+  });
+
+  // ── Footer ──
+  const pages = doc.internal.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFillColor(...VERDE);
+    doc.rect(0, 291, W, 6, "F");
+    doc.setTextColor(...BLANCO); doc.setFontSize(7); doc.setFont("helvetica","normal");
+    doc.text("Golf Ciudad Real C.D.  ·  Informe de Bonos de Clases  ·  Confidencial", W/2, 295, {align:"center"});
+    doc.text(`Pag. ${p}/${pages}`, W-10, 295, {align:"right"});
+  }
+
+  const label = filtroAlumnoId==="todos" ? "todos" : (alumnos.find(a=>a.id===filtroAlumnoId)?.nombre||"alumno").replace(/\s+/g,"_");
+  doc.save(`bonos_${label}_${hoy}.pdf`);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: BONOS DE CLASES
+// ═══════════════════════════════════════════════════════════════════
+function ModBonos({data, setData}){
+  const [modalBono, setModalBono] = useState(null);
+  const [form, setForm]           = useState({});
+  const [filtroAlumno, setFiltroAlumno] = useState("todos");
+  const [filtroEstado, setFiltroEstado] = useState("activos");
+  const [vistaHistorial, setVistaHistorial] = useState(false);
+
+  const alumnos = data.alumnos||[];
+  const bonos   = data.bonos||[];
+
+  const PACKS = [
+    {n:5,  label:"Pack 5 clases",  color:"#3a7abf"},
+    {n:10, label:"Pack 10 clases", color:G.fairway},
+    {n:20, label:"Pack 20 clases", color:G.grass},
+  ];
+
+  function abrirNuevo(){
+    setForm({alumnoId:alumnos[0]?.id||"",tipo:"Individual",clases:10,precio:"",fechaCompra:today(),notas:""});
+    setModalBono("new");
+  }
+
+  function guardar(){
+    if(!form.alumnoId||!form.clases) return;
+    const bono={...form,id:uid(),clases:Number(form.clases),usadas:0};
+    setData({...data,bonos:[...bonos,bono]});
+    setModalBono(null);
+  }
+
+  function usarClase(id){
+    const b=bonos.find(x=>x.id===id);
+    if(!b||b.usadas>=Number(b.clases)) return;
+    setData({...data,bonos:bonos.map(x=>x.id===id?{...x,usadas:x.usadas+1}:x)});
+  }
+
+  function devolverClase(id){
+    const b=bonos.find(x=>x.id===id);
+    if(!b||b.usadas<=0) return;
+    setData({...data,bonos:bonos.map(x=>x.id===id?{...x,usadas:x.usadas-1}:x)});
+  }
+
+  function eliminar(id){
+    if(!confirm("¿Eliminar este bono?")) return;
+    setData({...data,bonos:bonos.filter(x=>x.id!==id)});
+  }
+
+  // Stats globales
+  const bonosActivos   = bonos.filter(b=>b.usadas<Number(b.clases)).length;
+  const clasesVendidas = bonos.reduce((s,b)=>s+Number(b.clases),0);
+  const clasesUsadas   = bonos.reduce((s,b)=>s+b.usadas,0);
+  const clasesRestantes= clasesVendidas-clasesUsadas;
+
+  // Filtros
+  let lista = [...bonos];
+  if(filtroAlumno!=="todos") lista=lista.filter(b=>b.alumnoId===filtroAlumno);
+  if(filtroEstado==="activos") lista=lista.filter(b=>b.usadas<Number(b.clases));
+  if(filtroEstado==="agotados") lista=lista.filter(b=>b.usadas>=Number(b.clases));
+  lista.sort((a,b)=>(a.usadas>=Number(a.clases)?1:-1)-(b.usadas>=Number(b.clases)?1:-1)||(b.fechaCompra||"").localeCompare(a.fechaCompra||""));
+
+  function nombreAlumno(id){ return alumnos.find(a=>a.id===id)?.nombre||"—"; }
+
+  return <div>
+    {/* Barra superior */}
+    <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+      <select value={filtroAlumno} onChange={e=>setFiltroAlumno(e.target.value)}
+        style={{flex:1,minWidth:160,border:"1.5px solid #d0e0d0",borderRadius:8,
+          padding:"8px 12px",fontSize:14,background:"#fff",fontFamily:"inherit",color:G.fairway,fontWeight:600}}>
+        <option value="todos">Todos los alumnos</option>
+        {alumnos.filter(a=>a.activo).map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+      </select>
+      {[["activos","✅ Activos"],["agotados","❌ Agotados"],["todos","📋 Todos"]].map(([id,label])=>(
+        <button key={id} onClick={()=>setFiltroEstado(id)}
+          style={{background:filtroEstado===id?G.fairway:"#f0f0f0",
+            color:filtroEstado===id?"#fff":"#555",border:"none",borderRadius:8,
+            padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          {label}
+        </button>
+      ))}
+      <button onClick={()=>setVistaHistorial(v=>!v)}
+        style={{background:vistaHistorial?G.fairway:"#f0f0f0",color:vistaHistorial?"#fff":"#555",
+          border:"none",borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+        🕓 Historial
+      </button>
+      <Btn color="secondary" onClick={()=>generarPDFBonos(bonos,alumnos,filtroAlumno)}>📄 PDF</Btn>
+      <Btn onClick={abrirNuevo}>🎫 Nuevo bono</Btn>
+    </div>
+
+    {/* ── VISTA HISTORIAL ── */}
+    {vistaHistorial&&(()=>{
+      const todosBonos=[...bonos].sort((a,b)=>(b.fechaCompra||"").localeCompare(a.fechaCompra||""));
+      // Agrupar por alumno
+      const porAlumno={};
+      todosBonos.forEach(b=>{
+        if(!porAlumno[b.alumnoId]) porAlumno[b.alumnoId]=[];
+        porAlumno[b.alumnoId].push(b);
+      });
+      const alumnosConBonos=Object.keys(porAlumno)
+        .map(id=>({id,nombre:nombreAlumno(id),bonos:porAlumno[id]}))
+        .filter(a=>filtroAlumno==="todos"||a.id===filtroAlumno)
+        .sort((a,b)=>a.nombre.localeCompare(b.nombre));
+      if(alumnosConBonos.length===0) return <div style={{textAlign:"center",padding:40,
+        background:G.mist,borderRadius:12,color:G.soft}}>
+        <div style={{fontSize:32,marginBottom:8}}>🕓</div>
+        <div style={{fontWeight:700}}>Sin historial de bonos</div>
+      </div>;
+      return <div style={{display:"grid",gap:14}}>
+        {alumnosConBonos.map(a=>{
+          const totalClases=a.bonos.reduce((s,b)=>s+Number(b.clases),0);
+          const totalUsadas=a.bonos.reduce((s,b)=>s+b.usadas,0);
+          const totalPrecio=a.bonos.reduce((s,b)=>s+Number(b.precio||0),0);
+          return <Card key={a.id} style={{borderLeft:`4px solid ${G.fairway}`}}>
+            {/* Cabecera alumno */}
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+              <span style={{fontSize:20}}>🏌️</span>
+              <span style={{fontWeight:800,fontSize:15,color:G.fairway,flex:1}}>{a.nombre}</span>
+              <span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:6,padding:"3px 10px",fontWeight:700}}>{a.bonos.length} bono{a.bonos.length!==1?"s":""}</span>
+              <span style={{fontSize:11,background:"#e8f5e9",color:G.grass,borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalClases} clases</span>
+              {totalPrecio>0&&<span style={{fontSize:11,background:"#fff8e1",color:"#c17900",borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalPrecio.toFixed(2)}€</span>}
+            </div>
+            {/* Línea de tiempo */}
+            <div style={{display:"flex",flexDirection:"column",gap:0}}>
+              {a.bonos.map((b,idx)=>{
+                const agotado=b.usadas>=Number(b.clases);
+                const pct=Math.round(((b.usadas||0)/Number(b.clases))*100);
+                const esUltimo=idx===a.bonos.length-1;
+                return <div key={b.id} style={{display:"flex",gap:12,alignItems:"stretch"}}>
+                  {/* Indicador línea de tiempo */}
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",width:24,flexShrink:0}}>
+                    <div style={{width:14,height:14,borderRadius:"50%",marginTop:4,flexShrink:0,
+                      background:agotado?"#aaa":idx===0?G.grass:G.sky,
+                      border:"2px solid",borderColor:agotado?"#ccc":idx===0?G.fairway:G.sky}}/>
+                    {!esUltimo&&<div style={{width:2,flex:1,background:"#ddd",margin:"2px 0"}}/>}
+                  </div>
+                  {/* Contenido */}
+                  <div style={{flex:1,paddingBottom:esUltimo?0:12}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                      <span style={{fontSize:12,fontWeight:700,color:agotado?G.soft:G.ink}}>
+                        {b.fechaCompra||"Sin fecha"} — Pack {b.clases} clases
+                      </span>
+                      <span style={{fontSize:10,background:G.mist,color:G.fairway,borderRadius:4,padding:"1px 6px"}}>{b.tipo||"Individual"}</span>
+                      {agotado
+                        ? <span style={{fontSize:10,background:"#eee",color:G.soft,borderRadius:4,padding:"1px 6px"}}>✓ Completado</span>
+                        : idx===0
+                          ? <span style={{fontSize:10,background:"#e8f5e9",color:G.grass,borderRadius:4,padding:"1px 6px",fontWeight:700}}>● Activo</span>
+                          : null}
+                    </div>
+                    {/* Mini barra */}
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{flex:1,maxWidth:180,background:"#e8e8e8",borderRadius:6,height:7,overflow:"hidden"}}>
+                        <div style={{width:`${pct}%`,height:"100%",background:agotado?"#aaa":G.grass,borderRadius:6}}/>
+                      </div>
+                      <span style={{fontSize:11,color:G.soft}}>{b.usadas||0}/{b.clases} usadas</span>
+                      {b.precio&&<span style={{fontSize:11,color:"#c17900",fontWeight:600}}>💶 {Number(b.precio).toFixed(2)}€</span>}
+                    </div>
+                    {b.notas&&<div style={{fontSize:11,color:G.soft,marginTop:3}}>📝 {b.notas}</div>}
+                  </div>
+                </div>;
+              })}
+            </div>
+            {/* Resumen pie */}
+            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #e8e8e8",
+              display:"flex",gap:16,fontSize:12,color:G.soft,flexWrap:"wrap"}}>
+              <span>📋 Total clases compradas: <b style={{color:G.ink}}>{totalClases}</b></span>
+              <span>✅ Total clases usadas: <b style={{color:G.grass}}>{totalUsadas}</b></span>
+              <span>⏳ Pendientes: <b style={{color:G.flag}}>{totalClases-totalUsadas}</b></span>
+            </div>
+          </Card>;
+        })}
+      </div>;
+    })()}
+
+    {/* ── VISTA NORMAL (lista de bonos) ── */}
+    {!vistaHistorial&&<>
+
+    {/* KPIs */}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:20}}>
+      {[
+        [bonosActivos,"Bonos activos",G.grass,"🎫"],
+        [clasesVendidas,"Clases vendidas",G.fairway,"📋"],
+        [clasesUsadas,"Clases usadas",G.sky,"✅"],
+        [clasesRestantes,"Clases restantes",clasesRestantes>0?G.flag:G.soft,"⏳"],
+      ].map(([v,l,c,ico])=>(
+        <Card key={l} style={{textAlign:"center",borderTop:`3px solid ${c}`}}>
+          <div style={{fontSize:22,marginBottom:4}}>{ico}</div>
+          <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
+          <div style={{fontSize:11,color:G.soft,marginTop:2}}>{l}</div>
+        </Card>
+      ))}
+    </div>
+
+    {/* Lista de bonos */}
+    {lista.length===0
+      ? <div style={{textAlign:"center",padding:40,background:G.mist,borderRadius:12,color:G.soft}}>
+          <div style={{fontSize:32,marginBottom:8}}>🎫</div>
+          <div style={{fontWeight:700}}>Sin bonos {filtroEstado==="activos"?"activos":"registrados"}</div>
+          <div style={{fontSize:13,marginTop:4}}>Pulsa "Nuevo bono" para crear el primero.</div>
+        </div>
+      : <div style={{display:"grid",gap:10}}>
+          {lista.map(b=>{
+            const total=Number(b.clases);
+            const usadas=b.usadas||0;
+            const restantes=total-usadas;
+            const pct=Math.round((usadas/total)*100);
+            const agotado=usadas>=total;
+            const color=agotado?G.soft:pct>=80?G.flag:G.grass;
+            return <Card key={b.id} style={{borderLeft:`4px solid ${agotado?"#ccc":G.flag}`,opacity:agotado?0.7:1}}>
+              <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:180}}>
+                  {/* Alumno + tipo */}
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:22}}>🎫</span>
+                    <span style={{fontWeight:800,fontSize:15,color:G.ink}}>{nombreAlumno(b.alumnoId)}</span>
+                    <span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:6,padding:"2px 8px",fontWeight:600}}>{b.tipo||"Individual"}</span>
+                    {agotado&&<span style={{fontSize:11,background:"#eee",color:G.soft,borderRadius:6,padding:"2px 8px",fontWeight:600}}>Agotado</span>}
+                  </div>
+                  {/* Barra de progreso */}
+                  <div style={{marginBottom:6}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                      <span style={{color:G.soft}}>{usadas} de {total} clases usadas</span>
+                      <span style={{fontWeight:700,color}}>{restantes} restantes</span>
+                    </div>
+                    <div style={{background:"#e8e8e8",borderRadius:8,height:12,overflow:"hidden"}}>
+                      <div style={{width:`${pct}%`,height:"100%",
+                        background:agotado?"#aaa":pct>=80?G.flag:G.grass,
+                        borderRadius:8,transition:"width .3s"}}/>
+                    </div>
+                    {/* Indicadores visuales por clase */}
+                    <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+                      {Array.from({length:total},(_,i)=>(
+                        <div key={i} style={{width:18,height:18,borderRadius:4,
+                          background:i<usadas?"#1a5c2a":"#e0f0e0",
+                          border:"1px solid",borderColor:i<usadas?"#0f3518":"#a0c8a0",
+                          display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>
+                          {i<usadas?"✓":""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Info adicional */}
+                  <div style={{fontSize:11,color:G.soft,display:"flex",gap:12,flexWrap:"wrap"}}>
+                    {b.fechaCompra&&<span>📅 Compra: {b.fechaCompra}</span>}
+                    {b.precio&&<span>💶 {Number(b.precio).toFixed(2)}€</span>}
+                    {b.notas&&<span>📝 {b.notas}</span>}
+                  </div>
+                </div>
+                {/* Acciones */}
+                <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+                  <Btn small color="sky" onClick={()=>usarClase(b.id)} disabled={agotado}
+                    style={{opacity:agotado?0.4:1,cursor:agotado?"not-allowed":"pointer"}}>
+                    ✔ Usar clase
+                  </Btn>
+                  {usadas>0&&<Btn small color="secondary" onClick={()=>devolverClase(b.id)}>
+                    ↩ Devolver
+                  </Btn>}
+                  <Btn small color="danger" onClick={()=>eliminar(b.id)}>🗑</Btn>
+                </div>
+              </div>
+            </Card>;
+          })}
+        </div>
+    }</>}
+
+    {/* Modal nuevo bono */}
+    {modalBono==="new"&&<Modal title="🎫 Nuevo bono de clases" onClose={()=>setModalBono(null)}>
+      <Field label="Alumno *">
+        <select value={form.alumnoId} onChange={e=>setForm(f=>({...f,alumnoId:e.target.value}))}
+          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"9px 12px",
+            fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+          {alumnos.filter(a=>a.activo).map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
+        </select>
+      </Field>
+      <Field label="Pack de clases *">
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {PACKS.map(p=>(
+            <button key={p.n} type="button" onClick={()=>setForm(f=>({...f,clases:p.n}))}
+              style={{flex:1,minWidth:80,background:form.clases===p.n?p.color:"#f0f0f0",
+                color:form.clases===p.n?"#fff":"#555",border:"none",borderRadius:8,
+                padding:"10px 6px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              {p.label}
+            </button>
+          ))}
+          <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:100}}>
+            <span style={{fontSize:12,color:G.soft,whiteSpace:"nowrap"}}>Personalizado:</span>
+            <Input type="number" min="1" max="50" value={form.clases}
+              onChange={v=>setForm(f=>({...f,clases:Number(v)||1}))}
+              style={{width:70}}/>
+          </div>
+        </div>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Field label="Tipo">
+          <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              fontSize:13,background:"#fff",fontFamily:"inherit"}}>
+            {["Individual","Grupal","Intensivo","Pollitos","Escuela adultos"].map(t=>(
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Fecha compra">
+          <Input type="date" value={form.fechaCompra} onChange={v=>setForm(f=>({...f,fechaCompra:v}))}/>
+        </Field>
+      </div>
+      <Field label="Precio total (€)">
+        <Input type="number" min="0" step="0.01" value={form.precio}
+          onChange={v=>setForm(f=>({...f,precio:v}))} placeholder="Ej: 150"/>
+      </Field>
+      <Field label="Notas">
+        <Input value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))}
+          placeholder="Observaciones opcionales..."/>
+      </Field>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <Btn color="secondary" onClick={()=>setModalBono(null)}>Cancelar</Btn>
+        <Btn onClick={guardar} disabled={!form.alumnoId||!form.clases}>🎫 Crear bono</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TOAST: NUEVA INSCRIPCIÓN EN TIEMPO REAL
+// ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// SISTEMA DE NOTIFICACIONES — Banner + Modal
+// Banner: avisos leves (mensajes, archivos, estadísticas)
+// Modal:  avisos importantes (clase nueva, informe, inscripción)
+// ═══════════════════════════════════════════════════════════════════
+
+const NOTIF_COLORS = {
+  clase:       {bg:"linear-gradient(135deg,#1a5c2a,#2e7d44)", icon:"📅"},
+  informe:     {bg:"linear-gradient(135deg,#7b5ea7,#9b7ec7)", icon:"📑"},
+  mensaje:     {bg:"linear-gradient(135deg,#2980b9,#3498db)", icon:"✉️"},
+  archivo:     {bg:"linear-gradient(135deg,#c8a84b,#e0c060)", icon:"📁"},
+  estadistica: {bg:"linear-gradient(135deg,#e67e22,#f39c12)", icon:"📊"},
+  inscripcion: {bg:"linear-gradient(135deg,#1a5c2a,#2e7d44)", icon:"🔔"},
+};
+
+// ── Banner (desaparece solo en 6s) ───────────────────────────────
+function NotifBanner({notif, onClose, onClick}){
+  const [saliendo,setSaliendo]=useState(false);
+  const timer=useRef(null);
+  useEffect(()=>{
+    timer.current=setTimeout(()=>{ setSaliendo(true); setTimeout(onClose,400); },6000);
+    return ()=>clearTimeout(timer.current);
+  },[]);
+  function cerrar(e){ e?.stopPropagation(); setSaliendo(true); setTimeout(onClose,400); }
+  const col=NOTIF_COLORS[notif.tipo]||NOTIF_COLORS.mensaje;
+  return <div onClick={()=>{ onClick?.(); cerrar(); }}
+    style={{position:"fixed",top:16,right:16,zIndex:99999,width:310,
+      background:col.bg,color:"#fff",borderRadius:14,
+      boxShadow:"0 6px 24px rgba(0,0,0,.3)",cursor:"pointer",overflow:"hidden",
+      transition:"all .4s cubic-bezier(.34,1.56,.64,1)",
+      transform:saliendo?"translateY(-120%) scale(.95)":"translateY(0) scale(1)",
+      opacity:saliendo?0:1}}>
+    <div style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
+      <div style={{fontSize:28,flexShrink:0}}>{col.icon}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:800,fontSize:14,lineHeight:1.2}}>{notif.titulo}</div>
+        <div style={{fontSize:12,opacity:.9,marginTop:2,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{notif.cuerpo}</div>
+      </div>
+      <button onClick={cerrar} style={{background:"rgba(255,255,255,.2)",border:"none",
+        color:"#fff",borderRadius:"50%",width:22,height:22,cursor:"pointer",
+        fontSize:12,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+    </div>
+    <div style={{height:3,background:"rgba(255,255,255,.25)"}}>
+      <div style={{height:"100%",background:"rgba(255,255,255,.7)",
+        animation:"shrink 6s linear forwards",
+        "@keyframes shrink":{from:{width:"100%"},to:{width:"0%"}}}}/>
+    </div>
+    <style>{`@keyframes shrink{from{width:100%}to{width:0%}}`}</style>
+  </div>;
+}
+
+// ── Modal importante (hay que cerrar manualmente) ─────────────────
+function NotifModal({notif, onClose, onClick}){
+  const col=NOTIF_COLORS[notif.tipo]||NOTIF_COLORS.mensaje;
+  return <div style={{position:"fixed",inset:0,zIndex:99998,
+    background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",
+    justifyContent:"center",padding:20,animation:"fadeIn .3s ease"}}
+    onClick={onClose}>
+    <style>{`@keyframes fadeIn{from{opacity:0}to{opacity:1}}@keyframes popIn{from{transform:scale(.85);opacity:0}to{transform:scale(1);opacity:1}}`}</style>
+    <div onClick={e=>e.stopPropagation()}
+      style={{background:"#fff",borderRadius:20,overflow:"hidden",
+        maxWidth:360,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
+        animation:"popIn .3s cubic-bezier(.34,1.56,.64,1)"}}>
+      {/* Cabecera */}
+      <div style={{background:col.bg,padding:"24px 20px",textAlign:"center",color:"#fff"}}>
+        <div style={{fontSize:52,marginBottom:8}}>{col.icon}</div>
+        <div style={{fontWeight:800,fontSize:18,lineHeight:1.3}}>{notif.titulo}</div>
+      </div>
+      {/* Cuerpo */}
+      <div style={{padding:"20px 22px"}}>
+        <p style={{margin:"0 0 16px",fontSize:14,color:"#333",lineHeight:1.6,textAlign:"center"}}>{notif.cuerpo}</p>
+        {notif.detalle&&<div style={{background:"#f5f5f5",borderRadius:10,padding:"10px 14px",
+          fontSize:13,color:"#555",marginBottom:16}}>{notif.detalle}</div>}
+        <div style={{display:"flex",gap:10}}>
+          {onClick&&<button onClick={()=>{onClick();onClose();}}
+            style={{flex:1,background:col.bg,color:"#fff",border:"none",borderRadius:10,
+              padding:"12px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+            Ver ahora
+          </button>}
+          <button onClick={onClose}
+            style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",borderRadius:10,
+              padding:"12px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            {onClick?"Después":"Cerrar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Gestor central de notificaciones ─────────────────────────────
+function useNotifManager(){
+  const [banners,setBanners]=useState([]);
+  const [modales,setModales]=useState([]);
+
+  function mostrarBanner(tipo, titulo, cuerpo, onClick){
+    const id=uid();
+    setBanners(b=>[...b,{id,tipo,titulo,cuerpo,onClick}]);
+    return id;
+  }
+  function mostrarModal(tipo, titulo, cuerpo, detalle, onClick){
+    const id=uid();
+    setModales(m=>[...m,{id,tipo,titulo,cuerpo,detalle,onClick}]);
+    return id;
+  }
+  function cerrarBanner(id){ setBanners(b=>b.filter(x=>x.id!==id)); }
+  function cerrarModal(id){ setModales(m=>m.filter(x=>x.id!==id)); }
+
+  const UI = <>
+    {banners.map((n,i)=>(
+      <div key={n.id} style={{position:"fixed",top:16+(i*80),right:16,zIndex:99999+i}}>
+        <NotifBanner notif={n} onClose={()=>cerrarBanner(n.id)} onClick={n.onClick}/>
+      </div>
+    ))}
+    {modales.slice(0,1).map(n=>(
+      <NotifModal key={n.id} notif={n} onClose={()=>cerrarModal(n.id)} onClick={n.onClick}/>
+    ))}
+  </>;
+
+  return {mostrarBanner, mostrarModal, UI};
+}
+
+function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
+  const [visible,setVisible]=useState(false);
+  const [saliendo,setSaliendo]=useState(false);
+  const prevCount=useRef(pendientesCount);
+  const timerRef=useRef(null);
+
+  useEffect(()=>{
+    if(pendientesCount>prevCount.current){
+      setVisible(true);
+      setSaliendo(false);
+      clearTimeout(timerRef.current);
+      timerRef.current=setTimeout(()=>{
+        setSaliendo(true);
+        setTimeout(()=>setVisible(false),400);
+      },7000);
+    }
+    prevCount.current=pendientesCount;
+    return ()=>clearTimeout(timerRef.current);
+  },[pendientesCount]);
+
+  function cerrar(e){
+    e&&e.stopPropagation();
+    setSaliendo(true);
+    setTimeout(()=>setVisible(false),400);
+  }
+
+  if(!visible) return null;
+
+  const nombre=ultimaNotif?.nombre||"Nuevo alumno";
+  const tipo=ultimaNotif?.tipoEscuela==="infantil"?"🧒 Escuela Infantil":"🏌️ Escuela Adultos";
+
+  return <div onClick={()=>{onVerAhora();cerrar();}}
+    style={{position:"fixed",bottom:24,right:24,zIndex:99999,
+      width:320,background:"linear-gradient(135deg,#1a5c2a,#2e7d44)",
+      color:"white",borderRadius:16,boxShadow:"0 8px 32px rgba(0,0,0,.35)",
+      cursor:"pointer",overflow:"hidden",
+      transition:"all .4s cubic-bezier(.34,1.56,.64,1)",
+      transform:saliendo?"translateY(120%) scale(.95)":"translateY(0) scale(1)",
+      opacity:saliendo?0:1}}>
+    <div style={{background:"rgba(255,255,255,.1)",padding:"12px 16px",
+      display:"flex",alignItems:"center",gap:12}}>
+      <div style={{fontSize:36,flexShrink:0,animation:"bounce .6s ease infinite alternate"}}>
+        🔔
+      </div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:800,fontSize:15,lineHeight:1.2}}>
+          ¡Nueva inscripción!
+        </div>
+        <div style={{fontSize:13,opacity:.9,marginTop:2,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {nombre}
+        </div>
+        <div style={{fontSize:11,opacity:.7,marginTop:2}}>{tipo}</div>
+      </div>
+      <button onClick={cerrar}
+        style={{background:"rgba(255,255,255,.2)",border:"none",color:"white",
+          borderRadius:50,width:24,height:24,cursor:"pointer",fontSize:14,
+          flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        ✕
+      </button>
+    </div>
+    <div style={{background:"rgba(255,255,255,.15)",padding:"8px 16px",
+      fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+      <span>Pulsa para revisar · {pendientesCount} pendiente{pendientesCount!==1?"s":""}</span>
+      <span style={{marginLeft:"auto"}}>→</span>
+    </div>
+    <style>{`@keyframes bounce{from{transform:rotate(-10deg)}to{transform:rotate(10deg)}}`}</style>
+  </div>;
+}
+
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
   const [tab,setTab]=useState("calendario");
+  const [verSinClase,setVerSinClase]=useState(false);
+  const [msgAbierto,setMsgAbierto]=useState(null);
+  const [msgTexto,setMsgTexto]=useState("");
+  const [msgAsunto,setMsgAsunto]=useState("Recordatorio de clase");
+  const [msgEnviado,setMsgEnviado]=useState({});
+  const {mostrarBanner,mostrarModal,UI:NotifUI} = useNotifManager();
+
+  // ── Detección de cambios para notificaciones al profesor ──────────
+  const prevClases   = useRef((data.clases||[]).length);
+  const prevMensajes = useRef((data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length);
+  const prevStats    = useRef((data.notificacionesAlumno||[]).length);
+  const prevArchivos = useRef((data.archivosProfesor||[]).length);
+  const prevInformes = useRef((data.informes||[]).filter(i=>i.publicado).length);
+
+  useEffect(()=>{
+    const clases=(data.clases||[]).length;
+    const msgs=(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length;
+    const stats=(data.notificacionesAlumno||[]).length;
+    const archivos=(data.archivosProfesor||[]).length;
+    const informes=(data.informes||[]).filter(i=>i.publicado).length;
+
+    // Nueva clase → Modal
+    if(clases>prevClases.current){
+      const ultima=(data.clases||[]).at(-1);
+      const alumno=(data.alumnos||[]).find(a=>a.id===ultima?.alumnoId);
+      mostrarModal("clase","¡Nueva clase programada!",
+        `${alumno?.nombre||"Un alumno"} tiene una clase nueva.`,
+        `📅 ${fmtDate(ultima?.fecha)} · ${ultima?.horaInicio||ultima?.hora||""} · ${ultima?.zona||""}`,
+        ()=>setTab("clases"));
+    }
+    // Nuevo mensaje → Banner
+    if(msgs>prevMensajes.current){
+      mostrarBanner("mensaje","Nuevo mensaje","Un alumno te ha escrito",()=>setTab("mensajes"));
+    }
+    // Estadísticas enviadas → Banner
+    if(stats>prevStats.current){
+      const ultima=(data.notificacionesAlumno||[]).at(-1);
+      mostrarBanner("estadistica","Estadísticas recibidas",ultima?.mensaje||"Un alumno ha enviado sus estadísticas",()=>setTab("estadisticas"));
+    }
+    // Nuevo informe publicado → Modal
+    if(informes>prevInformes.current){
+      mostrarModal("informe","Informe publicado","Se ha publicado un nuevo informe para un alumno.","",()=>setTab("informes"));
+    }
+
+    prevClases.current=clases;
+    prevMensajes.current=msgs;
+    prevStats.current=stats;
+    prevArchivos.current=archivos;
+    prevInformes.current=informes;
+  },[data]);
+
 
   // Filtrar datos según el profesor activo
   // null = profesor principal (ve todo lo sin asignar + sus alumnos)
@@ -12251,6 +15100,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
   const nombrePanel = profesorNombre ? profesorNombre+" · Panel Profesor" : "Panel del Profesor";
 
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand,color:G.ink}}>
+    {NotifUI}
     <div style={{background:G.fairway,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:920,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -12265,14 +15115,24 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>{nombrePanel}</div>
             </div>
           </div>
-          <NotifBell notifs={notifs} pendientesCount={pendientesCount}/>
+          <NotifBell 
+            notifs={[...notifs,...(data.notificacionesAlumno||[]).filter(n=>!n.leida)]} 
+            pendientesCount={pendientesCount} 
+            mensajesNoLeidos={(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length}/>
           <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
-          {ADMIN_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
-            style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
-            {t.icon} {t.label}{t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
-          </button>)}
+          {ADMIN_TABS.map(t=>{
+            const mensajesNoLeidos = t.id==="mensajes" ? (data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length : 0;
+            const bonosAgotando = t.id==="bonos" ? (data.bonos||[]).filter(b=>{const r=Number(b.clases)-b.usadas;return r>0&&r<=2;}).length : 0;
+            return <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
+              {t.icon} {t.label}
+              {t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
+              {t.id==="mensajes"&&mensajesNoLeidos>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{mensajesNoLeidos}</span>}
+              {t.id==="bonos"&&bonosAgotando>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#e67e22",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{bonosAgotando}</span>}
+            </button>;
+          })}
         </div>
       </div>
     </div>
@@ -12294,6 +15154,123 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         <div style={{fontSize:20}}>→</div>
         <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}`}</style>
       </div>}
+
+      {/* ── Aviso alumnos sin clase reciente ── */}
+      {(()=>{
+        const hoy=today();
+        const hace30=new Date(hoy); hace30.setDate(hace30.getDate()-30);
+        const lim=hace30.toISOString().slice(0,10);
+        const clases=data.clases||[];
+        const sinClase=(data.alumnos||[]).filter(a=>a.activo).map(a=>{
+          const ult=clases.filter(c=>c.alumnoId===a.id&&c.asistio)
+            .map(c=>c.fecha).sort().at(-1)||null;
+          return {...a,ultimaClase:ult};
+        }).filter(a=>!a.ultimaClase||a.ultimaClase<lim)
+          .sort((a,b)=>(a.ultimaClase||"0000")<(b.ultimaClase||"0000")?-1:1);
+        if(sinClase.length===0) return null;
+        return <div style={{borderRadius:14,border:"2px solid #e67e22",background:"#fffbf5",
+          marginBottom:18,overflow:"hidden"}}>
+          <div onClick={()=>setVerSinClase(v=>!v)}
+            style={{padding:"12px 18px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",
+              background:"#fef4e4"}}>
+            <span style={{fontSize:24}}>⚠️</span>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:800,fontSize:14,color:"#b7560a"}}>
+                {sinClase.length} alumno{sinClase.length!==1?"s":""} sin clase en más de 30 días
+              </div>
+              <div style={{fontSize:12,color:"#c27a2a",marginTop:1}}>
+                Pulsa para ver el listado y hacer seguimiento
+              </div>
+            </div>
+            <span style={{fontSize:18,color:"#c27a2a",transition:"transform .2s",
+              transform:verSinClase?"rotate(90deg)":"rotate(0deg)"}}>›</span>
+          </div>
+          {verSinClase&&<div style={{padding:"10px 18px 14px",display:"grid",gap:6}}>
+            {sinClase.map(a=>{
+              const dias=a.ultimaClase
+                ? Math.round((new Date(hoy)-new Date(a.ultimaClase))/(1000*60*60*24))
+                : null;
+              const abierto=msgAbierto===a.id;
+              const yaEnviado=msgEnviado[a.id];
+              function enviarMsgRapido(){
+                if(!msgTexto.trim()) return;
+                const fecha=new Date().toISOString();
+                const nuevo={id:uid(),de:"profesor",para:a.id,
+                  asunto:msgAsunto||"Recordatorio de clase",
+                  cuerpo:msgTexto,tipo:"mensaje",fecha,leido:false};
+                addDoc(collection(db,"mensajes"),{...nuevo,timestamp:serverTimestamp()}).catch(e=>console.warn(e));
+                setData({...data,mensajes:[...(data.mensajes||[]),nuevo]});
+                setMsgEnviado(prev=>({...prev,[a.id]:true}));
+                setMsgAbierto(null);
+                setMsgTexto("");
+                setMsgAsunto("Recordatorio de clase");
+              }
+              return <div key={a.id}
+                style={{borderRadius:10,border:"1px solid #f5dfc0",overflow:"hidden",background:"white"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px"}}>
+                  <span style={{fontSize:20}}>👤</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:13,color:"#333"}}>{a.nombre}</div>
+                    <div style={{fontSize:11,color:"#888"}}>
+                      {a.ultimaClase
+                        ? `Última clase: ${a.ultimaClase} (hace ${dias} días)`
+                        : "Sin clases registradas"}
+                    </div>
+                  </div>
+                  {a.telefono&&<a href={`tel:${a.telefono}`}
+                    style={{fontSize:12,color:G.fairway,fontWeight:600,textDecoration:"none",
+                      background:"#e8f5eb",borderRadius:6,padding:"4px 8px"}}>
+                    📞 Llamar
+                  </a>}
+                  <button onClick={()=>{setMsgAbierto(abierto?null:a.id);setMsgTexto("");setMsgAsunto("Recordatorio de clase");}}
+                    style={{fontSize:12,background:yaEnviado?"#e8f5eb":abierto?"#f0f0f0":"#3b82f6",
+                      color:yaEnviado?G.grass:abierto?"#555":"white",border:"none",
+                      borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
+                    {yaEnviado?"✓ Enviado":"✉️ Mensaje"}
+                  </button>
+                  <button onClick={()=>setTab("clases")}
+                    style={{fontSize:12,background:G.fairway,color:"white",border:"none",
+                      borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
+                    + Clase
+                  </button>
+                </div>
+                {abierto&&<div style={{padding:"10px 14px 12px",background:"#f8fbff",
+                  borderTop:"1px solid #e0ecff"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#3b82f6",marginBottom:6}}>
+                    ✉️ Mensaje rápido para {a.nombre}
+                  </div>
+                  <input value={msgAsunto} onChange={e=>setMsgAsunto(e.target.value)}
+                    placeholder="Asunto..."
+                    style={{width:"100%",border:"1px solid #d0e0ff",borderRadius:7,
+                      padding:"6px 10px",fontSize:13,marginBottom:6,fontFamily:"inherit",
+                      boxSizing:"border-box"}}/>
+                  <textarea value={msgTexto} onChange={e=>setMsgTexto(e.target.value)}
+                    placeholder={`Escribe aquí el mensaje para ${a.nombre}...`}
+                    rows={3}
+                    style={{width:"100%",border:"1px solid #d0e0ff",borderRadius:7,
+                      padding:"6px 10px",fontSize:13,resize:"vertical",fontFamily:"inherit",
+                      boxSizing:"border-box"}}/>
+                  <div style={{display:"flex",gap:8,marginTop:8,justifyContent:"flex-end"}}>
+                    <button onClick={()=>setMsgAbierto(null)}
+                      style={{background:"#f0f0f0",border:"none",borderRadius:6,
+                        padding:"6px 14px",fontSize:12,cursor:"pointer"}}>
+                      Cancelar
+                    </button>
+                    <button onClick={enviarMsgRapido}
+                      disabled={!msgTexto.trim()}
+                      style={{background:msgTexto.trim()?"#3b82f6":"#aac4f0",color:"white",
+                        border:"none",borderRadius:6,padding:"6px 16px",fontSize:12,
+                        fontWeight:700,cursor:msgTexto.trim()?"pointer":"default"}}>
+                      📤 Enviar
+                    </button>
+                  </div>
+                </div>}
+              </div>;
+            })}
+          </div>}
+        </div>;
+      })()}
+
       <h2 style={{margin:"0 0 18px",color:G.fairway,fontSize:19,fontWeight:800}}>
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
@@ -12310,8 +15287,13 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="archivos"&&<ModArchivos data={data} setData={setData}/>}
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
+      {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
+    <ToastNuevaInscripcion
+      pendientesCount={pendientesCount}
+      ultimaNotif={(notifs||[]).find(n=>n.tipo==="nuevo_registro"||n.tipo==="nuevo_alumno_adulto")||null}
+      onVerAhora={()=>setTab("pendientes")}/>
   </div>;
 }
 
@@ -12578,15 +15560,28 @@ export default function App(){
 
   // ── Conectar Firebase al arrancar ──
   useEffect(()=>{
+    // Timeout de seguridad: si Firebase no responde en 1.5s, arrancar igualmente
+    let cancelled = false;
+    let snapshotRecibido = false; // evita que el getDoc inicial pise datos más nuevos
+    let unsub=()=>{}, unsubN=()=>{}, unsubP=()=>{};
+    const fallbackTimer = setTimeout(()=>{ if(!cancelled) setFbReady(true); }, 1500);
+
     signInAnonymously(auth)
       .then(()=>{
+        if(cancelled) return;
+        // Mostrar la app en cuanto hay sesión; los datos llegan por onSnapshot
+        clearTimeout(fallbackTimer);
+        setFbReady(true);
+        // Cargar datos iniciales en segundo plano (no bloquea el arranque)
         cargarDatosFirebase().then(fbData=>{
-          if(fbData){ setDataRaw(fbData); saveData(fbData); }
-          setFbReady(true);
+          // Si onSnapshot ya entregó datos, no sobrescribir con la lectura inicial
+          if(cancelled || snapshotRecibido || !fbData) return;
+          setDataRaw(fbData); saveData(fbData);
         });
         // Escuchar cambios en tiempo real
-        const unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
+        unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
           if(snap.exists()){
+            snapshotRecibido = true;
             const fbData = { ...makeDefaultData(), ...snap.data() };
             setDataRaw(prev=>{
               // Merge fotos locales (no se guardan en Firebase por tamaño)
@@ -12599,20 +15594,21 @@ export default function App(){
           }
         }, err=>{ console.warn("Snapshot error:", err); setFbReady(true); });
         // Escuchar notificaciones
-        const unsubN = onSnapshot(
+        unsubN = onSnapshot(
           query(collection(db,"notificaciones"), orderBy("timestamp","desc")),
           snap=>setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))),
           err=>console.warn("Notif error:", err)
         );
         // Escuchar registros pendientes para el contador
-        const unsubP = onSnapshot(
+        unsubP = onSnapshot(
           collection(db,"registros_pendientes"),
           snap=>setPendientesCount(snap.docs.length),
           err=>console.warn("Pendientes error:", err)
         );
-        return ()=>{ unsub(); unsubN(); unsubP(); };
       })
-      .catch(err=>{ console.warn("Firebase error:", err); setFbReady(true); });
+      .catch(err=>{ console.warn("Firebase error:", err); clearTimeout(fallbackTimer); if(!cancelled) setFbReady(true); });
+
+    return ()=>{ cancelled=true; clearTimeout(fallbackTimer); unsub(); unsubN(); unsubP(); };
   },[]);
 
   function setData(d){
