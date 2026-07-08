@@ -15654,7 +15654,7 @@ export default function App(){
       // 1) Superadmin por email conocido
       if(ADMIN_EMAILS_AUTO.includes(emailLower)){
         const nuevo = { role:"superadmin", email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
-        await setDoc(doc(db,"usuarios",u.uid), nuevo);
+        await setDoc(doc(db,"Usuarios",u.uid), nuevo);
         return nuevo;
       }
 
@@ -15667,7 +15667,7 @@ export default function App(){
       const alumno = (d.alumnos||[]).find(a => a.activo && (a.email||"").toLowerCase()===emailLower);
       if(alumno){
         const nuevo = { role:"alumno", alumnoId:alumno.id, alumnoNombre:alumno.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
-        await setDoc(doc(db,"usuarios",u.uid), nuevo);
+        await setDoc(doc(db,"Usuarios",u.uid), nuevo);
         return nuevo;
       }
 
@@ -15675,7 +15675,7 @@ export default function App(){
       const profesor = (d.profesores||[]).find(p => p.activo && (p.email||"").toLowerCase()===emailLower);
       if(profesor){
         const nuevo = { role:"profesor", profesorId:profesor.id, profesorNombre:profesor.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
-        await setDoc(doc(db,"usuarios",u.uid), nuevo);
+        await setDoc(doc(db,"Usuarios",u.uid), nuevo);
         return nuevo;
       }
 
@@ -15685,7 +15685,7 @@ export default function App(){
         const tutor = (al.tutores||[]).find(t => (t.email||"").toLowerCase()===emailLower);
         if(tutor){
           const nuevo = { role:"tutor", alumnoId:al.id, tutorNombre:tutor.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
-          await setDoc(doc(db,"usuarios",u.uid), nuevo);
+          await setDoc(doc(db,"Usuarios",u.uid), nuevo);
           return nuevo;
         }
       }
@@ -15703,7 +15703,7 @@ export default function App(){
       setAuthUser(u||null);
       if(u){
         try{
-          const snap = await getDoc(doc(db,"usuarios",u.uid));
+          const snap = await getDoc(doc(db,"Usuarios",u.uid));
           if(snap.exists()){
             setUsuarioDoc(snap.data());
           } else {
