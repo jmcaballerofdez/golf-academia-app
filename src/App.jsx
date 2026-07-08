@@ -15482,7 +15482,7 @@ function ModProfesores({data,setData}){
 // ═══════════════════════════════════════════════════════════════════
 // SUPERADMIN SHELL
 // ═══════════════════════════════════════════════════════════════════
-function SuperAdminShell({data,setData,onLogout}){
+function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
   const [tab,setTab]=useState("profesores");
   const [verComo,setVerComo]=useState(null); // {profesorId, profesorNombre} o null
 
@@ -15499,6 +15499,7 @@ function SuperAdminShell({data,setData,onLogout}){
         </button>
       </div>
       <AdminShell data={data} setData={setData} onLogout={onLogout}
+        notifs={notifs} pendientesCount={pendientesCount}
         profesorId={verComo.profesorId} profesorNombre={verComo.profesorNombre}
         esSuperAdmin={true}/>
     </div>;
@@ -15651,9 +15652,11 @@ export default function App(){
       const emailLower = (u.email||"").toLowerCase();
       if(!emailLower) return null;
 
-      // 1) Profesor Principal (admin) por email conocido — panel completo
+      // 1) Superadmin por email conocido — panel de gestión general.
+      // Desde ahí, el botón "Ver como: Principal" da acceso al panel
+      // completo del día a día sin perder el rol de superadmin.
       if(ADMIN_EMAILS_AUTO.includes(emailLower)){
-        const nuevo = { role:"admin", profesorId:null, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        const nuevo = { role:"superadmin", email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
         await setDoc(doc(db,"Usuarios",u.uid), nuevo);
         return nuevo;
       }
