@@ -15638,6 +15638,64 @@ export default function App(){
     return ()=>{ cancelled=true; clearTimeout(fallbackTimer); unsub(); unsubN(); unsubP(); };
   },[]);
 
+  // ── Auto-vinculación de cuentas Firebase Auth por email ─────────
+  // Primera vez que alguien entra: busca su email entre superadmin,
+  // alumnos, tutores y profesores ya existentes y crea usuarios/{uid}
+  // automáticamente. Si no hay coincidencia, se queda sin rol (pantalla
+  // de aviso) hasta que se le asigne a mano.
+  const ADMIN_EMAILS_AUTO = ["jmcaballerofdez@gmail.com"];
+
+  async function intentarAutoVincular(u){
+    try{
+      const emailLower = (u.email||"").toLowerCase();
+      if(!emailLower) return null;
+
+      // 1) Superadmin por email conocido
+      if(ADMIN_EMAILS_AUTO.includes(emailLower)){
+        const nuevo = { role:"superadmin", email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        await setDoc(doc(db,"usuarios",u.uid), nuevo);
+        return nuevo;
+      }
+
+      // 2) Buscar en el documento de datos de la academia
+      const snap = await getDoc(doc(db,"academia","datos"));
+      if(!snap.exists()) return null;
+      const d = snap.data();
+
+      // Alumno con ese email
+      const alumno = (d.alumnos||[]).find(a => a.activo && (a.email||"").toLowerCase()===emailLower);
+      if(alumno){
+        const nuevo = { role:"alumno", alumnoId:alumno.id, alumnoNombre:alumno.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        await setDoc(doc(db,"usuarios",u.uid), nuevo);
+        return nuevo;
+      }
+
+      // Profesor con ese email
+      const profesor = (d.profesores||[]).find(p => p.activo && (p.email||"").toLowerCase()===emailLower);
+      if(profesor){
+        const nuevo = { role:"profesor", profesorId:profesor.id, profesorNombre:profesor.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        await setDoc(doc(db,"usuarios",u.uid), nuevo);
+        return nuevo;
+      }
+
+      // Tutor con ese email (dentro de los alumnos)
+      for(const al of (d.alumnos||[])){
+        if(!al.activo) continue;
+        const tutor = (al.tutores||[]).find(t => (t.email||"").toLowerCase()===emailLower);
+        if(tutor){
+          const nuevo = { role:"tutor", alumnoId:al.id, tutorNombre:tutor.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+          await setDoc(doc(db,"usuarios",u.uid), nuevo);
+          return nuevo;
+        }
+      }
+
+      return null; // sin coincidencia — se queda pendiente de asignación manual
+    }catch(e){
+      console.warn("Auto-vinculación error:", e);
+      return null;
+    }
+  }
+
   // ── Sesión de Firebase Auth (compartida con Golf B Máster) ──────
   useEffect(()=>{
     const unsubAuth = onAuthStateChanged(auth, async (u)=>{
@@ -15645,7 +15703,12 @@ export default function App(){
       if(u){
         try{
           const snap = await getDoc(doc(db,"usuarios",u.uid));
-          setUsuarioDoc(snap.exists()?snap.data():null);
+          if(snap.exists()){
+            setUsuarioDoc(snap.data());
+          } else {
+            const vinculado = await intentarAutoVincular(u);
+            setUsuarioDoc(vinculado);
+          }
         }catch(e){ console.warn("usuarios lookup error:", e); setUsuarioDoc(null); }
       } else {
         setUsuarioDoc(null);
@@ -15705,8 +15768,12 @@ export default function App(){
   if(!usuarioDoc || !usuarioDoc.role) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",
       background:"#F8FAF9",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
-      <span style={{fontSize:15,color:"#5C6C62",maxWidth:320}}>
-        Tu cuenta todavía no tiene un rol asignado en la Academia. Contacta con tu profesor.
+      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:140,objectFit:"contain"}}/>
+      <span style={{fontSize:15,color:"#5C6C62",maxWidth:340,lineHeight:1.5}}>
+        No hemos encontrado ningún alumno, tutor o profesor registrado con el email <b>{authUser?.email}</b>.
+      </span>
+      <span style={{fontSize:13,color:"#8A9A93",maxWidth:340,lineHeight:1.5}}>
+        Comprueba que tu profesor te ha dado de alta con ese mismo email exacto, o contacta con él para que lo revise.
       </span>
       <button onClick={onLogout} style={{background:"#0C2A1C",color:"#fff",border:"none",
         borderRadius:8,padding:"10px 20px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
