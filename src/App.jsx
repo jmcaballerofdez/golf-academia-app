@@ -15051,6 +15051,31 @@ function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
   </div>;
 }
 
+// ─── Selector de apps Golf B (fila de iconos, siempre visible) ────────
+const GOLFB_APPS = [
+  { id:"academia", nombre:"Academia", color:"#B03A2E", url:"https://jmcaballerofdez.github.io/golf-academia-app/", emoji:"🎓" },
+  { id:"mantenimiento", nombre:"Mantenimiento", color:"#1A5C2A", url:"https://jmcaballerofdez.github.io/golf-mantenimiento-app/", emoji:"🔧" },
+  { id:"proshop", nombre:"Proshop", color:"#2E6DA4", url:"https://jmcaballerofdez.github.io/golf-proshop-app/", emoji:"🛒" },
+  { id:"finanzas", nombre:"Finanzas", color:"#8E969E", url:"https://jmcaballerofdez.github.io/golf-finanzas-app/", emoji:"💰" },
+  { id:"master", nombre:"Golf B Máster", color:"#C9A227", url:"https://jmcaballerofdez.github.io/golf-master-app/", emoji:"🏠" },
+];
+function AppSwitcher({ actual }){
+  return <div style={{display:"flex",alignItems:"center",gap:6}}>
+    {GOLFB_APPS.map(app=>{
+      const esActual = app.id===actual;
+      return <a key={app.id} href={esActual?undefined:app.url} title={app.nombre}
+        onClick={e=>{ if(esActual) e.preventDefault(); }}
+        style={{
+          width:26,height:26,borderRadius:999,background:app.color,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          fontSize:12,flexShrink:0,textDecoration:"none",cursor:esActual?"default":"pointer",
+          opacity:esActual?1:0.65,
+          boxShadow:esActual?"0 0 0 2px rgba(255,255,255,.7)":"none",
+        }}>{app.emoji}</a>;
+    })}
+  </div>;
+}
+
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
   const [tab,setTab]=useState("calendario");
   const [verSinClase,setVerSinClase]=useState(false);
@@ -15145,6 +15170,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             notifs={[...notifs,...(data.notificacionesAlumno||[]).filter(n=>!n.leida)]} 
             pendientesCount={pendientesCount} 
             mensajesNoLeidos={(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length}/>
+          <AppSwitcher actual="academia" />
           <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
@@ -15540,6 +15566,7 @@ function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
                 👨‍🏫 {p.nombre.split(" ")[0]}
               </button>
             )}
+            <AppSwitcher actual="academia" />
             <button onClick={onLogout}
               style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",
                 borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:4}}>
