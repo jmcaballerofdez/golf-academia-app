@@ -15651,9 +15651,9 @@ export default function App(){
       const emailLower = (u.email||"").toLowerCase();
       if(!emailLower) return null;
 
-      // 1) Superadmin por email conocido
+      // 1) Profesor Principal (admin) por email conocido — panel completo
       if(ADMIN_EMAILS_AUTO.includes(emailLower)){
-        const nuevo = { role:"superadmin", email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        const nuevo = { role:"admin", profesorId:null, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
         await setDoc(doc(db,"Usuarios",u.uid), nuevo);
         return nuevo;
       }
