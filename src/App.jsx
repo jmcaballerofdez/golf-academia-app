@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
 } from "firebase/firestore";
-import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from "firebase/auth";
+import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ─── Firebase Config ──────────────────────────────────────────────
@@ -15593,47 +15593,48 @@ export default function App(){
     let unsub=()=>{}, unsubN=()=>{}, unsubP=()=>{};
     const fallbackTimer = setTimeout(()=>{ if(!cancelled) setFbReady(true); }, 1500);
 
-    signInAnonymously(auth)
-      .then(()=>{
-        if(cancelled) return;
-        // Mostrar la app en cuanto hay sesión; los datos llegan por onSnapshot
-        clearTimeout(fallbackTimer);
-        setFbReady(true);
-        // Cargar datos iniciales en segundo plano (no bloquea el arranque)
-        cargarDatosFirebase().then(fbData=>{
-          // Si onSnapshot ya entregó datos, no sobrescribir con la lectura inicial
-          if(cancelled || snapshotRecibido || !fbData) return;
-          setDataRaw(fbData); saveData(fbData);
-        });
-        // Escuchar cambios en tiempo real
-        unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
-          if(snap.exists()){
-            snapshotRecibido = true;
-            const fbData = { ...makeDefaultData(), ...snap.data() };
-            setDataRaw(prev=>{
-              // Merge fotos locales (no se guardan en Firebase por tamaño)
-              const alumnos = (fbData.alumnos||[]).map(a=>{
-                const local = (prev.alumnos||[]).find(x=>x.id===a.id);
-                return {...a, foto: local?.foto||a.foto||""};
-              });
-              return {...fbData, alumnos};
+    // Ya no usamos sesión anónima: Academia comparte la sesión real de
+    // Firebase Auth que gestiona Golf B Máster (email/contraseña).
+    // Conectamos directamente los listeners de Firestore.
+    (async () => {
+      if(cancelled) return;
+      // Mostrar la app en cuanto podamos; los datos llegan por onSnapshot
+      clearTimeout(fallbackTimer);
+      setFbReady(true);
+      // Cargar datos iniciales en segundo plano (no bloquea el arranque)
+      cargarDatosFirebase().then(fbData=>{
+        // Si onSnapshot ya entregó datos, no sobrescribir con la lectura inicial
+        if(cancelled || snapshotRecibido || !fbData) return;
+        setDataRaw(fbData); saveData(fbData);
+      });
+      // Escuchar cambios en tiempo real
+      unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
+        if(snap.exists()){
+          snapshotRecibido = true;
+          const fbData = { ...makeDefaultData(), ...snap.data() };
+          setDataRaw(prev=>{
+            // Merge fotos locales (no se guardan en Firebase por tamaño)
+            const alumnos = (fbData.alumnos||[]).map(a=>{
+              const local = (prev.alumnos||[]).find(x=>x.id===a.id);
+              return {...a, foto: local?.foto||a.foto||""};
             });
-          }
-        }, err=>{ console.warn("Snapshot error:", err); setFbReady(true); });
-        // Escuchar notificaciones
-        unsubN = onSnapshot(
-          query(collection(db,"notificaciones"), orderBy("timestamp","desc")),
-          snap=>setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))),
-          err=>console.warn("Notif error:", err)
-        );
-        // Escuchar registros pendientes para el contador
-        unsubP = onSnapshot(
-          collection(db,"registros_pendientes"),
-          snap=>setPendientesCount(snap.docs.length),
-          err=>console.warn("Pendientes error:", err)
-        );
-      })
-      .catch(err=>{ console.warn("Firebase error:", err); clearTimeout(fallbackTimer); if(!cancelled) setFbReady(true); });
+            return {...fbData, alumnos};
+          });
+        }
+      }, err=>{ console.warn("Snapshot error:", err); setFbReady(true); });
+      // Escuchar notificaciones
+      unsubN = onSnapshot(
+        query(collection(db,"notificaciones"), orderBy("timestamp","desc")),
+        snap=>setNotifs(snap.docs.map(d=>({id:d.id,...d.data()}))),
+        err=>console.warn("Notif error:", err)
+      );
+      // Escuchar registros pendientes para el contador
+      unsubP = onSnapshot(
+        collection(db,"registros_pendientes"),
+        snap=>setPendientesCount(snap.docs.length),
+        err=>console.warn("Pendientes error:", err)
+      );
+    })();
 
     return ()=>{ cancelled=true; clearTimeout(fallbackTimer); unsub(); unsubN(); unsubP(); };
   },[]);
