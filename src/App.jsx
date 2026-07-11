@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { initializeApp } from "firebase/app";
+import { initializeApp, deleteApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
 } from "firebase/firestore";
-import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
+import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from "firebase/auth";
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ─── Firebase Config ──────────────────────────────────────────────
@@ -491,6 +491,21 @@ const db      = getFirestore(firebaseApp);
 const auth    = getAuth(firebaseApp);
 const storage = getStorage(firebaseApp);
 
+// Crea una cuenta de email/contraseña para un alumno/tutor usando una
+// instancia de Firebase SECUNDARIA — así el profesor/admin que está
+// creando el acceso no se queda desconectado de su propia sesión.
+async function crearCuentaSinDesconectar(email, password) {
+  const secundaria = initializeApp(firebaseConfig, `alta-${Date.now()}`);
+  const authSecundaria = getAuth(secundaria);
+  try {
+    const cred = await createUserWithEmailAndPassword(authSecundaria, email, password);
+    return cred.user.uid;
+  } finally {
+    await signOut(authSecundaria).catch(()=>{});
+    await deleteApp(secundaria).catch(()=>{});
+  }
+}
+
 // ─── Firestore helpers ────────────────────────────────────────────
 const DB_DOC = "academia/datos";
 
@@ -578,16 +593,32 @@ async function publicarInformeFirestore(informe, alumno) {
 }
 
 // ─── Palette ─────────────────────────────────────────────────────────────────
+// ─── Paleta "Campo de noche" — rediseño de Academia (moderno, elegante) ─
+// Se mantienen los mismos nombres de propiedad de siempre (fairway,
+// grass, mist, sand, ink…) pero con valores nuevos: fondo verde muy
+// oscuro, rojo vivo del logo como acento principal, texto blanco.
+// G.white se deja tal cual (sigue siendo el blanco de los textos sobre
+// botones de color) — solo se retocan los fondos y los tonos oscuros.
 const G = {
-  fairway:"#1a5c2a", grass:"#2e7d3c", mist:"#e8f5eb", sand:"#f5f0e8",
-  ink:"#1a2e1d", soft:"#6b8f6e", white:"#ffffff", flag:"#c8a84b",
-  danger:"#c0392b", sky:"#3a7abf", purple:"#7b5ea7", lavender:"#f0ebfa",
-  orange:"#d4651a",
+  fairway:"#3FA05F", grass:"#4CBE72", mist:"#123321", sand:"#071710",
+  ink:"#F5F7F2", soft:"#9FB0A6", white:"#ffffff", flag:"#D9BC72",
+  danger:"#E2685C", sky:"#6FB3E8", purple:"#A98FD1", lavender:"#2A2140",
+  orange:"#F0985A",
 };
 
 const STORAGE_KEY = "gcr_academy_v3";
 function uid() { return Date.now().toString(36)+Math.random().toString(36).slice(2); }
 function today() { return new Date().toISOString().slice(0,10); }
+// Genera un enlace de WhatsApp con el mensaje ya escrito (wa.me) — el
+// usuario solo tiene que pulsar "Enviar" dentro de WhatsApp, no es un
+// envío 100% automático (eso requeriría la API de WhatsApp Business).
+function waLink(telefono, mensaje){
+  let t = (telefono||"").replace(/[^\d+]/g,"");
+  if(!t) return null;
+  if(t.startsWith("+")) t = t.slice(1);
+  else if(!t.startsWith("34") || t.length<=9) t = "34"+t.replace(/^34/,"");
+  return `https://wa.me/${t}?text=${encodeURIComponent(mensaje)}`;
+}
 function fmtDate(d) {
   if (!d) return "—";
   const [y,m,day] = d.split("-");
@@ -684,7 +715,7 @@ function saveData(d) {
 
 // ─── Base UI ─────────────────────────────────────────────────────────────────
 function Badge({color,children}){
-  const m={green:[G.mist,G.fairway],gold:["#fdf6e3","#a07c10"],blue:["#e8f0fb",G.sky],red:["#fdecea",G.danger],gray:["#f0f0f0","#555"],purple:[G.lavender,G.purple]};
+  const m={green:[G.mist,G.fairway],gold:["#16241C","#a07c10"],blue:["#16222E",G.sky],red:["#3A241F",G.danger],gray:["#16241C","#555"],purple:[G.lavender,G.purple]};
   const[bg,tc]=m[color]||m.gray;
   return <span style={{background:bg,color:tc,borderRadius:20,padding:"2px 10px",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{children}</span>;
 }
@@ -696,10 +727,10 @@ function Btn({onClick,color="primary",small,children,disabled,full}){
     onMouseEnter={e=>{if(!disabled)e.currentTarget.style.opacity=".82";}}
     onMouseLeave={e=>{e.currentTarget.style.opacity="1";}}>{children}</button>;
 }
-function Card({children,style}){return <div style={{background:G.white,borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",padding:20,...style}}>{children}</div>;}
+function Card({children,style}){return <div style={{background:"#123321",borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",padding:20,...style}}>{children}</div>;}
 function Modal({title,onClose,children,wide}){
   return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
-    <div style={{background:G.white,borderRadius:16,width:"100%",maxWidth:wide?700:520,maxHeight:"93vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}}>
+    <div style={{background:"#123321",borderRadius:16,width:"100%",maxWidth:wide?700:520,maxHeight:"93vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}}>
       <div style={{background:G.fairway,color:G.white,padding:"14px 18px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:1}}>
         <span style={{fontWeight:700,fontSize:15}}>{title}</span>
         <button onClick={onClose} style={{background:"none",border:"none",color:G.white,fontSize:20,cursor:"pointer",lineHeight:1}}>✕</button>
@@ -711,17 +742,17 @@ function Modal({title,onClose,children,wide}){
 function Field({label,children}){return <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:600,color:G.soft,marginBottom:4}}>{label}</label>{children}</div>;}
 function Input({value,onChange,type="text",placeholder,maxLength}){
   return <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} maxLength={maxLength}
-    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>;
+    style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>;
 }
 function Sel({value,onChange,options}){
   return <select value={value} onChange={e=>onChange(e.target.value)}
-    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+    style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#123321",fontFamily:"inherit"}}>
     {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
   </select>;
 }
 function Textarea({value,onChange,placeholder,rows=3}){
   return <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
-    style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}/>;
+    style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}/>;
 }
 function Divider({label}){
   return <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0"}}>
@@ -818,16 +849,16 @@ function ConfirmModal({msg, onOk, onCancel}){
     <div style={{background:"#fff",borderRadius:16,padding:28,maxWidth:360,width:"100%",
       boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
       <div style={{fontSize:22,textAlign:"center",marginBottom:12}}>⚠️</div>
-      <div style={{fontSize:15,color:"#1a2e1d",textAlign:"center",
+      <div style={{fontSize:15,color:"#F5F7F2",textAlign:"center",
         lineHeight:1.6,marginBottom:24}}>{msg}</div>
       <div style={{display:"flex",gap:10}}>
         <button onClick={onCancel}
-          style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",
+          style={{flex:1,background:"#16241C",color:"#555",border:"none",
             borderRadius:10,padding:"12px 0",fontSize:15,fontWeight:600,cursor:"pointer"}}>
           Cancelar
         </button>
         <button onClick={onOk}
-          style={{flex:1,background:"#c0392b",color:"#fff",border:"none",
+          style={{flex:1,background:"#E2685C",color:"#fff",border:"none",
             borderRadius:10,padding:"12px 0",fontSize:15,fontWeight:700,cursor:"pointer"}}>
           Eliminar
         </button>
@@ -856,7 +887,7 @@ function exportarExcel(data){
   }
 
   function sheet(nombre, cabeceras, filas){
-    let html=`<table border="1"><thead><tr style="background:#1a5c2a;color:white">`;
+    let html=`<table border="1"><thead><tr style="background:#3FA05F;color:white">`;
     cabeceras.forEach(c=>html+=`<th>${c}</th>`);
     html+=`</tr></thead><tbody>`;
     filas.forEach(f=>{
@@ -937,13 +968,13 @@ function exportarExcel(data){
     <head><meta charset="UTF-8">
     <style>
       body { font-family: Arial, sans-serif; font-size: 11pt; }
-      th { background: #1a5c2a; color: white; padding: 6px 10px; }
+      th { background: #3FA05F; color: white; padding: 6px 10px; }
       td { padding: 4px 8px; }
-      h2 { color: #1a5c2a; margin-top: 20px; }
+      h2 { color: #3FA05F; margin-top: 20px; }
     </style>
     </head>
     <body>
-    <h1 style="color:#1a5c2a">Golf Ciudad Real — Base de Datos Exportada ${fecha}</h1>
+    <h1 style="color:#3FA05F">Golf Ciudad Real — Base de Datos Exportada ${fecha}</h1>
     <h2>📋 Alumnos (${alumnos.length})</h2>${alumnosSheet}
     <h2>📊 Estadísticas (${stats.length} rondas)</h2>${statsSheet}
     <h2>📅 Clases (${clases.length})</h2>${clasesSheet}
@@ -1115,27 +1146,19 @@ function PantallaRegistro({onVolver}){
 
   const PinDots = ({val}) => <div style={{display:"flex",gap:8,margin:"8px 0"}}>
     {[0,1,2,3,4,5].map(i=><div key={i} style={{width:14,height:14,borderRadius:"50%",
-      background:i<val.length?"#c0392b":"#ddd"}}/>)}
+      background:i<val.length?"#E2685C":"#ddd"}}/>)}
   </div>;
 
   if(step===3) return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#3FA05F,#040D08)",
       display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-      <div style={{background:"white",borderRadius:20,padding:32,maxWidth:380,width:"100%",textAlign:"center"}}>
+      <div style={{background:"#123321",borderRadius:20,padding:32,maxWidth:380,width:"100%",textAlign:"center"}}>
         <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:80,marginBottom:16,objectFit:"contain"}}/>
         <div style={{fontSize:56,marginBottom:12}}>✅</div>
-        <h2 style={{color:G.fairway,marginBottom:12}}>¡Registro enviado!</h2>
+        <h2 style={{color:G.fairway,marginBottom:12}}>¡Solicitud enviada!</h2>
         <p style={{color:"#555",fontSize:14,lineHeight:1.6,marginBottom:20}}>
-          Tu solicitud ha sido enviada al profesor. <b>En breve recibirás confirmación</b> y podrás acceder a la app con tu PIN.
+          Hemos recibido tu solicitud de alta y avisado al profesor. <b>En cuanto la revise, te creará tu acceso</b> (email y contraseña) y recibirás confirmación para poder entrar a la app.
         </p>
-        <div style={{background:G.mist,borderRadius:10,padding:14,marginBottom:20}}>
-          <div style={{fontSize:12,color:G.soft,marginBottom:4}}>Tu PIN de acceso</div>
-          <div style={{fontSize:28,fontWeight:800,color:"#c0392b",letterSpacing:6}}>{form.pinElegido}</div>
-          <div style={{fontSize:11,color:G.soft,marginTop:4}}>Guárdalo bien — lo necesitarás para entrar</div>
-        </div>
-        <div style={{fontSize:13,color:G.soft,marginBottom:20}}>
-          URL de la app: <b style={{color:G.sky}}>golf-ciudad-real.netlify.app</b>
-        </div>
         <button onClick={onVolver} style={{background:G.fairway,color:"white",border:"none",
           borderRadius:10,padding:"12px 24px",fontSize:15,fontWeight:700,cursor:"pointer",width:"100%"}}>
           Volver al inicio
@@ -1147,7 +1170,7 @@ function PantallaRegistro({onVolver}){
   return (
     <div style={{minHeight:"100vh",background:G.sand,padding:"0 0 40px"}}>
       {/* Header */}
-      <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,
+      <div style={{background:`linear-gradient(135deg,${G.fairway},#040D08)`,
         padding:"20px 20px 16px",color:"white",textAlign:"center"}}>
         <div style={{fontSize:24,marginBottom:4}}>⛳</div>
         <div style={{fontWeight:800,fontSize:18}}>Golf Ciudad Real Academy</div>
@@ -1155,7 +1178,7 @@ function PantallaRegistro({onVolver}){
       </div>
 
       {/* Indicador de pasos */}
-      <div style={{display:"flex",background:"white",padding:"12px 20px",
+      <div style={{display:"flex",background:"#123321",padding:"12px 20px",
         borderBottom:"1px solid #eee",gap:8,alignItems:"center"}}>
         {[["1","Datos personales"],["2","Consentimientos"]].map(([n,l],i)=>(
           <div key={n} style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
@@ -1186,7 +1209,7 @@ function PantallaRegistro({onVolver}){
               <Input type="date" value={form.fechaNacimiento}
                 onChange={v=>setForm(f=>({...f,fechaNacimiento:v}))}/>
             </Field>
-            {edad!==null&&<div style={{background:esMenor?"#e8f0fb":G.mist,borderRadius:8,
+            {edad!==null&&<div style={{background:esMenor?"#16222E":G.mist,borderRadius:8,
               padding:"6px 12px",marginBottom:10,fontSize:13,fontWeight:600,
               color:esMenor?"#2e5fa3":G.fairway}}>
               {esMenor?"🧒 Escuela Infantil (menor de 18 años)":"🏌️ Escuela de Adultos"} · {edad} años
@@ -1235,7 +1258,7 @@ function PantallaRegistro({onVolver}){
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
               <Field label="Relación">
                 <select value={form.tutorRelacion} onChange={e=>setForm(f=>({...f,tutorRelacion:e.target.value}))}
-                  style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+                  style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
                     fontSize:14,background:"#fff",fontFamily:"inherit"}}>
                   <option value="">Seleccionar...</option>
                   <option value="Padre">Padre</option>
@@ -1257,7 +1280,7 @@ function PantallaRegistro({onVolver}){
           </Card>}
 
           <Card style={{marginBottom:16}}>
-            <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>🔐 Elige tu clave de acceso</h3>
+            <h3 style={{margin:"0 0 8px",color:"#E2685C"}}>🔐 Elige tu clave de acceso</h3>
             <p style={{fontSize:13,color:G.soft,margin:"0 0 10px"}}>
               Esta clave la usarás para entrar a la app. Mínimo 6 caracteres. Puede contener letras, números y símbolos para mayor seguridad. Puedes cambiarla después.
             </p>
@@ -1267,12 +1290,12 @@ function PantallaRegistro({onVolver}){
                 placeholder="Ej: Golf2026!" maxLength={20}/>
             </Field>
             <div style={{fontSize:12,marginTop:6}}>
-              {form.pinElegido.length>0&&form.pinElegido.length<6&&<span style={{color:"#c0392b"}}>⚠ Mínimo 6 caracteres</span>}
-              {form.pinElegido.length>=6&&<span style={{color:"#1a5c2a"}}>✓ Clave válida</span>}
+              {form.pinElegido.length>0&&form.pinElegido.length<6&&<span style={{color:"#E2685C"}}>⚠ Mínimo 6 caracteres</span>}
+              {form.pinElegido.length>=6&&<span style={{color:"#3FA05F"}}>✓ Clave válida</span>}
             </div>
           </Card>
 
-          {error&&<div style={{background:"#fdecea",color:"#c0392b",borderRadius:8,
+          {error&&<div style={{background:"#3A241F",color:"#E2685C",borderRadius:8,
             padding:"10px 14px",fontSize:13,marginBottom:12}}>{error}</div>}
 
           <button onClick={()=>{
@@ -1289,7 +1312,7 @@ function PantallaRegistro({onVolver}){
         {step===2&&<div>
           <Card style={{marginBottom:12}}>
             <h3 style={{margin:"0 0 10px",color:G.fairway}}>🔒 Protección de datos (RGPD)</h3>
-            <div style={{background:"#f0f8f0",borderRadius:8,padding:10,fontSize:12,
+            <div style={{background:"#16241C",borderRadius:8,padding:10,fontSize:12,
               color:"#444",lineHeight:1.6,marginBottom:12}}>
               <b>Responsable:</b> Golf Ciudad Real C.D. · <b>Finalidad:</b> Gestión de la Escuela de Golf. 
               <b> Base legal:</b> Consentimiento (Art. 6.1.a RGPD). 
@@ -1309,13 +1332,13 @@ function PantallaRegistro({onVolver}){
           </Card>
 
           <Card style={{marginBottom:12}}>
-            <h3 style={{margin:"0 0 10px",color:"#c8a84b"}}>📸 Autorización de imagen {esMenor&&"(LO 1/1996)"}</h3>
-            {esMenor&&<div style={{background:"#fff8e1",borderRadius:8,padding:8,fontSize:12,
+            <h3 style={{margin:"0 0 10px",color:"#D9BC72"}}>📸 Autorización de imagen {esMenor&&"(LO 1/1996)"}</h3>
+            {esMenor&&<div style={{background:"#332B10",borderRadius:8,padding:8,fontSize:12,
               color:"#6B4E0A",marginBottom:10}}>
               La publicación de imágenes de menores requiere autorización expresa (LO 1/1996).
             </div>}
             <div style={{display:"flex",gap:10,alignItems:"flex-start",
-              background:"#fff8e1",borderRadius:8,padding:10}}>
+              background:"#332B10",borderRadius:8,padding:10}}>
               <input type="checkbox" checked={form.imagenAutorizada}
                 onChange={e=>setForm(f=>({...f,imagenAutorizada:e.target.checked}))}
                 style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
@@ -1328,13 +1351,13 @@ function PantallaRegistro({onVolver}){
           </Card>
 
           {esMenor&&<Card style={{marginBottom:12}}>
-            <h3 style={{margin:"0 0 10px",color:"#c0392b"}}>✍️ Confirmación legal del tutor (Art. 162 CC)</h3>
-            <div style={{background:"#fdecea",borderRadius:8,padding:10,fontSize:12,
+            <h3 style={{margin:"0 0 10px",color:"#E2685C"}}>✍️ Confirmación legal del tutor (Art. 162 CC)</h3>
+            <div style={{background:"#3A241F",borderRadius:8,padding:10,fontSize:12,
               color:"#555",marginBottom:10,lineHeight:1.5}}>
               El padre/madre/tutor declara ser el representante legal del menor y acepta el Reglamento Interno de la Escuela de Golf Ciudad Real C.D.
             </div>
             <div style={{display:"flex",gap:10,alignItems:"flex-start",
-              background:"#fdecea",borderRadius:8,padding:10}}>
+              background:"#3A241F",borderRadius:8,padding:10}}>
               <input type="checkbox" checked={form.aceptaCondiciones}
                 onChange={e=>setForm(f=>({...f,aceptaCondiciones:e.target.checked}))}
                 style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
@@ -1346,7 +1369,7 @@ function PantallaRegistro({onVolver}){
 
           {!esMenor&&<Card style={{marginBottom:12}}>
             <div style={{display:"flex",gap:10,alignItems:"flex-start",
-              background:"#fdecea",borderRadius:8,padding:10}}>
+              background:"#3A241F",borderRadius:8,padding:10}}>
               <input type="checkbox" checked={form.aceptaCondiciones}
                 onChange={e=>setForm(f=>({...f,aceptaCondiciones:e.target.checked}))}
                 style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
@@ -1356,12 +1379,12 @@ function PantallaRegistro({onVolver}){
             </div>
           </Card>}
 
-          {error&&<div style={{background:"#fdecea",color:"#c0392b",borderRadius:8,
+          {error&&<div style={{background:"#3A241F",color:"#E2685C",borderRadius:8,
             padding:"10px 14px",fontSize:13,marginBottom:12}}>{error}</div>}
 
           <div style={{display:"flex",gap:10,marginBottom:16}}>
             <button onClick={()=>setStep(1)}
-              style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",
+              style={{flex:1,background:"#16241C",color:"#555",border:"none",
                 borderRadius:12,padding:"14px 0",fontSize:15,fontWeight:600,cursor:"pointer"}}>
               ← Atrás
             </button>
@@ -1421,7 +1444,7 @@ function LoginScreen({data,onLogin}){
   const [intentando,setIntentando]=useState(false);
 
   const PinDot=({filled})=><div style={{width:16,height:16,borderRadius:"50%",
-    background:filled?G.fairway:"#d0e0d0",transition:"background .15s"}}/>;
+    background:filled?G.fairway:"#2A4A3A",transition:"background .15s"}}/>;
 
   function intentarAcceso(p){
     if(!p||p.length===0) return;
@@ -1480,9 +1503,9 @@ function LoginScreen({data,onLogin}){
   if(mostrarRegistro) return <PantallaRegistro onVolver={()=>setMostrarRegistro(false)}/>;
 
   return (
-    <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${G.fairway} 0%,#0f3518 100%)`,
+    <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${G.fairway} 0%,#040D08 100%)`,
       display:"flex",alignItems:"center",justifyContent:"center",padding:20,overflowY:"auto"}}>
-      <div style={{background:G.white,borderRadius:24,padding:"32px 28px",width:"100%",
+      <div style={{background:"#123321",borderRadius:24,padding:"32px 28px",width:"100%",
         maxWidth:340,textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)",
         margin:"auto"}}>
 
@@ -1508,7 +1531,7 @@ function LoginScreen({data,onLogin}){
           {intentando?"✔ Identificado…":"Introduce tu clave de acceso"}
         </div>
 
-        {error&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,
+        {error&&<div style={{background:"#3A241F",color:G.danger,borderRadius:8,
           padding:"8px 12px",fontSize:13,marginBottom:12}}>{error}</div>}
 
         <div style={{marginBottom:14,position:"relative"}}>
@@ -1517,7 +1540,7 @@ function LoginScreen({data,onLogin}){
             onKeyDown={e=>{if(e.key==="Enter"&&pin.length>0)intentarAcceso(pin);}}
             placeholder="Tu clave de acceso"
             autoComplete="current-password"
-            style={{width:"100%",boxSizing:"border-box",border:"2px solid #d0e0d0",
+            style={{width:"100%",boxSizing:"border-box",border:"2px solid #2A4A3A",
               borderRadius:12,padding:"14px 48px 14px 16px",fontSize:18,textAlign:"center",
               fontFamily:"inherit",letterSpacing:mostrarPin?1:2}}/>
           <button onClick={()=>setMostrarPin(v=>!v)}
@@ -1549,7 +1572,7 @@ function LoginScreen({data,onLogin}){
           </button>
         </div>
 
-        {mostrarRecuperar&&<div style={{background:"#f0f7f0",borderRadius:10,
+        {mostrarRecuperar&&<div style={{background:"#16241C",borderRadius:10,
           padding:"14px 16px",marginTop:10,fontSize:13,color:G.ink,textAlign:"left"}}>
           <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>🔑 Recuperar acceso</div>
           <p style={{margin:"0 0 8px",color:G.soft,lineHeight:1.5}}>
@@ -1579,7 +1602,7 @@ function LoginScreen({data,onLogin}){
             Recordar mi acceso en este dispositivo
           </label>
         </div>
-        <div style={{borderTop:"1px solid #e0e0e0",marginTop:16,paddingTop:16}}>
+        <div style={{borderTop:"1px solid #2A2A2A",marginTop:16,paddingTop:16}}>
           <button onClick={()=>setMostrarRegistro(true)}
             style={{width:"100%",background:G.fairway,color:"white",
               border:"none",borderRadius:10,
@@ -1634,10 +1657,10 @@ function MiniCalendar({selected,onChange,markedDates=[]}){
           const isMarked=markedDates.includes(iso);
           return <div key={i} onClick={()=>onChange(iso)}
             style={{padding:"6px 2px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:isSel||isToday?700:400,
-              background:isSel?G.fairway:isToday?"#e8f5eb":"transparent",
+              background:isSel?G.fairway:isToday?"#123321":"transparent",
               color:isSel?G.white:isToday?G.fairway:G.ink,
               position:"relative",transition:"background .12s"}}
-            onMouseEnter={e=>{if(!isSel)e.currentTarget.style.background="#e8f5eb";}}
+            onMouseEnter={e=>{if(!isSel)e.currentTarget.style.background="#123321";}}
             onMouseLeave={e=>{if(!isSel)e.currentTarget.style.background=isSel?G.fairway:"transparent";}}>
             {d}
             {isMarked&&!isSel&&<div style={{width:4,height:4,borderRadius:"50%",background:G.grass,margin:"1px auto 0"}}/>}
@@ -1717,7 +1740,7 @@ function PanelPdfCalendario({esProfesor}){
     a.click();
   }
 
-  return <div style={{background:"#f0f7f0",border:"2px solid #1a5c2a22",borderRadius:14,
+  return <div style={{background:"#16241C",border:"2px solid #3FA05F22",borderRadius:14,
     padding:"18px 20px",marginBottom:20}}>
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
       <div style={{fontSize:28}}>📄</div>
@@ -1752,7 +1775,7 @@ function PanelPdfCalendario({esProfesor}){
           ⬇️ Descargar PDF
         </button>
         {esProfesor&&<button onClick={eliminarPDF}
-          style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:8,
+          style={{background:"#E2685C",color:"#fff",border:"none",borderRadius:8,
             padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
           🗑️ Eliminar
         </button>}
@@ -1771,7 +1794,7 @@ function PanelPdfCalendario({esProfesor}){
     {esProfesor && (
       <div style={{marginTop:12}}>
         <label style={{display:"inline-flex",alignItems:"center",gap:8,
-          background:"#1a5c2a",color:"#fff",borderRadius:8,
+          background:"#3FA05F",color:"#fff",borderRadius:8,
           padding:"10px 16px",fontSize:13,fontWeight:700,
           cursor:subiendo?"not-allowed":"pointer",opacity:subiendo?0.6:1}}>
           {subiendo?"⏳ Subiendo...":"📤 Subir nuevo PDF"}
@@ -1785,7 +1808,7 @@ function PanelPdfCalendario({esProfesor}){
       </div>
     )}
 
-    {msg&&<div style={{marginTop:10,fontSize:13,color:msg.startsWith("✅")?"#1a5c2a":msg.startsWith("⚠️")||msg.startsWith("❌")?"#c0392b":G.soft,
+    {msg&&<div style={{marginTop:10,fontSize:13,color:msg.startsWith("✅")?"#3FA05F":msg.startsWith("⚠️")||msg.startsWith("❌")?"#E2685C":G.soft,
       fontWeight:600}}>{msg}</div>}
   </div>;
 }
@@ -2061,7 +2084,7 @@ function ModCalendario({data,setData}){
     const libre=plazas-res.length;
     return <Card style={{marginBottom:10}}>
       <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-        <div style={{background:libre>0?G.mist:"#fdecea",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:52,flexShrink:0}}>
+        <div style={{background:libre>0?G.mist:"#3A241F",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:52,flexShrink:0}}>
           <div style={{fontSize:15,fontWeight:800,color:libre>0?G.fairway:G.danger}}>{s.hora}</div>
           <div style={{fontSize:10,color:G.soft}}>{s.duracion}min</div>
         </div>
@@ -2110,7 +2133,7 @@ function ModCalendario({data,setData}){
         📊 Exportar CSV
       </button>
       <button onClick={exportarClasesPDF}
-        style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:8,
+        style={{background:"#E2685C",color:"#fff",border:"none",borderRadius:8,
           padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
         📄 Exportar PDF
       </button>
@@ -2123,8 +2146,8 @@ function ModCalendario({data,setData}){
     </div>
 
     {/* ── Solicitudes de clase pendientes ── */}
-    {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length>0&&<Card style={{marginBottom:16,borderLeft:"4px solid #c8a84b",background:"#fffbf0"}}>
-      <div style={{fontWeight:700,color:"#856404",fontSize:14,marginBottom:10}}>
+    {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length>0&&<Card style={{marginBottom:16,borderLeft:"4px solid #D9BC72",background:"#16241C"}}>
+      <div style={{fontWeight:700,color:"#E0B368",fontSize:14,marginBottom:10}}>
         📬 Solicitudes de clase pendientes — {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").length}
       </div>
       {(data.solicitudesClase||[]).filter(s=>s.estado==="pendiente").map(s=>{
@@ -2221,13 +2244,13 @@ function ModCalendario({data,setData}){
 function FotoAlumno({foto, nombre, size=48}){
   if(foto) return <img src={foto} alt={nombre}
     style={{width:size,height:size,borderRadius:"50%",objectFit:"cover",
-      border:"2px solid #d0e0d0",flexShrink:0}}/>;
+      border:"2px solid #2A4A3A",flexShrink:0}}/>;
   const initials = (nombre||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
   return <div style={{width:size,height:size,borderRadius:"50%",
-    background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",
+    background:"linear-gradient(135deg,#3FA05F,#4CBE72)",
     display:"flex",alignItems:"center",justifyContent:"center",
     color:"#fff",fontWeight:800,fontSize:size*0.35,flexShrink:0,
-    border:"2px solid #d0e0d0"}}>
+    border:"2px solid #2A4A3A"}}>
     {initials}
   </div>;
 }
@@ -2240,17 +2263,17 @@ function GrupoBadge({a}){
 const GRUPOS_EDAD = [
   // ── Categorías infantiles/juveniles (por edad) ──
   { id:"prebenjamin", nombre:"Prebenjamín", rango:"5-7 años",   color:"#f5a623", emoji:"🐣", descripcion:"Iniciación lúdica. Juego libre, coordinación básica y amor por el deporte." },
-  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#7b5ea7", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
-  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#3a7abf", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
+  { id:"benjamin",    nombre:"Benjamín",    rango:"8-10 años",  color:"#A98FD1", emoji:"⛳", descripcion:"Fundamentos técnicos básicos. Aprenden el swing y las reglas elementales." },
+  { id:"alevin",      nombre:"Alevín",      rango:"11-12 años", color:"#6FB3E8", emoji:"🐦", descripcion:"Desarrollo técnico y competición iniciación. Torneos internos y primeras competencias." },
   { id:"infantil",    nombre:"Infantil",    rango:"13-14 años", color:"#16a085", emoji:"🦅", descripcion:"Perfeccionamiento técnico y preparación para competición." },
-  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#2e7d3c", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
-  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#c0392b", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
+  { id:"cadete",      nombre:"Cadete",      rango:"15-16 años", color:"#4CBE72", emoji:"🏌️", descripcion:"Entrenamiento específico y desarrollo competitivo." },
+  { id:"boys_girls",  nombre:"Boys/Girls",  rango:"17-18 años", color:"#E2685C", emoji:"🏆", descripcion:"Alto rendimiento. Preparación para competición regional y nacional." },
   { id:"sub21",       nombre:"Sub-21",      rango:"19-21 años", color:"#8e44ad", emoji:"🎓", descripcion:"Categoría juvenil superior. Competición avanzada y desarrollo de élite." },
   // ── Grupos de adultos / modalidades ──
-  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#2e7d3c", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
-  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#1a5c2a", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
-  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#c8a84b", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
-  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#e67e22", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
+  { id:"adulto_bautismo",        nombre:"Bautismo de Golf",     rango:"Adultos", color:"#4CBE72", emoji:"⛳", descripcion:"Primera toma de contacto con el golf. Sesión introductoria para descubrir el deporte." },
+  { id:"adulto_iniciacion",      nombre:"Iniciación Adultos",   rango:"Adultos", color:"#3FA05F", emoji:"🌱", descripcion:"Primeros pasos en el golf para adultos. Fundamentos básicos del swing y reglas." },
+  { id:"adulto_perfeccionamiento", nombre:"Perfeccionamiento",  rango:"Adultos", color:"#D9BC72", emoji:"🎯", descripcion:"Mejora técnica para adultos con experiencia. Pulir el swing y bajar hándicap." },
+  { id:"clase_individual",       nombre:"Clase Individual",     rango:"Adultos", color:"#F0985A", emoji:"👤", descripcion:"Clase particular personalizada uno a uno con el profesor." },
   { id:"bono_5",                 nombre:"Bono 5 Clases",        rango:"Adultos", color:"#3498db", emoji:"🎫", descripcion:"Paquete de 5 clases. Ahorro y continuidad en el aprendizaje." },
   { id:"bono_10",                nombre:"Bono 10 Clases",       rango:"Adultos", color:"#2980b9", emoji:"🎟️", descripcion:"Paquete de 10 clases. Máximo ahorro y progresión sostenida." },
   { id:"curso_hcp10",            nombre:"Curso Hándicap (10h)", rango:"Adultos", color:"#9b59b6", emoji:"📊", descripcion:"Curso intensivo de 10 horas para obtener la licencia y el hándicap." },
@@ -2319,7 +2342,7 @@ function EstructuraInfantil({data, setData, alumnos}){
     <div style={{display:"flex",gap:8,marginBottom:16}}>
       {[["categorias","📋 Por categoría"],["grupos","🗓️ Grupos del curso"]].map(([id,label])=>(
         <button key={id} onClick={()=>setVista(id)}
-          style={{flex:1,background:vista===id?G.fairway:"#f0f0f0",color:vista===id?"#fff":"#555",
+          style={{flex:1,background:vista===id?G.fairway:"#16241C",color:vista===id?"#fff":"#555",
             border:"none",borderRadius:10,padding:"10px 0",fontSize:13,fontWeight:700,cursor:"pointer"}}>
           {label}
         </button>
@@ -2328,8 +2351,8 @@ function EstructuraInfantil({data, setData, alumnos}){
 
     {/* ── VISTA CATEGORÍAS ── */}
     {vista==="categorias"&&<div>
-      <div style={{background:"#e8f0fb",borderRadius:10,padding:"10px 14px",
-        marginBottom:14,fontSize:12,color:"#3a7abf",fontWeight:600}}>
+      <div style={{background:"#16222E",borderRadius:10,padding:"10px 14px",
+        marginBottom:14,fontSize:12,color:"#6FB3E8",fontWeight:600}}>
         Alumnos agrupados automáticamente según su edad · Total: {alumnos.length}
       </div>
       {CATS_INF.map(cat=>{
@@ -2347,7 +2370,7 @@ function EstructuraInfantil({data, setData, alumnos}){
             ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                 {lista.map(a=>(
                   <span key={a.id} style={{display:"flex",alignItems:"center",gap:6,
-                    background:"#f5f5f5",borderRadius:16,padding:"4px 10px",fontSize:12}}>
+                    background:"#16241C",borderRadius:16,padding:"4px 10px",fontSize:12}}>
                     <span style={{fontWeight:600}}>{a.nombre}</span>
                     {a.fechaNacimiento&&<span style={{color:G.soft}}>
                       {(()=>{ try { return calcularEdad(a.fechaNacimiento)+"a"; } catch(e){ return ""; } })()}
@@ -2394,7 +2417,7 @@ function EstructuraInfantil({data, setData, alumnos}){
                 ? <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                     {alumnosG.map(a=>(
                       <span key={a.id} style={{display:"flex",alignItems:"center",gap:5,
-                        background:"#f0f0f0",borderRadius:16,padding:"3px 10px 3px 6px",fontSize:12}}>
+                        background:"#16241C",borderRadius:16,padding:"3px 10px 3px 6px",fontSize:12}}>
                         <div style={{width:22,height:22,borderRadius:"50%",background:G.fairway,
                           color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",
                           fontSize:10,fontWeight:700,flexShrink:0}}>
@@ -2427,7 +2450,7 @@ function EstructuraInfantil({data, setData, alumnos}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
         <Field label="Día">
           <select value={formGrupo.dia||""} onChange={e=>setFormGrupo(f=>({...f,dia:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,
               padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             <option value="">Día...</option>
             {["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"].map(d=>(
@@ -2445,7 +2468,7 @@ function EstructuraInfantil({data, setData, alumnos}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Categoría del grupo">
           <select value={formGrupo.categoria||""} onChange={e=>setFormGrupo(f=>({...f,categoria:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,
               padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             <option value="">Mixto / Sin categoría</option>
             {CATS_INF.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.nombre}</option>)}
@@ -2458,7 +2481,7 @@ function EstructuraInfantil({data, setData, alumnos}){
       </div>
 
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>
         👥 Alumnos del grupo ({(formGrupo.alumnoIds||[]).length})
       </div>
       <div style={{maxHeight:220,overflowY:"auto",border:"1px solid #eee",borderRadius:10,padding:8}}>
@@ -2471,9 +2494,9 @@ function EstructuraInfantil({data, setData, alumnos}){
               const catA=GRUPOS_EDAD.find(c=>c.id===a.nivel);
               const edad = (()=>{ try{ return a.fechaNacimiento ? calcularEdad(a.fechaNacimiento)+"a" : ""; }catch(e){ return ""; }})();
               return <label key={a.id} style={{display:"flex",alignItems:"center",gap:10,
-                background:sel?"#e8f5eb":"#fff",borderRadius:8,padding:"8px 10px",
+                background:sel?"#123321":"#fff",borderRadius:8,padding:"8px 10px",
                 marginBottom:4,cursor:"pointer",
-                border:sel?"2px solid #1a5c2a":"2px solid #f0f0f0"}}>
+                border:sel?"2px solid #3FA05F":"2px solid #16241C"}}>
                 <input type="checkbox" checked={sel} onChange={()=>toggleAlumno(a.id)}
                   style={{width:16,height:16}}/>
                 <div style={{width:26,height:26,borderRadius:"50%",background:G.fairway,
@@ -2506,6 +2529,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
   const [buscar,        setBuscar]        = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null); // alumno a eliminar
   const [vistaEstructura, setVistaEstructura] = useState(false); // ver estructura/grupos
+  const [modalAcceso,   setModalAcceso]   = useState(null); // alumno al que gestionar el acceso
 
   const alumnos = data.alumnos||[];
 
@@ -2638,9 +2662,9 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
     {/* Header con tipo de escuela */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
       <div style={{display:"flex",gap:6}}>
-        {[["infantil","🧒 Escuela Infantil","#3a7abf"],["adultos","🏌️ Escuela Adultos","#1a5c2a"]].map(([id,label,color])=>(
+        {[["infantil","🧒 Escuela Infantil","#6FB3E8"],["adultos","🏌️ Escuela Adultos","#3FA05F"]].map(([id,label,color])=>(
           <button key={id} onClick={()=>setTabTipo(id)}
-            style={{background:tabTipo===id?color:"#f0f0f0",color:tabTipo===id?"#fff":"#555",
+            style={{background:tabTipo===id?color:"#16241C",color:tabTipo===id?"#fff":"#555",
               border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
             {label}
             <span style={{marginLeft:6,background:tabTipo===id?"rgba(255,255,255,.3)":"#ddd",
@@ -2652,7 +2676,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       </div>
       <input value={buscar} onChange={e=>setBuscar(e.target.value)}
         placeholder="🔍 Buscar alumno..."
-        style={{flex:1,minWidth:150,border:"1.5px solid #d0e0d0",borderRadius:8,
+        style={{flex:1,minWidth:150,border:"1.5px solid #2A4A3A",borderRadius:8,
           padding:"8px 12px",fontSize:14,fontFamily:"inherit"}}/>
       {<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
         {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
@@ -2668,9 +2692,9 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       data={data} setData={setData} alumnos={alumnos.filter(a=>a.activo)}/>}
 
     {/* Info de la escuela seleccionada */}
-    {!vistaEstructura&&<div style={{background:tabTipo==="infantil"?"#e8f0fb":"#e8f5eb",borderRadius:10,
+    {!vistaEstructura&&<div style={{background:tabTipo==="infantil"?"#16222E":"#123321",borderRadius:10,
       padding:"8px 14px",marginBottom:14,fontSize:12,
-      color:tabTipo==="infantil"?"#3a7abf":G.fairway,fontWeight:600}}>
+      color:tabTipo==="infantil"?"#6FB3E8":G.fairway,fontWeight:600}}>
       {tabTipo==="infantil"
         ? "🧒 Escuela Infantil — menores de 18 años · Requiere autorización de padres/tutores y RGPD"
         : "🏌️ Escuela Adultos — mayores de 18 años · RGPD obligatorio"}
@@ -2714,11 +2738,11 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
                   </div>}
                   {/* Estado legal */}
                   <div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>
-                    <span style={{fontSize:11,background:rgpdOk?"#e8f5eb":"#fdecea",
+                    <span style={{fontSize:11,background:rgpdOk?"#123321":"#3A241F",
                       color:rgpdOk?G.grass:G.danger,borderRadius:8,padding:"2px 8px",fontWeight:600}}>
                       {rgpdOk?"✓ RGPD":"⚠ RGPD pendiente"}
                     </span>
-                    {menor&&<span style={{fontSize:11,background:firmaOk?"#e8f5eb":"#fdecea",
+                    {menor&&<span style={{fontSize:11,background:firmaOk?"#123321":"#3A241F",
                       color:firmaOk?G.grass:G.danger,borderRadius:8,padding:"2px 8px",fontWeight:600}}>
                       {firmaOk?"✓ Autorización legal":"⚠ Autorización pendiente"}
                     </span>}
@@ -2726,14 +2750,19 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
                     {a.intolerancias&&<span style={{fontSize:11,background:"#F3E5F5",color:"#6A1B9A",borderRadius:8,padding:"2px 8px",fontWeight:600}}>🥛 {a.intolerancias.length>20?a.intolerancias.slice(0,20)+"…":a.intolerancias}</span>}
                     {a.lesiones&&<span style={{fontSize:11,background:"#FCE4EC",color:"#880E4F",borderRadius:8,padding:"2px 8px",fontWeight:600}}>🩹 {a.lesiones.length>20?a.lesiones.slice(0,20)+"…":a.lesiones}</span>}
                     {a.equipo&&<span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:8,padding:"2px 8px",fontWeight:700}}>🏌️ {a.equipo}</span>}
-                    <span style={{fontSize:11,background:imgOk?"#e8f5eb":"#fff8e1",
-                      color:imgOk?G.grass:"#8B6914",borderRadius:8,padding:"2px 8px",fontWeight:600}}>
+                    <span style={{fontSize:11,background:imgOk?"#123321":"#332B10",
+                      color:imgOk?G.grass:"#E0B368",borderRadius:8,padding:"2px 8px",fontWeight:600}}>
                       {imgOk?"✓ Imagen autorizada":"⚠ Imagen no autorizada"}
+                    </span>
+                    <span style={{fontSize:11,background:a.accesoCreado?"#123321":"#3A241F",
+                      color:a.accesoCreado?G.grass:G.danger,borderRadius:8,padding:"2px 8px",fontWeight:600}}>
+                      {a.accesoCreado?"✓ Acceso creado":"⚠ Sin acceso"}
                     </span>
                   </div>
                 </div>
                 <div style={{display:"flex",gap:5,flexShrink:0,flexDirection:"column"}}>
                   <Btn small color="secondary" onClick={()=>openEdit(a)}>Editar</Btn>
+                  <Btn small color="sky" onClick={()=>setModalAcceso(a)}>🔑 Acceso</Btn>
                   <Btn small color={a.activo?"gold":"secondary"}
                     onClick={()=>setData({...data,alumnos:alumnos.map(x=>x.id===a.id?{...x,activo:!x.activo}:x)})}>
                     {a.activo?"Inactivar":"Activar"}
@@ -2743,10 +2772,14 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
                   </Btn>
                 </div>
               </div>
+
             </Card>;
           })}
         </div>
     )}
+
+    {/* ══ ACCESO DE ALUMNO/TUTOR ══ */}
+    {modalAcceso&&<ModalAccesoAlumno alumno={modalAcceso} data={data} setData={setData} onClose={()=>setModalAcceso(null)}/>}
 
     {/* ══ CONFIRMAR BORRADO ══ */}
     {confirmDelete&&<ConfirmModal
@@ -2773,22 +2806,22 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
     {/* ══ MODAL ALTA / EDICIÓN ══ */}
     {modal&&<Modal title={modal==="new"?"🎓 Nuevo alumno":"✏️ Editar alumno"} onClose={()=>setModal(null)} wide>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,
-        paddingBottom:12,borderBottom:"1px solid #e0eee0"}}>
+        paddingBottom:12,borderBottom:"1px solid #16241C"}}>
         <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:36,objectFit:"contain"}}/>
         <div style={{fontSize:12,color:G.soft}}>🏫 Escuela de Golf · Golf Ciudad Real C.D. · Plataforma Gestión Clases de Golf</div>
       </div>
 
       {/* Tipo de escuela auto-detectado */}
-      {edadForm!==null&&<div style={{background:menorForm?"#e8f0fb":"#e8f5eb",borderRadius:8,
+      {edadForm!==null&&<div style={{background:menorForm?"#16222E":"#123321",borderRadius:8,
         padding:"6px 12px",marginBottom:12,fontSize:13,fontWeight:600,
-        color:menorForm?"#3a7abf":G.fairway}}>
+        color:menorForm?"#6FB3E8":G.fairway}}>
         {menorForm?"🧒 Escuela Infantil (menor de 18 años)":"🏌️ Escuela de Adultos (mayor de 18 años)"}
         {edadForm!==null&&` · ${edadForm} años`}
       </div>}
 
       {/* ── DATOS PERSONALES ── */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>👤 Datos personales</div>
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>👤 Datos personales</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
         <Field label="Nombre completo *">
           <Input value={form.nombre||""} onChange={v=>setForm(f=>({...f,nombre:v}))} placeholder="Nombre y apellidos"/>
@@ -2801,7 +2834,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
         </Field>
         <Field label="Nivel / Grupo">
           <select value={form.nivel||""} onChange={e=>setForm(f=>({...f,nivel:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             <option value="">Sin asignar</option>
             {GRUPOS_EDAD.map(g=><option key={g.id} value={g.id}>{g.emoji} {g.nombre} ({g.rango})</option>)}
@@ -2833,7 +2866,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       </Field>
 
       {/* Permiso de reserva */}
-      <div style={{background:"#f0f7f0",borderRadius:10,padding:"10px 14px",marginTop:4}}>
+      <div style={{background:"#16241C",borderRadius:10,padding:"10px 14px",marginTop:4}}>
         <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8}}>📅 Reserva de clases</div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <input type="checkbox" id="puedeReservarChk"
@@ -2860,7 +2893,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
               }}
               style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:20,
                 cursor:"pointer",border:`2px solid ${asignado?p.color:"#ddd"}`,
-                background:asignado?p.color+"22":"#f9f9f9",fontSize:13,fontWeight:600,
+                background:asignado?p.color+"22":"#16241C",fontSize:13,fontWeight:600,
                 color:asignado?p.color:G.soft}}>
               <div style={{width:10,height:10,borderRadius:"50%",background:asignado?p.color:"#ddd"}}/>
               {p.nombre}
@@ -2872,7 +2905,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
 
       {/* Salud */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🏥 Información médica</div>
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>🏥 Información médica</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
         <Field label="🤧 Alergias">
           <Textarea value={form.alergias||""} onChange={v=>setForm(f=>({...f,alergias:v}))}
@@ -2890,7 +2923,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
 
       {/* Equipo */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"14px 0 8px",
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🏌️ Equipo</div>
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>🏌️ Equipo</div>
       <Field label="Equipo al que pertenece">
         <Input value={form.equipo||""} onChange={v=>setForm(f=>({...f,equipo:v}))}
           placeholder="Nombre del equipo (se asignará más adelante)"/>
@@ -2933,11 +2966,11 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
 
       {/* ── PADRES / TUTORES (siempre visible, obligatorio para menores) ── */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,margin:"16px 0 8px",
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>
         👨‍👩‍👦 Padres / Tutores legales {menorForm&&<span style={{color:G.danger,fontSize:11}}>(obligatorio para menores)</span>}
       </div>
       {(form.tutores||[]).map((t,i)=>(
-        <div key={i} style={{background:"#f9f9f9",borderRadius:10,padding:12,marginBottom:10}}>
+        <div key={i} style={{background:"#16241C",borderRadius:10,padding:12,marginBottom:10}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <span style={{fontWeight:600,color:G.ink,fontSize:13}}>Tutor {i+1}</span>
             <Btn small color="danger" onClick={()=>delTutor(i)}>✕ Eliminar</Btn>
@@ -2948,7 +2981,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
             </Field>
             <Field label="Relación con el alumno">
               <select value={t.relacion||""} onChange={e=>updTutor(i,"relacion",e.target.value)}
-                style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+                style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
                   fontSize:14,background:"#fff",fontFamily:"inherit"}}>
                 <option value="">Seleccionar...</option>
                 <option value="Padre">Padre</option>
@@ -2971,7 +3004,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
               <Input value={t.pin||""} onChange={v=>updTutor(i,"pin",v.replace(/\D/g,"").slice(0,4))} placeholder="PIN propio del tutor"/>
             </Field>
           </div>
-          {t.pin&&<div style={{fontSize:11,color:"#1a5c2a",marginTop:4,background:"#e8f4e8",borderRadius:6,padding:"4px 8px"}}>
+          {t.pin&&<div style={{fontSize:11,color:"#3FA05F",marginTop:4,background:"#16241C",borderRadius:6,padding:"4px 8px"}}>
             ✅ Este tutor puede acceder a la plataforma con su PIN propio
           </div>}
         </div>
@@ -2984,8 +3017,8 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
 
       {/* ── RGPD — PROTECCIÓN DE DATOS ── */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>🔒 Protección de datos (RGPD)</div>
-      <div style={{background:"#f0f8f0",borderRadius:10,padding:12,marginBottom:12,fontSize:12,
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>🔒 Protección de datos (RGPD)</div>
+      <div style={{background:"#16241C",borderRadius:10,padding:12,marginBottom:12,fontSize:12,
         color:"#444",lineHeight:1.6}}>
         <b>Información básica sobre protección de datos:</b><br/>
         <b>Responsable:</b> Golf Ciudad Real C.D. · <b>Finalidad:</b> Gestión de la Escuela de Golf, seguimiento formativo y comunicación con las familias. <b>Base legal:</b> Consentimiento del interesado (Art. 6.1.a RGPD). <b>Conservación:</b> Durante la relación y 5 años posteriores. <b>Derechos:</b> Acceso, rectificación, supresión, portabilidad y oposición dirigiéndose a golf@golfciudadreal.es. <b>Más información:</b> Puede consultar la política de privacidad completa en recepción o en nuestra web.
@@ -3000,7 +3033,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
         </Field>
       </div>
       <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:14,
-        background:"#e8f5eb",borderRadius:8,padding:10}}>
+        background:"#123321",borderRadius:8,padding:10}}>
         <input type="checkbox" id="rgpd" checked={!!form.rgpdAceptado}
           onChange={e=>setForm(f=>({...f,rgpdAceptado:e.target.checked}))}
           style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
@@ -3014,10 +3047,10 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
 
       {/* ── AUTORIZACIÓN DE IMAGEN (especialmente importante para menores) ── */}
       <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
-        paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+        paddingBottom:4,borderBottom:"2px solid #16241C"}}>
         📸 Autorización de imagen {menorForm&&<span style={{color:G.danger,fontSize:11}}>(LOPJM - menores)</span>}
       </div>
-      {menorForm&&<div style={{background:"#fff8e1",borderRadius:8,padding:10,marginBottom:10,
+      {menorForm&&<div style={{background:"#332B10",borderRadius:8,padding:10,marginBottom:10,
         fontSize:12,color:"#5a4000",lineHeight:1.5}}>
         <b>⚠️ Aviso para menores de edad:</b> La captación y uso de imágenes de menores está regulada 
         por la <b>Ley Orgánica 1/1996 de Protección Jurídica del Menor</b> y la <b>LO 3/2018</b>. 
@@ -3034,7 +3067,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
         </Field>
       </div>
       <div style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:14,
-        background:"#e8f5eb",borderRadius:8,padding:10}}>
+        background:"#123321",borderRadius:8,padding:10}}>
         <input type="checkbox" id="imagen" checked={!!form.imagenAutorizada}
           onChange={e=>setForm(f=>({...f,imagenAutorizada:e.target.checked}))}
           style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
@@ -3052,7 +3085,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
       {/* ── FIRMA LEGAL (para menores) ── */}
       {menorForm&&<div>
         <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:8,
-          paddingBottom:4,borderBottom:"2px solid #e0eee0"}}>
+          paddingBottom:4,borderBottom:"2px solid #16241C"}}>
           ✍️ Confirmación legal del responsable
         </div>
         <div style={{background:"#fff0f0",borderRadius:8,padding:10,marginBottom:10,
@@ -3076,7 +3109,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
           </Field>
           <Field label="Relación con el menor">
             <select value={form.firmaRelacion||""} onChange={e=>setForm(f=>({...f,firmaRelacion:e.target.value}))}
-              style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+              style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
                 fontSize:14,background:"#fff",fontFamily:"inherit"}}>
               <option value="">Seleccionar...</option>
               <option value="Padre">Padre</option>
@@ -3086,7 +3119,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
           </Field>
         </div>
         <div style={{display:"flex",alignItems:"flex-start",gap:10,marginTop:10,
-          background:"#fdecea",borderRadius:8,padding:10}}>
+          background:"#3A241F",borderRadius:8,padding:10}}>
           <input type="checkbox" id="legal" checked={!!form.aceptaCondiciones}
             onChange={e=>setForm(f=>({...f,aceptaCondiciones:e.target.checked}))}
             style={{width:18,height:18,marginTop:2,flexShrink:0}}/>
@@ -3100,8 +3133,8 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
 
       {/* Advertencia si faltan datos legales */}
       {(!form.rgpdAceptado||(menorForm&&!form.aceptaCondiciones))&&<div style={{
-        background:"#fff8e1",borderRadius:8,padding:10,marginTop:12,
-        fontSize:12,color:"#8B6914",fontWeight:600}}>
+        background:"#332B10",borderRadius:8,padding:10,marginTop:12,
+        fontSize:12,color:"#E0B368",fontWeight:600}}>
         ⚠️ {!form.rgpdAceptado?"El consentimiento RGPD es obligatorio.":""}
         {menorForm&&!form.aceptaCondiciones?" La confirmación legal del tutor es obligatoria para menores.":""}
       </div>}
@@ -3188,7 +3221,7 @@ function ModClases({data,setData,profesorId=null,modoAdmin=false}){
   const CC=({c})=>{
     const cLabel=CONTENIDOS_CLASE.find(x=>x.id===c.contenidoEspecifico)?.label||"";
     return <Card style={{display:"flex",gap:12,alignItems:"flex-start",marginBottom:8}}>
-    <div style={{background:c.asistio?G.mist:"#fff3cd",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
+    <div style={{background:c.asistio?G.mist:"#332B10",borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
       <div style={{fontSize:11,color:G.soft}}>{c.fecha.slice(5)}</div>
       <div style={{fontSize:15,fontWeight:800,color:G.fairway}}>{c.hora}</div>
     </div>
@@ -3198,7 +3231,7 @@ function ModClases({data,setData,profesorId=null,modoAdmin=false}){
       {cLabel&&<div style={{fontSize:12,color:G.fairway,marginTop:2,fontWeight:600}}>{cLabel}</div>}
       {c.contenido&&<div style={{fontSize:12,color:"#555",marginTop:2}}>{c.contenido}</div>}
       {Number(c.precio||0)>0&&<div style={{fontSize:11,marginTop:3}}>
-        <span style={{background:c.asistio?"#e8f4e8":"#fff3cd",color:c.asistio?G.grass:"#856404",borderRadius:4,padding:"1px 6px",fontWeight:600}}>
+        <span style={{background:c.asistio?"#16241C":"#332B10",color:c.asistio?G.grass:"#E0B368",borderRadius:4,padding:"1px 6px",fontWeight:600}}>
           {c.asistio?"✅ Registrado contablemente":"⏳ "+Number(c.precio).toFixed(2)+"€ pendiente"}
         </span>
       </div>}
@@ -3268,14 +3301,24 @@ function ModClases({data,setData,profesorId=null,modoAdmin=false}){
       <Field label="Zona"><Sel value={form.zona||"Campo de prácticas"} onChange={v=>setForm({...form,zona:v})} options={ZONAS.map(v=>({value:v,label:v}))}/></Field>
 
       {/* ── Precio y contabilidad ── */}
-      <div style={{background:"#f0f7f0",borderRadius:10,padding:"12px 14px",marginTop:4}}>
+      <div style={{background:"#16241C",borderRadius:10,padding:"12px 14px",marginTop:4}}>
         <div style={{fontWeight:700,color:G.fairway,fontSize:13,marginBottom:10}}>💶 Precio y facturación</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-          <Field label="Precio base (€)">
-            <Input type="number" value={form.precio||""} onChange={v=>setForm({...form,precio:v})} placeholder="0.00"/>
+          <Field label="Precio (IVA incluido) €">
+            <Input type="number" value={form.precioConIva ?? (form.precio?(Number(form.precio)*(1+Number(form.ivaPct??21)/100)).toFixed(2):"")}
+              onChange={v=>{
+                const iva=Number(form.ivaPct??21);
+                const base=v===""?"":+(Number(v)/(1+iva/100)).toFixed(2);
+                setForm({...form,precioConIva:v,precio:base});
+              }} placeholder="0.00"/>
           </Field>
           <Field label="IVA (%)">
-            <Sel value={String(form.ivaPct??21)} onChange={v=>setForm({...form,ivaPct:Number(v)})}
+            <Sel value={String(form.ivaPct??21)} onChange={v=>{
+              const iva=Number(v);
+              const gross=form.precioConIva ?? (form.precio?(Number(form.precio)*(1+Number(form.ivaPct??21)/100)):"");
+              const base=gross===""?"":+(Number(gross)/(1+iva/100)).toFixed(2);
+              setForm({...form,ivaPct:iva,precio:base});
+            }}
               options={["0","4","10","21"].map(v=>({value:v,label:v+"%"}))}/>
           </Field>
           <Field label="Retención IRPF (%)">
@@ -3471,14 +3514,14 @@ function ModEstadisticas({data,setData}){
     {/* Cabecera */}
     <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
       <select value={alumnoSel} onChange={e=>setAlumnoSel(e.target.value)}
-        style={{flex:1,minWidth:180,border:"1.5px solid #d0e0d0",borderRadius:8,
+        style={{flex:1,minWidth:180,border:"1.5px solid #2A4A3A",borderRadius:8,
           padding:"9px 12px",fontSize:15,background:"#fff",fontFamily:"inherit",fontWeight:600,color:G.fairway}}>
         {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
       </select>
       <div style={{display:"flex",gap:6}}>
         {[["rondas","📋 Rondas"],["informe","📊 Informe"],["asistencia","📅 Asistencia"]].map(([id,label])=>(
           <button key={id} onClick={()=>setVista(id)}
-            style={{background:vista===id?G.fairway:"#f0f0f0",color:vista===id?"#fff":"#555",
+            style={{background:vista===id?G.fairway:"#16241C",color:vista===id?"#fff":"#555",
               border:"none",borderRadius:8,padding:"9px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
             {label}
           </button>
@@ -3552,13 +3595,13 @@ function ModEstadisticas({data,setData}){
                         const par=PARES_CAMPO[i]||4;
                         const golpes=Number(h.golpes)||0;
                         const diff=golpes-par;
-                        const bgGolpe=golpes===0?"":diff<=-2?"#gold":diff===-1?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0";
-                        return <tr key={i} style={{borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa"}}>
+                        const bgGolpe=golpes===0?"":diff<=-2?"#gold":diff===-1?"#123321":diff===0?"#fff":diff===1?"#332B10":"#ffe0e0";
+                        return <tr key={i} style={{borderBottom:"1px solid #16241C",background:i%2===0?"#fff":"#16241C"}}>
                           <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:G.fairway}}>{h.n}</td>
                           <td style={{padding:"4px 6px",textAlign:"center",color:G.soft}}>{par}</td>
                           <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,
-                            background:golpes>0?(diff<0?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0"):"",
-                            borderRadius:4,color:diff<0?G.grass:diff>0?"#c0392b":G.ink}}>
+                            background:golpes>0?(diff<0?"#123321":diff===0?"#fff":diff===1?"#332B10":"#ffe0e0"):"",
+                            borderRadius:4,color:diff<0?G.grass:diff>0?"#E2685C":G.ink}}>
                             {h.golpes||"—"}{golpes>0&&diff!==0&&<span style={{fontSize:9}}>{diff>0?`+${diff}`:diff}</span>}
                           </td>
                           <td style={{padding:"4px 6px",textAlign:"center"}}>{h.putts||"—"}</td>
@@ -3607,7 +3650,7 @@ function ModEstadisticas({data,setData}){
           <div style={{display:"flex",gap:8,marginBottom:16}}>
             {[["rondas","📋 Por ronda"],["mensual","📅 Por mes"]].map(([id,label])=>(
               <button key={id} onClick={()=>setPeriodoInforme(id)}
-                style={{background:periodoInforme===id?G.fairway:"#f0f0f0",color:periodoInforme===id?"#fff":"#555",
+                style={{background:periodoInforme===id?G.fairway:"#16241C",color:periodoInforme===id?"#fff":"#555",
                   border:"none",borderRadius:8,padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
                 {label}
               </button>
@@ -3663,7 +3706,7 @@ function ModEstadisticas({data,setData}){
             <Card style={{marginBottom:10}}>
               <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:10}}>PORCENTAJES POR RONDA</div>
               {informe.porRonda.map((r,i)=>(
-                <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<informe.porRonda.length-1?"1px solid #f0f0f0":"none"}}>
+                <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<informe.porRonda.length-1?"1px solid #16241C":"none"}}>
                   <div style={{fontSize:11,fontWeight:700,color:G.ink,marginBottom:6}}>
                     📅 {r.fecha} — {r.golpes||"—"} golpes
                   </div>
@@ -3754,7 +3797,7 @@ function ModEstadisticas({data,setData}){
           {[
             [totalRealizadas,"Clases realizadas",G.grass,"✅"],
             [totalProgramadas,"Total programadas",G.fairway,"📋"],
-            [pctGlobal+"%","Asistencia global",pctGlobal>=80?G.grass:pctGlobal>=60?"#e67e22":G.danger,"📊"],
+            [pctGlobal+"%","Asistencia global",pctGlobal>=80?G.grass:pctGlobal>=60?"#F0985A":G.danger,"📊"],
             [proximas,"Próximas clases",G.sky,"📅"],
             [pendCobro,"Pendientes de cobro",G.danger,"⏳"],
           ].map(([v,l,c,ico])=>(
@@ -3792,7 +3835,7 @@ function ModEstadisticas({data,setData}){
                       <div style={{width:28,height:hProg,background:m.programadas>0?"#d4e6d4":G.mist,borderRadius:"4px 4px 0 0",position:"relative",overflow:"hidden"}}>
                         {/* Barra realizadas (encima) */}
                         <div style={{position:"absolute",bottom:0,left:0,right:0,
-                          height:hReal,background:m.pct>=80?G.grass:m.pct>=60?"#e67e22":m.pct>0?G.danger:G.mist,
+                          height:hReal,background:m.pct>=80?G.grass:m.pct>=60?"#F0985A":m.pct>0?G.danger:G.mist,
                           borderRadius:"4px 4px 0 0",transition:"height .3s"}}/>
                       </div>
                     </div>
@@ -3802,7 +3845,7 @@ function ModEstadisticas({data,setData}){
                     </div>
                     {/* Porcentaje */}
                     {m.pct!==null&&m.programadas>0&&<div style={{fontSize:8,fontWeight:700,
-                      color:m.pct>=80?G.grass:m.pct>=60?"#e67e22":G.danger,marginTop:10}}>
+                      color:m.pct>=80?G.grass:m.pct>=60?"#F0985A":G.danger,marginTop:10}}>
                       {m.pct}%
                     </div>}
                   </div>;
@@ -3819,15 +3862,15 @@ function ModEstadisticas({data,setData}){
               <thead>
                 <tr style={{background:G.mist}}>
                   {["Mes","Programadas","Realizadas","Pendientes","% Asistencia"].map(h=>(
-                    <th key={h} style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:G.fairway,borderBottom:"2px solid #d0e0d0"}}>{h}</th>
+                    <th key={h} style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:G.fairway,borderBottom:"2px solid #2A4A3A"}}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {porMes.filter(m=>m.programadas>0).reverse().map((m,i)=>{
                   const pend = m.programadas - m.realizadas;
-                  const color = m.pct>=80?G.grass:m.pct>=60?"#e67e22":G.danger;
-                  return <tr key={m.mes} style={{background:i%2===0?"white":"#f9fbf9",borderBottom:"1px solid #f0f0f0"}}>
+                  const color = m.pct>=80?G.grass:m.pct>=60?"#F0985A":G.danger;
+                  return <tr key={m.mes} style={{background:i%2===0?"white":"#f9fbf9",borderBottom:"1px solid #16241C"}}>
                     <td style={{padding:"8px 10px",fontWeight:600}}>{m.mes}</td>
                     <td style={{padding:"8px 10px",textAlign:"center"}}>{m.programadas}</td>
                     <td style={{padding:"8px 10px",textAlign:"center",color:G.grass,fontWeight:700}}>{m.realizadas}</td>
@@ -3850,7 +3893,7 @@ function ModEstadisticas({data,setData}){
                   <td style={{padding:"8px 10px",textAlign:"center",color:G.grass}}>{totalRealizadas}</td>
                   <td style={{padding:"8px 10px",textAlign:"center",color:totalProgramadas-totalRealizadas>0?G.danger:G.soft}}>{totalProgramadas-totalRealizadas||"—"}</td>
                   <td style={{padding:"8px 10px",textAlign:"center"}}>
-                    <span style={{background:pctGlobal>=80?G.grass:pctGlobal>=60?"#e67e22":G.danger,color:"white",borderRadius:6,padding:"2px 8px",fontWeight:700}}>{pctGlobal}%</span>
+                    <span style={{background:pctGlobal>=80?G.grass:pctGlobal>=60?"#F0985A":G.danger,color:"white",borderRadius:6,padding:"2px 8px",fontWeight:700}}>{pctGlobal}%</span>
                   </td>
                 </tr>
               </tfoot>
@@ -3880,7 +3923,7 @@ function ModEstadisticas({data,setData}){
           <div style={{display:"flex",gap:6}}>
             {[9,18].map(n=>(
               <button key={n} type="button" onClick={()=>cambiarNumHoyos(n)}
-                style={{flex:1,background:form.hoyos===String(n)?G.fairway:"#f0f0f0",
+                style={{flex:1,background:form.hoyos===String(n)?G.fairway:"#16241C",
                   color:form.hoyos===String(n)?"#fff":"#555",border:"none",
                   borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
                 {n}H
@@ -3897,7 +3940,7 @@ function ModEstadisticas({data,setData}){
       <div style={{display:"flex",gap:6,marginBottom:14}}>
         {[["hoyo","⛳ Hoyo a hoyo"],["resumen","📊 Resumen total"]].map(([id,label])=>(
           <button key={id} type="button" onClick={()=>setModoEntrada(id)}
-            style={{flex:1,background:modoEntrada===id?G.fairway:"#f0f0f0",
+            style={{flex:1,background:modoEntrada===id?G.fairway:"#16241C",
               color:modoEntrada===id?"#fff":"#555",border:"none",borderRadius:8,
               padding:"10px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
             {label}
@@ -3913,9 +3956,9 @@ function ModEstadisticas({data,setData}){
             const ok=h.golpes&&h.putts;
             const par=PARES_CAMPO[i]||4;
             const diff=Number(h.golpes)-par;
-            const color=!h.golpes?"#e0e0e0":diff<0?G.grass:diff===0?G.fairway:diff===1?"#e67e22":"#c0392b";
+            const color=!h.golpes?"#2A2A2A":diff<0?G.grass:diff===0?G.fairway:diff===1?"#F0985A":"#E2685C";
             return <button key={i} type="button" onClick={()=>setHoyoActual(i)}
-              style={{minWidth:34,height:34,background:hoyoActual===i?G.fairway:ok?color:"#f0f0f0",
+              style={{minWidth:34,height:34,background:hoyoActual===i?G.fairway:ok?color:"#16241C",
                 color:hoyoActual===i||ok?"#fff":"#888",border:"none",borderRadius:8,
                 fontSize:12,fontWeight:700,cursor:"pointer"}}>
               {i+1}
@@ -3936,27 +3979,27 @@ function ModEstadisticas({data,setData}){
               <Field label="Golpes">
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"golpes",Math.max(1,Number(h.golpes||par)-1))}
-                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                    style={{width:34,height:34,background:"#16241C",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
                   <div style={{flex:1,textAlign:"center",fontSize:28,fontWeight:800,
-                    color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#c0392b"}}>
+                    color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#E2685C"}}>
                     {h.golpes||par}
                   </div>
                   <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"golpes",Number(h.golpes||par)+1)}
-                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                    style={{width:34,height:34,background:"#16241C",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
                 </div>
-                {h.golpes&&<div style={{textAlign:"center",fontSize:11,color:Number(h.golpes)-par<0?G.grass:Number(h.golpes)-par>0?"#c0392b":G.soft,marginTop:2,fontWeight:700}}>
+                {h.golpes&&<div style={{textAlign:"center",fontSize:11,color:Number(h.golpes)-par<0?G.grass:Number(h.golpes)-par>0?"#E2685C":G.soft,marginTop:2,fontWeight:700}}>
                   {Number(h.golpes)-par===0?"Par":Number(h.golpes)-par>0?"+"+( Number(h.golpes)-par):Number(h.golpes)-par}
                 </div>}
               </Field>
               <Field label="Putts">
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"putts",Math.max(0,Number(h.putts||2)-1))}
-                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                    style={{width:34,height:34,background:"#16241C",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
                   <div style={{flex:1,textAlign:"center",fontSize:28,fontWeight:800,color:G.sky}}>
                     {h.putts||"—"}
                   </div>
                   <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"putts",Number(h.putts||1)+1)}
-                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                    style={{width:34,height:34,background:"#16241C",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
                 </div>
               </Field>
             </div>
@@ -3966,7 +4009,7 @@ function ModEstadisticas({data,setData}){
                 <div style={{display:"flex",gap:6}}>
                   {[["si","✅ Sí"],["no","❌ No"],["","-"]].map(([v,l])=>(
                     <button key={v} type="button" onClick={()=>actualizarHoyo(hoyoActual,"fairway",v)}
-                      style={{flex:1,background:h.fairway===v?G.fairway:"#f0f0f0",
+                      style={{flex:1,background:h.fairway===v?G.fairway:"#16241C",
                         color:h.fairway===v?"#fff":"#555",border:"none",borderRadius:8,
                         padding:"7px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                       {l}
@@ -3978,7 +4021,7 @@ function ModEstadisticas({data,setData}){
                 <div style={{display:"flex",gap:6}}>
                   {[["si","✅ Sí"],["no","❌ No"],["","-"]].map(([v,l])=>(
                     <button key={v} type="button" onClick={()=>actualizarHoyo(hoyoActual,"gir",v)}
-                      style={{flex:1,background:h.gir===v?G.fairway:"#f0f0f0",
+                      style={{flex:1,background:h.gir===v?G.fairway:"#16241C",
                         color:h.gir===v?"#fff":"#555",border:"none",borderRadius:8,
                         padding:"7px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                       {l}
@@ -3992,10 +4035,10 @@ function ModEstadisticas({data,setData}){
               <Field label="Penalizaciones">
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"penalizaciones",Math.max(0,Number(h.penalizaciones||0)-1))}
-                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
-                  <div style={{flex:1,textAlign:"center",fontSize:24,fontWeight:800,color:"#c0392b"}}>{h.penalizaciones||0}</div>
+                    style={{width:34,height:34,background:"#16241C",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>−</button>
+                  <div style={{flex:1,textAlign:"center",fontSize:24,fontWeight:800,color:"#E2685C"}}>{h.penalizaciones||0}</div>
                   <button type="button" onClick={()=>actualizarHoyo(hoyoActual,"penalizaciones",Number(h.penalizaciones||0)+1)}
-                    style={{width:34,height:34,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
+                    style={{width:34,height:34,background:"#16241C",border:"none",borderRadius:8,fontSize:18,cursor:"pointer",fontWeight:700}}>+</button>
                 </div>
               </Field>
               <Field label="Fallo tee">
@@ -4003,7 +4046,7 @@ function ModEstadisticas({data,setData}){
                   {FALLO_TEE_OPTS.map(({val,icon,label})=>(
                     <button key={val} type="button"
                       onClick={()=>actualizarHoyo(hoyoActual,"falloTee",h.falloTee===val?"":val)}
-                      style={{flex:1,minWidth:40,background:h.falloTee===val?G.fairway:"#f0f0f0",
+                      style={{flex:1,minWidth:40,background:h.falloTee===val?G.fairway:"#16241C",
                         color:h.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
                         padding:"5px 2px",fontSize:10,fontWeight:700,cursor:"pointer",
                         display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
@@ -4059,7 +4102,7 @@ function ModEstadisticas({data,setData}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
         <Field label="Palo desde el tee">
           <select value={form.paloTee||"Driver"} onChange={e=>setForm(f=>({...f,paloTee:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>(
               <option key={p} value={p}>{p}</option>
@@ -4322,7 +4365,7 @@ function VideoUploader({ value, onChange }){
           : fase==="subir" ? "Subiendo vídeo… "+prog+"%"
           : "Optimizando para la web…"}
       </div>
-      <div style={{height:8,background:"#e8e8e8",borderRadius:6,overflow:"hidden"}}>
+      <div style={{height:8,background:"#16241C",borderRadius:6,overflow:"hidden"}}>
         <div style={{height:"100%",width:(fase==="optimizar"?100:prog)+"%",background:G.grass,transition:"width .2s"}}/>
       </div>
       {fase==="comprimir" && <div style={{fontSize:11,color:G.soft,marginTop:6}}>Comprimiendo el vídeo para que cargue rápido… no cierres esta pantalla.</div>}
@@ -4369,7 +4412,7 @@ function AnalizadorVideo({initialUrl="", onClose}){
   const loadTimeoutRef = useRef(null);
   function clearLoadTimeout(){ if(loadTimeoutRef.current){ clearTimeout(loadTimeoutRef.current); loadTimeoutRef.current=null; } }
 
-  const COLORS = ["#ff2d2d","#ffd400","#22c55e","#3b82f6","#ffffff","#111111"];
+  const COLORS = ["#ff2d2d","#ffd400","#22c55e","#3b82f6","#ffffff","#F5F7F2"];
   const FPS = 30;
 
   // Limpiar object URL al desmontar / cambiar
@@ -4575,7 +4618,7 @@ function AnalizadorVideo({initialUrl="", onClose}){
 
   function fmtT(t){ t=t||0; const m=Math.floor(t/60); const s=Math.floor(t%60); return `${m}:${String(s).padStart(2,"0")}`; }
 
-  const ctrlBtn={background:"#2a2f33",color:"#fff",border:"none",borderRadius:9,minWidth:44,height:42,fontSize:17,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 10px"};
+  const ctrlBtn={background:"#B8C4CE",color:"#fff",border:"none",borderRadius:9,minWidth:44,height:42,fontSize:17,cursor:"pointer",display:"inline-flex",alignItems:"center",justifyContent:"center",padding:"0 10px"};
 
   return <div style={{position:"fixed",inset:0,background:"rgba(10,15,12,.97)",zIndex:1000,display:"flex",flexDirection:"column"}}>
     {/* Barra superior */}
@@ -4698,8 +4741,8 @@ function AnalizadorVideo({initialUrl="", onClose}){
             </label>
           </div>
           <div style={{width:1,height:24,background:"#3a3f43"}}/>
-          <button onClick={()=>setTool("linea")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="linea"?G.grass:"#2a2f33"}}>📏 Línea</button>
-          <button onClick={()=>setTool("libre")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="libre"?G.grass:"#2a2f33"}}>✏️ Libre</button>
+          <button onClick={()=>setTool("linea")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="linea"?G.grass:"#B8C4CE"}}>📏 Línea</button>
+          <button onClick={()=>setTool("libre")} style={{...ctrlBtn,minWidth:0,height:34,fontSize:13,fontWeight:600,padding:"0 12px",background:tool==="libre"?G.grass:"#B8C4CE"}}>✏️ Libre</button>
           <div style={{display:"flex",alignItems:"center",gap:6,color:"#bbb",fontSize:12}}>
             Grosor
             <input type="range" min={1} max={12} value={grosor} onChange={e=>setGrosor(Number(e.target.value))} style={{width:80}}/>
@@ -4727,7 +4770,7 @@ function AnalizadorVideo({initialUrl="", onClose}){
           <div style={{width:1,height:24,background:"#3a3f43",margin:"0 4px"}}/>
           <span style={{color:"#bbb",fontSize:12}}>Velocidad</span>
           {[0.25,0.5,1].map(s=>(
-            <button key={s} onClick={()=>setSpd(s)} style={{...ctrlBtn,minWidth:0,height:36,fontSize:13,fontWeight:600,padding:"0 12px",background:speed===s?G.purple:"#2a2f33"}}>{s===1?"1x":s+"x"}</button>
+            <button key={s} onClick={()=>setSpd(s)} style={{...ctrlBtn,minWidth:0,height:36,fontSize:13,fontWeight:600,padding:"0 12px",background:speed===s?G.purple:"#B8C4CE"}}>{s===1?"1x":s+"x"}</button>
           ))}
         </div>
       </>
@@ -4863,7 +4906,7 @@ function ModAnalisis({data,setData}){
           <div style={{fontSize:12,fontWeight:700,color:G.grass,marginBottom:6}}>✔ Positivos</div>
           {(verItem.aspectosBuenos||[]).map(a=><div key={a} style={{fontSize:13,marginBottom:2}}>· {a}</div>)}
         </div>
-        <div style={{background:"#fffbf0",borderRadius:10,padding:12}}>
+        <div style={{background:"#16241C",borderRadius:10,padding:12}}>
           <div style={{fontSize:12,fontWeight:700,color:G.flag,marginBottom:6}}>▲ A mejorar</div>
           {(verItem.aspectosMejorar||[]).map(a=><div key={a} style={{fontSize:13,marginBottom:2}}>· {a}</div>)}
         </div>
@@ -4876,7 +4919,7 @@ function ModAnalisis({data,setData}){
         <div style={{fontSize:12,fontWeight:700,color:G.purple,marginBottom:6}}>👨‍👩‍👧 COMENTARIO PARA PADRES/TUTORES</div>
         <div style={{background:G.lavender,borderRadius:10,padding:14,fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{verItem.comentarioTutor}</div>
         {alumnoTutores(verItem.alumnoId).length>0&&<div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:6}}>
-          {alumnoTutores(verItem.alumnoId).map(t=><div key={t.id} style={{background:G.white,border:"1px solid #ddd",borderRadius:8,padding:"5px 10px",fontSize:12}}><b>{t.nombre}</b> · {t.email||t.telefono||t.relacion}</div>)}
+          {alumnoTutores(verItem.alumnoId).map(t=><div key={t.id} style={{background:"#123321",border:"1px solid #ddd",borderRadius:8,padding:"5px 10px",fontSize:12}}><b>{t.nombre}</b> · {t.email||t.telefono||t.relacion}</div>)}
         </div>}
       </div>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -4902,10 +4945,10 @@ function ModAnalisis({data,setData}){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
         <div><div style={{fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>✔ POSITIVOS</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosBuenos||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosBuenos",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.grass:"#e8e8e8",color:s?G.white:G.soft}}>{a}</button>;})}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosBuenos||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosBuenos",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.grass:"#16241C",color:s?G.white:G.soft}}>{a}</button>;})}</div>
         </div>
         <div><div style={{fontSize:12,fontWeight:600,color:G.soft,marginBottom:6}}>▲ A MEJORAR</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosMejorar||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosMejorar",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.flag:"#e8e8e8",color:s?G.white:G.soft}}>{a}</button>;})}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{ASPECTOS.map(a=>{const s=(form.aspectosMejorar||[]).includes(a);return <button key={a} onClick={()=>toggleAsp("aspectosMejorar",a)} style={{padding:"3px 9px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:s?G.flag:"#16241C",color:s?G.white:G.soft}}>{a}</button>;})}</div>
         </div>
       </div>
       <div style={{marginBottom:14}}>
@@ -5210,7 +5253,7 @@ function ModPagos({data,setData}){
   });
 
   // ── Filtros comunes ───────────────────────────────────────────────
-  const FiltroBarra=()=><div style={{background:"#f5f5f5",borderRadius:10,padding:"10px 14px",
+  const FiltroBarra=()=><div style={{background:"#16241C",borderRadius:10,padding:"10px 14px",
     display:"flex",flexWrap:"wrap",gap:10,alignItems:"center",marginBottom:16}}>
     <div style={{fontSize:13,fontWeight:600,color:G.fairway}}>🔍 Filtrar:</div>
     <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -5232,7 +5275,7 @@ function ModPagos({data,setData}){
         📊 Exportar CSV
       </button>
       <button onClick={generarPDFPendientes}
-        style={{background:"#c0392b",color:"#fff",border:"none",borderRadius:6,
+        style={{background:"#E2685C",color:"#fff",border:"none",borderRadius:6,
           padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
         📄 PDF Pendientes
       </button>
@@ -5283,7 +5326,7 @@ function ModPagos({data,setData}){
             const retT=tIng.reduce((s,r)=>s+Number(r.retencionImporte||0),0);
             const ivaGas=tGas.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
             return <div key={t} style={{display:"grid",gridTemplateColumns:"120px 1fr 1fr 1fr 1fr 1fr",
-              gap:8,padding:"8px 0",borderBottom:"1px solid #f0f0f0",fontSize:13,alignItems:"center"}}>
+              gap:8,padding:"8px 0",borderBottom:"1px solid #16241C",fontSize:13,alignItems:"center"}}>
               <div style={{fontWeight:700,color:G.ink}}>{t}</div>
               <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>Base ing.</div><b style={{color:G.fairway}}>{fmt(bIng)}</b></div>
               <div style={{textAlign:"right"}}><div style={{fontSize:10,color:G.soft}}>IVA cobrado</div><b style={{color:G.grass}}>{fmt(ivaIng)}</b></div>
@@ -5304,7 +5347,7 @@ function ModPagos({data,setData}){
             const tot=ingFiltrados.filter(r=>r.categoria===nombre).reduce((s,r)=>s+Number(r.importeBase||0),0);
             if(tot===0) return null;
             return <div key={nombre} style={{display:"flex",justifyContent:"space-between",
-              padding:"5px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              padding:"5px 0",borderBottom:"1px solid #16241C",fontSize:13}}>
               <span style={{color:G.ink}}>{nombre}</span>
               <b style={{color:G.fairway}}>{fmt(tot)}</b>
             </div>;
@@ -5317,7 +5360,7 @@ function ModPagos({data,setData}){
             const tot=gasFiltrados.filter(r=>r.categoria===nombre).reduce((s,r)=>s+Number(r.importeBase||0),0);
             if(tot===0) return null;
             return <div key={nombre} style={{display:"flex",justifyContent:"space-between",
-              padding:"5px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              padding:"5px 0",borderBottom:"1px solid #16241C",fontSize:13}}>
               <span style={{color:G.ink}}>{nombre}</span>
               <b style={{color:G.danger}}>{fmt(tot)}</b>
             </div>;
@@ -5348,7 +5391,7 @@ function ModPagos({data,setData}){
                 <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{r.concepto||r.categoria}</div>
                 <div style={{fontSize:12,color:G.soft,marginTop:2}}>
                   {r.fecha} · {r.categoria} · {al} · {r.metodo||"—"}
-                  {r.factura&&<span style={{marginLeft:6,background:"#e8f4e8",color:G.fairway,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
+                  {r.factura&&<span style={{marginLeft:6,background:"#16241C",color:G.fairway,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,auto)",gap:12,textAlign:"right",fontSize:12}}>
@@ -5388,8 +5431,8 @@ function ModPagos({data,setData}){
                 <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{r.concepto||r.categoria}</div>
                 <div style={{fontSize:12,color:G.soft,marginTop:2}}>
                   {r.fecha} · {r.categoria} · {r.metodo||"—"}
-                  {r.factura&&<span style={{marginLeft:6,background:"#fdecea",color:G.danger,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
-                  {r.deducible==="si"&&<span style={{marginLeft:6,background:"#e8f4e8",color:G.grass,borderRadius:4,padding:"1px 5px",fontSize:11}}>Deducible</span>}
+                  {r.factura&&<span style={{marginLeft:6,background:"#3A241F",color:G.danger,borderRadius:4,padding:"1px 5px",fontSize:11}}>Nº {r.factura}</span>}
+                  {r.deducible==="si"&&<span style={{marginLeft:6,background:"#16241C",color:G.grass,borderRadius:4,padding:"1px 5px",fontSize:11}}>Deducible</span>}
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(3,auto)",gap:12,textAlign:"right",fontSize:12}}>
@@ -5447,7 +5490,7 @@ function ModPagos({data,setData}){
                 const bG=tG.reduce((s,r)=>s+Number(r.importeBase||0),0);
                 const ivaS=tG.reduce((s,r)=>s+Number(r.ivaImporte||0),0);
                 const liq=ivaR-ivaS;
-                return <tr key={t} style={{background:i%2===0?"#f9f9f9":"#fff"}}>
+                return <tr key={t} style={{background:i%2===0?"#16241C":"#fff"}}>
                   <td style={{padding:"7px 10px",fontWeight:700,color:G.ink}}>{t} {year}</td>
                   <td style={{padding:"7px 10px",textAlign:"right"}}>{fmt(bI)}</td>
                   <td style={{padding:"7px 10px",textAlign:"right",color:G.fairway}}><b>{fmt(ivaR)}</b></td>
@@ -5476,7 +5519,7 @@ function ModPagos({data,setData}){
           if(ents.length===0) return <div style={{color:G.soft,fontSize:13}}>No hay ingresos con retención en el período.</div>;
           return ents.map(([k,v])=>(
             <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",
-              borderBottom:"1px solid #f0f0f0",fontSize:13}}>
+              borderBottom:"1px solid #16241C",fontSize:13}}>
               <span style={{color:G.ink}}>{k}</span>
               <span>Base: <b>{fmt(v.base)}</b> · Retención: <b style={{color:G.purple}}>{fmt(v.ret)}</b></span>
             </div>
@@ -5505,11 +5548,11 @@ function ModPagos({data,setData}){
           {catI.map((cat,idx)=>{
             const nombre=cat.nombre||cat; const precio=cat.precio||0;
             return <div key={nombre} style={{display:"flex",alignItems:"center",gap:8,
-              padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              padding:"6px 0",borderBottom:"1px solid #16241C",fontSize:13}}>
               <span style={{flex:1,color:G.ink}}>{nombre}</span>
               <input type="number" value={precio} min="0" step="0.01"
                 onChange={e=>updCatPrecio("ingreso",idx,e.target.value)}
-                style={{width:80,border:"1.5px solid #d0e0d0",borderRadius:6,padding:"3px 6px",fontSize:12,textAlign:"right"}}/>
+                style={{width:80,border:"1.5px solid #2A4A3A",borderRadius:6,padding:"3px 6px",fontSize:12,textAlign:"right"}}/>
               <span style={{fontSize:11,color:G.soft}}>€</span>
               <Btn small color="danger" onClick={()=>delCat("ingreso",cat)}>✕</Btn>
             </div>;
@@ -5520,11 +5563,11 @@ function ModPagos({data,setData}){
           {catG.map((cat,idx)=>{
             const nombre=cat.nombre||cat; const precio=cat.precio||0;
             return <div key={nombre} style={{display:"flex",alignItems:"center",gap:8,
-              padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+              padding:"6px 0",borderBottom:"1px solid #16241C",fontSize:13}}>
               <span style={{flex:1,color:G.ink}}>{nombre}</span>
               <input type="number" value={precio} min="0" step="0.01"
                 onChange={e=>updCatPrecio("gasto",idx,e.target.value)}
-                style={{width:80,border:"1.5px solid #d0e0d0",borderRadius:6,padding:"3px 6px",fontSize:12,textAlign:"right"}}/>
+                style={{width:80,border:"1.5px solid #2A4A3A",borderRadius:6,padding:"3px 6px",fontSize:12,textAlign:"right"}}/>
               <span style={{fontSize:11,color:G.soft}}>€</span>
               <Btn small color="danger" onClick={()=>delCat("gasto",cat)}>✕</Btn>
             </div>;
@@ -5581,7 +5624,7 @@ function ModPagos({data,setData}){
         </Field>
       </div>
       {/* Preview cálculo */}
-      {fI.importeBase&&<div style={{background:"#f0f7f0",borderRadius:8,padding:"10px 14px",fontSize:13,marginTop:4}}>
+      {fI.importeBase&&<div style={{background:"#16241C",borderRadius:8,padding:"10px 14px",fontSize:13,marginTop:4}}>
         <b>Vista previa:</b> Base {fmt(fI.importeBase)} + IVA {fmt(Number(fI.importeBase||0)*Number(fI.ivaPct??IVA_DEFAULT)/100)} − Ret. {fmt(Number(fI.importeBase||0)*Number(fI.retencionPct??0)/100)} = <b style={{color:G.fairway}}>{fmt(Number(fI.importeBase||0)+Number(fI.importeBase||0)*Number(fI.ivaPct??IVA_DEFAULT)/100-Number(fI.importeBase||0)*Number(fI.retencionPct??0)/100)}</b>
       </div>}
       <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:12}}>
@@ -5638,6 +5681,99 @@ function ModPagos({data,setData}){
   </div>;
 }
 
+
+// Crea (o gestiona) el acceso de email/contraseña de un alumno o de su
+// tutor legal — da de alta la cuenta en Firebase Auth, escribe su rol
+// en la colección "Usuarios" y marca en el propio alumno que ya tiene
+// acceso creado (para mostrarlo en el listado).
+function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
+  const tutoresConEmail = (alumno?.tutores||[]).filter(t=>t.email);
+  const opciones = [
+    ...(alumno?.email ? [{ key:"alumno", label:alumno.nombre+" (el propio alumno)", email:alumno.email, role:"alumno" }] : []),
+    ...tutoresConEmail.map((t,i)=>({ key:"tutor"+i, label:t.nombre+" (tutor)", email:t.email, role:"tutor", tutorNombre:t.nombre })),
+  ];
+  const [seleccion,setSeleccion] = useState(opciones[0]?.key || "manual");
+  const opcionActiva = opciones.find(o=>o.key===seleccion);
+  const [email,setEmail] = useState(opcionActiva?.email || "");
+  const [password,setPassword] = useState("");
+  const [error,setError] = useState("");
+  const [cargando,setCargando] = useState(false);
+  const [hecho,setHecho] = useState(false);
+
+  useEffect(()=>{
+    const o = opciones.find(x=>x.key===seleccion);
+    setEmail(o?.email || "");
+  },[seleccion]);
+
+  async function crear(){
+    setError("");
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ setError("Introduce un email válido."); return; }
+    if(password.length<6){ setError("La contraseña debe tener al menos 6 caracteres."); return; }
+    setCargando(true);
+    try{
+      const uid = await crearCuentaSinDesconectar(email, password);
+      const rol = opcionActiva?.role || "alumno";
+      const usuarioDoc = rol==="tutor"
+        ? { role:"tutor", alumnoId:alumno.id, tutorNombre:opcionActiva.tutorNombre, email, fecha:new Date().toISOString() }
+        : { role:"alumno", alumnoId:alumno.id, email, fecha:new Date().toISOString() };
+      await setDoc(doc(db,"Usuarios",uid), usuarioDoc);
+      setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
+      setHecho(true);
+    }catch(err){
+      if(err?.code==="auth/email-already-in-use") setError("Ya existe una cuenta con ese email.");
+      else setError("No se pudo crear el acceso. Inténtalo de nuevo.");
+    }
+    setCargando(false);
+  }
+
+  async function enviarReset(){
+    setCargando(true); setError("");
+    try{ await sendPasswordResetEmail(auth, alumno.accesoEmail); setHecho(true); }
+    catch{ setError("No se pudo enviar el email de recuperación."); }
+    setCargando(false);
+  }
+
+  return (
+    <Modal title={"Acceso de "+alumno.nombre} onClose={onClose}>
+      {alumno.accesoCreado ? (
+        <div>
+          <p style={{fontSize:13,color:"#555",marginBottom:4}}>Este alumno ya tiene acceso creado con:</p>
+          <p style={{fontSize:14,fontWeight:600,color:G.ink,marginBottom:16}}>✉️ {alumno.accesoEmail}</p>
+          {hecho ? (
+            <div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"10px 12px",fontSize:13}}>
+              Le hemos enviado un email para restablecer su contraseña.
+            </div>
+          ) : (
+            <Btn onClick={enviarReset} disabled={cargando} full color="secondary">
+              {cargando?"Enviando…":"Enviarle enlace para restablecer contraseña"}
+            </Btn>
+          )}
+          {error && <div style={{background:"#3A241F",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginTop:10}}>{error}</div>}
+        </div>
+      ) : (
+        <div>
+          {opciones.length>0 && (
+            <Field label="¿Para quién es este acceso?">
+              <select value={seleccion} onChange={e=>setSeleccion(e.target.value)}
+                style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,fontFamily:"inherit"}}>
+                {opciones.map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
+                <option value="manual">Otro email…</option>
+              </select>
+            </Field>
+          )}
+          <Field label="Email de acceso">
+            <Input value={email} onChange={setEmail} placeholder="email@ejemplo.com"/>
+          </Field>
+          <Field label="Contraseña temporal (mín. 6 caracteres)">
+            <Input value={password} onChange={setPassword} placeholder="Podrá cambiarla después"/>
+          </Field>
+          {error && <div style={{background:"#3A241F",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>{error}</div>}
+          <Btn onClick={crear} disabled={cargando} full>{cargando?"Creando…":"Crear acceso"}</Btn>
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 function PinAlumnoRow({alumno, data, setData}){
   const [np,setNp]=useState(alumno.pin||"");
@@ -5906,8 +6042,8 @@ function ModAjustes({data,setData,onLogout}){
         </div>
       </Card>
 
-      <Card style={{marginBottom:16,borderLeft:"4px solid #2c3e50"}}>
-        <h3 style={{margin:"0 0 8px",color:"#2c3e50"}}>👑 PIN de Super-Administrador</h3>
+      <Card style={{marginBottom:16,borderLeft:"4px solid #B8C4CE"}}>
+        <h3 style={{margin:"0 0 8px",color:"#B8C4CE"}}>👑 PIN de Super-Administrador</h3>
         <p style={{fontSize:13,color:G.soft,margin:"0 0 12px"}}>
           El super-admin tiene acceso completo a toda la academia, incluyendo gestión de profesores y vista global de datos.
         </p>
@@ -5915,10 +6051,10 @@ function ModAjustes({data,setData,onLogout}){
           <Input value={pinSuper} onChange={v=>setPinSuper(v.replace(/\D/g,"").slice(0,4))} placeholder="0000"/>
         </Field>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <Btn onClick={saveSuperPin} disabled={pinSuper.length<4} style={{background:"#2c3e50"}}>Guardar PIN</Btn>
+          <Btn onClick={saveSuperPin} disabled={pinSuper.length<4} style={{background:"#B8C4CE"}}>Guardar PIN</Btn>
           {savedSuper&&<span style={{color:G.grass,fontSize:13}}>✔ Guardado</span>}
         </div>
-        <div style={{fontSize:11,color:G.soft,marginTop:8,background:"#f5f5f5",borderRadius:6,padding:"6px 10px"}}>
+        <div style={{fontSize:11,color:G.soft,marginTop:8,background:"#16241C",borderRadius:6,padding:"6px 10px"}}>
           💡 PIN por defecto: <b>0000</b>. Cámbialo por seguridad.
         </div>
       </Card>
@@ -5959,7 +6095,7 @@ function ModAjustes({data,setData,onLogout}){
                 setData({...data, permisosPortal: nuevos});
               }}
               style={{display:"flex",alignItems:"center",gap:14,
-                background: visible ? "#f0f7f0" : "#f9f9f9",
+                background: visible ? "#16241C" : "#16241C",
                 border: `2px solid ${visible ? G.grass : "#ddd"}`,
                 borderRadius:12, padding:"12px 16px", cursor:"pointer",
                 transition:"all .15s"}}>
@@ -5978,7 +6114,7 @@ function ModAjustes({data,setData,onLogout}){
             </div>;
           })}
         </div>
-        <div style={{marginTop:16,background:"#fff3cd",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#856404"}}>
+        <div style={{marginTop:16,background:"#332B10",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#E0B368"}}>
           ⚠️ <b>Inicio</b> y <b>Mi PIN</b> se recomiendan siempre visibles. El alumno necesita al menos una pestaña activa para navegar.
         </div>
       </Card>
@@ -6002,7 +6138,7 @@ function ModAjustes({data,setData,onLogout}){
         {labelsSaved&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>✅ Nombres guardados correctamente.</div>}
         <input value={labelSearch} onChange={e=>setLabelSearch(e.target.value)}
           placeholder="🔍 Buscar campo…"
-          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 12px",fontSize:14,fontFamily:"inherit",boxSizing:"border-box",marginBottom:8}}/>
+          style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 12px",fontSize:14,fontFamily:"inherit",boxSizing:"border-box",marginBottom:8}}/>
       </Card>
 
       {filteredGroups.map(group=>(
@@ -6016,7 +6152,7 @@ function ModAjustes({data,setData,onLogout}){
               return <div key={key} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"center"}}>
                 <div style={{fontSize:12,color:G.soft,fontWeight:isModified?700:"normal"}}>{defVal}</div>
                 <input value={curVal} onChange={e=>updateLabel(key,e.target.value)}
-                  style={{border:`1.5px solid ${isModified?G.orange:"#d0e0d0"}`,borderRadius:8,padding:"6px 10px",fontSize:13,fontFamily:"inherit",
+                  style={{border:`1.5px solid ${isModified?G.orange:"#2A4A3A"}`,borderRadius:8,padding:"6px 10px",fontSize:13,fontFamily:"inherit",
                     background:isModified?"#fff8f0":"white",outline:"none"}}/>
                 {isModified
                   ?<button onClick={()=>updateLabel(key,defVal)} title="Restaurar original"
@@ -6037,8 +6173,8 @@ function ModAjustes({data,setData,onLogout}){
 
     {/* ── GESTIÓN DE DATOS ── */}
     {tabAj==="datos"&&<div>
-      <Card style={{marginBottom:14,borderLeft:"4px solid #c0392b"}}>
-        <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>🗑 Borrar datos por categoría</h3>
+      <Card style={{marginBottom:14,borderLeft:"4px solid #E2685C"}}>
+        <h3 style={{margin:"0 0 8px",color:"#E2685C"}}>🗑 Borrar datos por categoría</h3>
         <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>Borra todos los registros de una categoría. <b>Esta acción no se puede deshacer.</b> Los alumnos no se borran.</p>
         <div style={{display:"grid",gap:10}}>
           {[
@@ -6053,7 +6189,7 @@ function ModAjustes({data,setData,onLogout}){
             ["📌 Asignaciones","asignaciones","Eliminar todos los ejercicios asignados"],
             ["🧩 Test Results","resultadosTest","Eliminar todos los resultados de tests"],
           ].map(([label,key,desc])=>(
-            <div key={key} style={{display:"flex",alignItems:"center",gap:12,background:"#fdecea",borderRadius:10,padding:"10px 14px"}}>
+            <div key={key} style={{display:"flex",alignItems:"center",gap:12,background:"#3A241F",borderRadius:10,padding:"10px 14px"}}>
               <div style={{flex:1}}>
                 <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{label}</div>
                 <div style={{fontSize:12,color:G.soft}}>{desc} · {(data[key]||[]).length} registros</div>
@@ -6064,8 +6200,8 @@ function ModAjustes({data,setData,onLogout}){
         </div>
       </Card>
 
-      <Card style={{borderLeft:"4px solid #c0392b"}}>
-        <h3 style={{margin:"0 0 8px",color:"#c0392b"}}>⚠️ Borrar TODOS los datos</h3>
+      <Card style={{borderLeft:"4px solid #E2685C"}}>
+        <h3 style={{margin:"0 0 8px",color:"#E2685C"}}>⚠️ Borrar TODOS los datos</h3>
         <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>Borra absolutamente todo: alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas. La app vuelve al estado inicial.</p>
         <Btn color="danger" onClick={()=>{if(golfConfirm("¿BORRAR TODOS LOS DATOS DE LA APLICACIÓN?\n\nEsta acción eliminará alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas.\n\nEsta acción NO se puede deshacer.\n\nEscribe OK para confirmar:"))if(window.prompt("Escribe OK para confirmar el borrado total:")?.trim().toUpperCase()==="OK"){setData({...data,alumnos:[],clases:[],estadisticas:[],analisis:[],bonos:[],pagos:[],mensajes:[],tareas:[],reservas:[],asignaciones:[],resultadosTest:[],slots:[]});alert("✅ Todos los datos han sido eliminados.");}}}>🗑 BORRAR TODOS LOS DATOS</Btn>
       </Card>
@@ -6104,7 +6240,7 @@ function ModAjustes({data,setData,onLogout}){
           </label>
         </div>
         {importMsg==="ok"&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13}}>✅ Datos importados correctamente.</div>}
-        {importMsg==="error"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13}}>❌ Error: el archivo no es válido.</div>}
+        {importMsg==="error"&&<div style={{background:"#3A241F",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13}}>❌ Error: el archivo no es válido.</div>}
         <div style={{fontSize:12,color:G.soft,marginTop:8}}>💡 Guarda el JSON en Google Drive o en tu móvil. Para restaurar, usa "Importar datos".</div>
       </Card>
 
@@ -6138,7 +6274,7 @@ function CambiarPinAlumno({data,setData,alumnoId}){
   }
 
   const PinDots=({val})=><div style={{display:"flex",gap:8,margin:"6px 0"}}>
-    {[0,1,2,3,4,5].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<val.length?G.fairway:"#d0e0d0"}}/>)}
+    {[0,1,2,3,4,5].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<val.length?G.fairway:"#2A4A3A"}}/>)}
   </div>;
 
   const CampoPin=({label,value,onChange,ver,setVer,placeholder})=>(
@@ -6147,7 +6283,7 @@ function CambiarPinAlumno({data,setData,alumnoId}){
         <input type={ver?"text":"password"} value={value}
           onChange={e=>onChange(e.target.value.replace(/\D/g,"").slice(0,6))}
           placeholder={placeholder}
-          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #d0e0d0",
+          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #2A4A3A",
             borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit",
             letterSpacing:ver?1:3}}/>
         <button onClick={()=>setVer(v=>!v)}
@@ -6167,9 +6303,9 @@ function CambiarPinAlumno({data,setData,alumnoId}){
     <PinDots val={pinNuevo}/>
     <CampoPin label="Confirmar PIN nuevo" value={pinConfirm} onChange={setPinConfirm}
       ver={verConfirm} setVer={setVerConfirm} placeholder="Repite el nuevo PIN"/>
-    {msg==="error_actual"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN actual no es correcto.</div>}
-    {msg==="error_corto"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN nuevo debe tener al menos 4 dígitos.</div>}
-    {msg==="error_confirm"&&<div style={{background:"#fdecea",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Los PINs nuevos no coinciden.</div>}
+    {msg==="error_actual"&&<div style={{background:"#3A241F",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN actual no es correcto.</div>}
+    {msg==="error_corto"&&<div style={{background:"#3A241F",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ El PIN nuevo debe tener al menos 4 dígitos.</div>}
+    {msg==="error_confirm"&&<div style={{background:"#3A241F",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Los PINs nuevos no coinciden.</div>}
     {msg==="ok"&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>✅ PIN cambiado correctamente.</div>}
     <Btn onClick={guardar} disabled={pinActual.length<4||pinNuevo.length<4||pinConfirm.length<4}>Cambiar PIN</Btn>
   </div>;
@@ -6194,7 +6330,7 @@ function InformePreviewAlumno({rpt, data}){
     {children}
   </div>;
 
-  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #e0eee0",
+  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #16241C",
     borderTop:"none",borderRadius:"0 0 10px 10px",padding:14,marginBottom:4}}>
     {children}
   </div>;
@@ -6208,11 +6344,11 @@ function InformePreviewAlumno({rpt, data}){
     {abierto&&<div id={"informe-alumno-"+rpt.id} style={{marginTop:12}}>
 
       {/* ── PORTADA ── */}
-      {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
+      {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#040D08)`,
         borderRadius:14,padding:"24px 20px",marginBottom:4,textAlign:"center",color:"#fff"}}>
         <div style={{display:"flex",justifyContent:"center",gap:14,marginBottom:14,alignItems:"center"}}>
-          <img src={LOGO_GCR} alt="GCR" style={{height:48,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
-          <img src={LOGO_PGA} alt="PGA" style={{height:44,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
+          <img src={LOGO_GCR} alt="GCR" style={{height:48,objectFit:"contain",background:"#123321",borderRadius:8,padding:"4px 6px"}}/>
+          <img src={LOGO_PGA} alt="PGA" style={{height:44,objectFit:"contain",background:"#123321",borderRadius:8,padding:"4px 6px"}}/>
         </div>
         <div style={{fontSize:19,fontWeight:800,marginBottom:5}}>{rpt.titulo}</div>
         <div style={{fontSize:14,opacity:.85,marginBottom:4}}>{alumno?.nombre}</div>
@@ -6234,13 +6370,13 @@ function InformePreviewAlumno({rpt, data}){
 
       {/* ── HCP ── */}
       {secs.includes("hcp")&&<>
-        <SecTitle color="#2e7d3c">📈 Evolución del hándicap</SecTitle>
+        <SecTitle color="#4CBE72">📈 Evolución del hándicap</SecTitle>
         <SecBody><HcpChart stats={stats}/></SecBody>
       </>}
 
       {/* ── ESTADÍSTICAS ── */}
       {secs.includes("estadisticas")&&<>
-        <SecTitle color="#3a7abf">📊 Estadísticas del período</SecTitle>
+        <SecTitle color="#6FB3E8">📊 Estadísticas del período</SecTitle>
         <SecBody>
           <StatsResumen stats={stats}/>
           {stats.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
@@ -6254,7 +6390,7 @@ function InformePreviewAlumno({rpt, data}){
               </thead>
               <tbody>
                 {stats.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map((s,i)=>(
-                  <tr key={i} style={{background:i%2?"#f9f9f9":"#fff"}}>
+                  <tr key={i} style={{background:i%2?"#16241C":"#fff"}}>
                     {[s.fecha,s.hoyos,s.golpes,s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",
                       s.greensRegulacion?s.greensRegulacion+"%":"—",s.putts,s.handicapJuego||s.handicap||"—"].map((v,j)=>(
                       <td key={j} style={{padding:"4px 6px",textAlign:"center",borderBottom:"1px solid #eee"}}>{v||"—"}</td>
@@ -6269,14 +6405,14 @@ function InformePreviewAlumno({rpt, data}){
 
       {/* ── TÉCNICO ── */}
       {secs.includes("tecnico")&&Object.keys(rpt.areasEval||{}).length>0&&<>
-        <SecTitle color="#7b5ea7">🏌️ Análisis técnico</SecTitle>
+        <SecTitle color="#A98FD1">🏌️ Análisis técnico</SecTitle>
         <SecBody>
           <div style={{display:"grid",gap:8}}>
             {AREAS_TECNICAS.filter(a=>rpt.areasEval?.[a]?.val).map(area=>{
               const ev=rpt.areasEval[area];
               const vi=VALORACIONES.find(v=>v.id===ev.val);
               return <div key={area} style={{display:"flex",gap:12,alignItems:"center",
-                background:"#f9f9f9",borderRadius:8,padding:"7px 10px",
+                background:"#16241C",borderRadius:8,padding:"7px 10px",
                 borderLeft:`4px solid ${vi?.color||"#ddd"}`}}>
                 <div style={{flex:1}}>
                   <div style={{fontWeight:600,fontSize:12}}>{area}</div>
@@ -6291,13 +6427,13 @@ function InformePreviewAlumno({rpt, data}){
 
       {/* ── IMÁGENES ── */}
       {secs.includes("imagenes")&&(rpt.imagenesData||[]).length>0&&<>
-        <SecTitle color="#c8a84b">📷 Imágenes</SecTitle>
+        <SecTitle color="#D9BC72">📷 Imágenes</SecTitle>
         <SecBody>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:8}}>
             {(rpt.imagenesData||[]).map((img,i)=>(
               <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
-                <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
-                {img.caption&&<div style={{padding:"5px 8px",fontSize:11,color:"#555",background:"#fafafa"}}>
+                <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#16241C",display:"block"}}/>
+                {img.caption&&<div style={{padding:"5px 8px",fontSize:11,color:"#555",background:"#16241C"}}>
                   {img.caption}
                 </div>}
               </div>
@@ -6308,7 +6444,7 @@ function InformePreviewAlumno({rpt, data}){
 
       {/* ── VÍDEOS ── */}
       {secs.includes("videos")&&(rpt.videosNotas||[]).length>0&&<>
-        <SecTitle color="#c0392b">🎬 Vídeos de análisis</SecTitle>
+        <SecTitle color="#E2685C">🎬 Vídeos de análisis</SecTitle>
         <SecBody>
           {(rpt.videosNotas||[]).map((vid,i)=>(
             <div key={i} style={{marginBottom:14,paddingBottom:14,borderBottom:"1px solid #eee"}}>
@@ -6323,7 +6459,7 @@ function InformePreviewAlumno({rpt, data}){
                   width="100%" height="180" frameBorder="0" allowFullScreen style={{borderRadius:8,display:"block"}}/>
               </div>}
               {vid.notas&&<div style={{fontSize:12,color:"#555",lineHeight:1.6,
-                background:"#f9f9f9",borderRadius:8,padding:"7px 10px",whiteSpace:"pre-wrap"}}>
+                background:"#16241C",borderRadius:8,padding:"7px 10px",whiteSpace:"pre-wrap"}}>
                 {vid.notas}
               </div>}
             </div>
@@ -6333,7 +6469,7 @@ function InformePreviewAlumno({rpt, data}){
 
       {/* ── EJERCICIOS ── */}
       {secs.includes("ejercicios")&&<>
-        <SecTitle color="#d4651a">🏋️ Ejercicios del período</SecTitle>
+        <SecTitle color="#F0985A">🏋️ Ejercicios del período</SecTitle>
         <SecBody>
           {(data.asignaciones||[]).filter(a=>a.alumnoId===rpt.alumnoId&&a.completado).length===0
             ? <div style={{color:G.soft,fontSize:12}}>Sin ejercicios completados en este período.</div>
@@ -6366,7 +6502,7 @@ function InformePreviewAlumno({rpt, data}){
             <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
           </div>}
           {rpt.planTrabajo&&<div>
-            <div style={{fontWeight:700,color:"#7b5ea7",marginBottom:5,fontSize:13}}>📋 Plan de trabajo</div>
+            <div style={{fontWeight:700,color:"#A98FD1",marginBottom:5,fontSize:13}}>📋 Plan de trabajo</div>
             <p style={{margin:0,fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
           </div>}
         </SecBody>
@@ -6556,7 +6692,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
     {NotifUI}
     {/* Header */}
-    <div style={{background:`linear-gradient(135deg,${G.fairway},#0f3518)`,color:G.white,padding:"0 16px"}}>
+    <div style={{background:`linear-gradient(135deg,${G.fairway},#040D08)`,color:G.white,padding:"0 16px"}}>
       <div style={{maxWidth:680,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -6613,7 +6749,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
         {bonoActivo&&<Card style={{marginBottom:14,borderLeft:`4px solid ${G.flag}`}}>
           <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>🎫 Tu bono activo</div>
           <div style={{fontSize:13,color:G.soft,marginBottom:8}}>Bono {bonoActivo.tipo} · {bonoActivo.clases} clases</div>
-          <div style={{background:"#e8e8e8",borderRadius:6,height:10,overflow:"hidden"}}>
+          <div style={{background:"#16241C",borderRadius:6,height:10,overflow:"hidden"}}>
             <div style={{width:`${(bonoActivo.usadas/Number(bonoActivo.clases))*100}%`,height:"100%",background:G.grass}}/>
           </div>
           <div style={{fontSize:12,color:G.soft,marginTop:4}}>{Number(bonoActivo.clases)-bonoActivo.usadas} clases restantes de {bonoActivo.clases}</div>
@@ -6622,7 +6758,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
         {/* Banner huecos disponibles */}
         {slotsDisponibles.length>0&&<div
           onClick={()=>setTab("reservas")}
-          style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:14,display:"flex",gap:12,alignItems:"center",cursor:"pointer"}}>
+          style={{background:"linear-gradient(135deg,#3FA05F,#4CBE72)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:14,display:"flex",gap:12,alignItems:"center",cursor:"pointer"}}>
           <div style={{fontSize:26}}>🔔</div>
           <div style={{flex:1}}>
             <div style={{fontWeight:800,fontSize:14}}>¡{slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
@@ -6725,11 +6861,11 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
       {tab==="reservas"&&<div>
         {/* Aviso si no tiene permiso de reserva */}
-        {!puedeReservar&&<div style={{background:"#fff3cd",border:"1px solid #ffc107",borderRadius:10,padding:"12px 16px",marginBottom:16,fontSize:13,color:"#856404"}}>
+        {!puedeReservar&&<div style={{background:"#332B10",border:"1px solid #ffc107",borderRadius:10,padding:"12px 16px",marginBottom:16,fontSize:13,color:"#E0B368"}}>
           ⚠️ Tu profesor no ha activado la reserva online para tu cuenta. Contacta con él para reservar una clase.
         </div>}
 
-        {puedeReservar&&slotsDisponibles.length>0&&<div style={{background:"linear-gradient(135deg,#1a5c2a,#2e7d3c)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
+        {puedeReservar&&slotsDisponibles.length>0&&<div style={{background:"linear-gradient(135deg,#3FA05F,#4CBE72)",color:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
           <div style={{fontSize:24}}>🔔</div>
           <div style={{flex:1}}>
             <div style={{fontWeight:800,fontSize:14}}>¡Tienes {slotsDisponibles.length} clase{slotsDisponibles.length!==1?"s":""} disponible{slotsDisponibles.length!==1?"s":""}!</div>
@@ -6745,7 +6881,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           const pasada=slot.fecha<today();
           return <Card key={r.id} style={{marginBottom:10,opacity:pasada?.7:1}}>
             <div style={{display:"flex",gap:12,alignItems:"center"}}>
-              <div style={{background:pasada?"#f0f0f0":G.mist,borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
+              <div style={{background:pasada?"#16241C":G.mist,borderRadius:10,padding:"6px 10px",textAlign:"center",minWidth:50,flexShrink:0}}>
                 <div style={{fontSize:11,color:G.soft}}>{slot.fecha.slice(5)}</div>
                 <div style={{fontSize:15,fontWeight:800,color:pasada?G.soft:G.fairway}}>{slot.hora}</div>
               </div>
@@ -6766,7 +6902,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
             <h3 style={{margin:0,color:G.fairway}}>Reservar nueva clase</h3>
             <Btn small color="primary" onClick={()=>setModalSolicitud(true)}>+ Solicitar clase</Btn>
           </div>
-          {solicitudEnviada&&<div style={{background:"#e8f5eb",border:"1px solid "+G.grass,borderRadius:10,padding:"10px 14px",marginBottom:12,color:G.fairway,fontWeight:600,fontSize:13}}>
+          {solicitudEnviada&&<div style={{background:"#123321",border:"1px solid "+G.grass,borderRadius:10,padding:"10px 14px",marginBottom:12,color:G.fairway,fontWeight:600,fontSize:13}}>
             ✅ Solicitud enviada. Tu profesor la revisará pronto.
           </div>}
           {slotsDisponibles.length===0&&<div style={{color:G.soft,textAlign:"center",padding:20,background:G.mist,borderRadius:10}}>No hay huecos disponibles ahora mismo.<br/><span style={{fontSize:12}}>Usa el botón "Solicitar clase" para pedir una cita.</span></div>}
@@ -6829,7 +6965,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
               <div style={{fontSize:11,fontWeight:700,color:G.grass,marginBottom:4}}>✔ Puntos positivos</div>
               <div style={{fontSize:13}}>{(a.aspectosBuenos||[]).join(" · ")}</div>
             </div>}
-            {(a.aspectosMejorar||[]).length>0&&<div style={{background:"#fffbf0",borderRadius:8,padding:"8px 12px",marginBottom:8}}>
+            {(a.aspectosMejorar||[]).length>0&&<div style={{background:"#16241C",borderRadius:8,padding:"8px 12px",marginBottom:8}}>
               <div style={{fontSize:11,fontWeight:700,color:G.flag,marginBottom:4}}>▲ A trabajar</div>
               <div style={{fontSize:13}}>{(a.aspectosMejorar||[]).join(" · ")}</div>
             </div>}
@@ -6858,7 +6994,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           <div style={{display:"flex",gap:6}}>
             {[["lista","📋 Rondas"],["informe","📊 Informe"]].map(([id,label])=>(
               <button key={id} onClick={()=>setVistaStatAlumno(id)}
-                style={{background:vistaStatAlumno===id?G.fairway:"#f0f0f0",color:vistaStatAlumno===id?"#fff":"#555",
+                style={{background:vistaStatAlumno===id?G.fairway:"#16241C",color:vistaStatAlumno===id?"#fff":"#555",
                   border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                 {label}
               </button>
@@ -6896,7 +7032,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                 {[["Golpes",s.golpes,G.fairway],["Putts",s.putts,G.sky],
                   ["Fairways",s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",G.grass],
                   ["GIR",s.greensRegulacion?s.greensRegulacion+"%":"—",G.flag],
-                  ["Hcp Exacto",s.handicapExacto,G.danger],["Hcp Juego",s.handicapJuego,"#e67e22"],
+                  ["Hcp Exacto",s.handicapExacto,G.danger],["Hcp Juego",s.handicapJuego,"#F0985A"],
                   ["Fallo Tee",falloTeeLabel(s.falloTee),G.flag],
                 ].map(([k,v,c])=>(
                   <div key={k} style={{textAlign:"center",minWidth:50}}>
@@ -6922,12 +7058,12 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                       const par=PARES_CAMPO[i]||4;
                       const golpes=Number(h.golpes)||0;
                       const diff=golpes-par;
-                      return <tr key={i} style={{borderBottom:"1px solid #f0f0f0",background:i%2===0?"#fff":"#fafafa"}}>
+                      return <tr key={i} style={{borderBottom:"1px solid #16241C",background:i%2===0?"#fff":"#16241C"}}>
                         <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:G.fairway}}>{h.n}</td>
                         <td style={{padding:"4px 6px",textAlign:"center",color:G.soft}}>{par}</td>
                         <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,
-                          background:golpes>0?(diff<0?"#e8f5eb":diff===0?"#fff":diff===1?"#fff3cd":"#ffe0e0"):"",
-                          borderRadius:4,color:diff<0?G.grass:diff>0?"#c0392b":G.ink}}>
+                          background:golpes>0?(diff<0?"#123321":diff===0?"#fff":diff===1?"#332B10":"#ffe0e0"):"",
+                          borderRadius:4,color:diff<0?G.grass:diff>0?"#E2685C":G.ink}}>
                           {h.golpes||"—"}{golpes>0&&diff!==0&&<span style={{fontSize:9}}>{diff>0?`+${diff}`:diff}</span>}
                         </td>
                         <td style={{padding:"4px 6px",textAlign:"center"}}>{h.putts||"—"}</td>
@@ -7009,7 +7145,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                 <Card>
                   <div style={{fontWeight:600,fontSize:12,color:G.soft,marginBottom:10}}>PORCENTAJES POR RONDA</div>
                   {porRonda.map((r,i)=>(
-                    <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<porRonda.length-1?"1px solid #f0f0f0":"none"}}>
+                    <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<porRonda.length-1?"1px solid #16241C":"none"}}>
                       <div style={{fontSize:11,fontWeight:700,color:G.ink,marginBottom:6}}>📅 {r.fecha}</div>
                       <BarChart pct={r.fairways} color={G.grass} label="Fairways"/>
                       <BarChart pct={r.gir} color={G.flag} label="GIR"/>
@@ -7031,7 +7167,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
               <div style={{display:"flex",gap:6}}>
                 {[9,18].map(n=>(
                   <button key={n} type="button" onClick={()=>{setStatForm(f=>({...f,hoyos:String(n)}));setHoyosAlumno(initHoyos(n));setHoyoActualAlumno(0);}}
-                    style={{flex:1,background:statForm.hoyos===String(n)?G.fairway:"#f0f0f0",
+                    style={{flex:1,background:statForm.hoyos===String(n)?G.fairway:"#16241C",
                       color:statForm.hoyos===String(n)?"#fff":"#555",border:"none",
                       borderRadius:8,padding:"8px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
                     {n}H
@@ -7048,7 +7184,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           <div style={{display:"flex",gap:6,marginBottom:14}}>
             {[["hoyo","⛳ Hoyo a hoyo"],["resumen","📊 Resumen total"]].map(([id,label])=>(
               <button key={id} type="button" onClick={()=>setModoEntradaAlumno(id)}
-                style={{flex:1,background:modoEntradaAlumno===id?G.fairway:"#f0f0f0",
+                style={{flex:1,background:modoEntradaAlumno===id?G.fairway:"#16241C",
                   color:modoEntradaAlumno===id?"#fff":"#555",border:"none",borderRadius:8,
                   padding:"9px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                 {label}
@@ -7063,9 +7199,9 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                 const ok=h.golpes&&h.putts;
                 const par=PARES_CAMPO[i]||4;
                 const diff=Number(h.golpes)-par;
-                const color=!h.golpes?"#e0e0e0":diff<0?G.grass:diff===0?G.fairway:diff===1?"#e67e22":"#c0392b";
+                const color=!h.golpes?"#2A2A2A":diff<0?G.grass:diff===0?G.fairway:diff===1?"#F0985A":"#E2685C";
                 return <button key={i} type="button" onClick={()=>setHoyoActualAlumno(i)}
-                  style={{minWidth:32,height:32,background:hoyoActualAlumno===i?G.fairway:ok?color:"#f0f0f0",
+                  style={{minWidth:32,height:32,background:hoyoActualAlumno===i?G.fairway:ok?color:"#16241C",
                     color:hoyoActualAlumno===i||ok?"#fff":"#888",border:"none",borderRadius:8,
                     fontSize:11,fontWeight:700,cursor:"pointer"}}>
                   {i+1}
@@ -7082,19 +7218,19 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                   <Field label="Golpes">
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,golpes:Math.max(1,Number(x.golpes||par)-1)}:x))}
-                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
-                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#c0392b"}}>{h.golpes||par}</div>
+                        style={{width:30,height:30,background:"#16241C",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:Number(h.golpes)<par?G.grass:Number(h.golpes)===par?G.fairway:"#E2685C"}}>{h.golpes||par}</div>
                       <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,golpes:Number(x.golpes||par)+1}:x))}
-                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                        style={{width:30,height:30,background:"#16241C",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
                     </div>
                   </Field>
                   <Field label="Putts">
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,putts:Math.max(0,Number(x.putts||2)-1)}:x))}
-                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                        style={{width:30,height:30,background:"#16241C",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
                       <div style={{flex:1,textAlign:"center",fontSize:22,fontWeight:800,color:G.sky}}>{h.putts||"—"}</div>
                       <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,putts:Number(x.putts||1)+1}:x))}
-                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                        style={{width:30,height:30,background:"#16241C",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
                     </div>
                   </Field>
                 </div>
@@ -7103,7 +7239,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                     <div style={{display:"flex",gap:5}}>
                       {[["si","✅"],["no","❌"],["","-"]].map(([v,l])=>(
                         <button key={v} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,fairway:v}:x))}
-                          style={{flex:1,background:h.fairway===v?G.fairway:"#f0f0f0",color:h.fairway===v?"#fff":"#555",
+                          style={{flex:1,background:h.fairway===v?G.fairway:"#16241C",color:h.fairway===v?"#fff":"#555",
                             border:"none",borderRadius:8,padding:"6px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
                       ))}
                     </div>
@@ -7112,7 +7248,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                     <div style={{display:"flex",gap:5}}>
                       {[["si","✅"],["no","❌"],["","-"]].map(([v,l])=>(
                         <button key={v} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,gir:v}:x))}
-                          style={{flex:1,background:h.gir===v?G.fairway:"#f0f0f0",color:h.gir===v?"#fff":"#555",
+                          style={{flex:1,background:h.gir===v?G.fairway:"#16241C",color:h.gir===v?"#fff":"#555",
                             border:"none",borderRadius:8,padding:"6px 4px",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
                       ))}
                     </div>
@@ -7122,17 +7258,17 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
                   <Field label="Penalizaciones">
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,penalizaciones:Math.max(0,Number(x.penalizaciones||0)-1)}:x))}
-                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
-                      <div style={{flex:1,textAlign:"center",fontSize:18,fontWeight:800,color:"#c0392b"}}>{h.penalizaciones||0}</div>
+                        style={{width:30,height:30,background:"#16241C",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>−</button>
+                      <div style={{flex:1,textAlign:"center",fontSize:18,fontWeight:800,color:"#E2685C"}}>{h.penalizaciones||0}</div>
                       <button type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,penalizaciones:Number(x.penalizaciones||0)+1}:x))}
-                        style={{width:30,height:30,background:"#f0f0f0",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
+                        style={{width:30,height:30,background:"#16241C",border:"none",borderRadius:8,fontSize:16,cursor:"pointer",fontWeight:700}}>+</button>
                     </div>
                   </Field>
                   <Field label="Fallo tee">
                     <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
                       {FALLO_TEE_OPTS.map(({val,icon})=>(
                         <button key={val} type="button" onClick={()=>setHoyosAlumno(arr=>arr.map((x,idx)=>idx===hoyoActualAlumno?{...x,falloTee:x.falloTee===val?"":val}:x))}
-                          style={{flex:1,minWidth:30,background:h.falloTee===val?G.fairway:"#f0f0f0",
+                          style={{flex:1,minWidth:30,background:h.falloTee===val?G.fairway:"#16241C",
                             color:h.falloTee===val?"#fff":"#555",border:"none",borderRadius:6,
                             padding:"5px 2px",fontSize:13,cursor:"pointer"}}>{icon}</button>
                       ))}
@@ -7168,7 +7304,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           </div>
           <Field label="Palo desde el tee">
             <select value={statForm.paloTee||"Driver"} onChange={e=>setStatForm(f=>({...f,paloTee:e.target.value}))}
-              style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
+              style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#fff",fontFamily:"inherit"}}>
               {["Driver","3-madera","5-madera","Híbrido","3-hierro","4-hierro","5-hierro","No usa tee"].map(p=>(
                 <option key={p} value={p}>{p}</option>
               ))}
@@ -7179,7 +7315,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
               {FALLO_TEE_OPTS.map(({val,icon,label})=>(
                 <button key={val} type="button"
                   onClick={()=>setStatForm(f=>({...f,falloTee:f.falloTee===val?"":val}))}
-                  style={{flex:1,minWidth:52,background:statForm.falloTee===val?G.fairway:"#f0f0f0",
+                  style={{flex:1,minWidth:52,background:statForm.falloTee===val?G.fairway:"#16241C",
                     color:statForm.falloTee===val?"#fff":"#555",border:"none",borderRadius:8,
                     padding:"7px 4px",fontSize:11,fontWeight:700,cursor:"pointer",
                     display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
@@ -10417,7 +10553,7 @@ function ModMensajeria({data,setData}){
   const MsgCard=({m,tipo})=>{
     const alumno=alumnos.find(a=>a.id===(tipo==="recibido"?m.de:m.para));
     return <div onClick={()=>{setVerMsg(m);if(tipo==="recibido"&&!m.leido)marcarLeido(m.id);}}
-      style={{background:G.white,borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.07)",padding:"14px 16px",marginBottom:10,cursor:"pointer",
+      style={{background:"#123321",borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.07)",padding:"14px 16px",marginBottom:10,cursor:"pointer",
         borderLeft:`4px solid ${m.tipo==="informe"?G.purple:m.tipo==="archivo"?G.sky:G.grass}`,
         opacity:tipo==="recibido"&&!m.leido?1:0.85}}>
       <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
@@ -10485,7 +10621,7 @@ function ModMensajeria({data,setData}){
           :<>📥 De <b>{alumnoNombre(verMsg.de)}</b></>
         } · {verMsg.fecha?.slice(0,16).replace("T"," ")}
       </div>
-      <div style={{background:"#f9f9f9",borderRadius:10,padding:16,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:14}}>
+      <div style={{background:"#16241C",borderRadius:10,padding:16,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:14}}>
         {verMsg.cuerpo}
       </div>
       {verMsg.adjunto&&<div style={{marginBottom:14}}>
@@ -10632,7 +10768,7 @@ function ModMensajeriaAlumno({data,setData,alumnoId}){
   }
 
   const MsgCardA=({m,tipo})=><div onClick={()=>{setVerMsg(m);if(tipo==="recibido"&&!m.leido)marcarLeido(m.id);}}
-    style={{background:G.white,borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.07)",padding:"14px 16px",marginBottom:10,cursor:"pointer",
+    style={{background:"#123321",borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.07)",padding:"14px 16px",marginBottom:10,cursor:"pointer",
       borderLeft:`4px solid ${m.tipo==="informe"?G.purple:m.tipo==="archivo"?G.sky:G.grass}`,
       opacity:tipo==="recibido"&&!m.leido?1:0.85}}>
     <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
@@ -10678,7 +10814,7 @@ function ModMensajeriaAlumno({data,setData,alumnoId}){
       <div style={{fontSize:12,color:G.soft,marginBottom:12}}>
         {verMsg.de==="profesor"?"📥 De tu profesor":"📤 Enviado a tu profesor"} · {verMsg.fecha?.slice(0,16).replace("T"," ")}
       </div>
-      <div style={{background:"#f9f9f9",borderRadius:10,padding:16,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:14}}>{verMsg.cuerpo}</div>
+      <div style={{background:"#16241C",borderRadius:10,padding:16,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap",marginBottom:14}}>{verMsg.cuerpo}</div>
       {verMsg.adjunto&&<div style={{marginBottom:14}}>
         <Btn color="sky" onClick={()=>descargarAdjunto(verMsg.adjunto,verMsg.adjuntoNombre)}>⬇ Descargar {verMsg.adjuntoNombre}</Btn>
       </div>}
@@ -10736,7 +10872,7 @@ function ModCurso({data,setData,alumnos}){
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
       {GRUPOS_EDAD.map(g=>(
         <button key={g.id} onClick={()=>{setGrupoSel(g.id);setCatSel("Todos");}}
-          style={{background:grupoSel===g.id?g.color:"#f0f0f0",color:grupoSel===g.id?G.white:"#555",border:"none",borderRadius:20,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",transition:"all .15s"}}>
+          style={{background:grupoSel===g.id?g.color:"#16241C",color:grupoSel===g.id?G.white:"#555",border:"none",borderRadius:20,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",transition:"all .15s"}}>
           {g.emoji} {g.nombre} <span style={{fontSize:11,opacity:.8}}>({g.rango})</span>
         </button>
       ))}
@@ -10776,7 +10912,7 @@ function ModCurso({data,setData,alumnos}){
               <div style={{fontSize:12,color:G.soft,marginTop:2}}>{e.objetivo}</div>
               <div style={{fontSize:11,color:G.soft,marginTop:3}}>⏱ {e.duracion} · 🎒 {e.material.split(",")[0]}{e.material.includes(",")?"…":""}</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:5}}>
-                {(e.tags||[]).slice(0,4).map(t=><span key={t} style={{background:"#f0f0f0",color:"#666",borderRadius:10,padding:"1px 7px",fontSize:10}}>#{t}</span>)}
+                {(e.tags||[]).slice(0,4).map(t=><span key={t} style={{background:"#16241C",color:"#666",borderRadius:10,padding:"1px 7px",fontSize:10}}>#{t}</span>)}
               </div>
             </div>
             <div style={{display:"flex",gap:5,flexShrink:0,flexDirection:"column",alignItems:"flex-end"}}>
@@ -10860,14 +10996,14 @@ function ModEjerciciosAdmin({ data, setData }) {
         {/* Filtros */}
         <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap", alignItems:"center" }}>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar ejercicio o tag…"
-            style={{ flex:1, minWidth:160, border:"1.5px solid #d0e0d0", borderRadius:8, padding:"8px 12px", fontSize:14, fontFamily:"inherit" }}/>
+            style={{ flex:1, minWidth:160, border:"1.5px solid #2A4A3A", borderRadius:8, padding:"8px 12px", fontSize:14, fontFamily:"inherit" }}/>
           <Sel value={nivelFiltro} onChange={setNivelFiltro} options={["Todos","Básico","Iniciación","Intermedio","Avanzado","Todos los niveles"].map(v=>({value:v,label:v}))}/>
         </div>
         {/* Categorías */}
         <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
           {CATS.map(c => (
             <button key={c} onClick={() => setCatFiltro(c)}
-              style={{ background: catFiltro===c ? G.fairway : "#f0f0f0", color: catFiltro===c ? G.white : G.soft,
+              style={{ background: catFiltro===c ? G.fairway : "#16241C", color: catFiltro===c ? G.white : G.soft,
                 border:"none", borderRadius:20, padding:"5px 12px", fontSize:12, fontWeight:600, cursor:"pointer" }}>
               {CAT_ICONS[c]||"📌"} {c} {c!=="Todos"&&<span style={{opacity:.7}}>({todosEj.filter(e=>e.categoria===c||e.cat===c).length})</span>}
             </button>
@@ -10888,7 +11024,7 @@ function ModEjerciciosAdmin({ data, setData }) {
                   </div>
                   <div style={{ fontSize:13, color:G.soft, marginBottom:6 }}>{e.objetivo}</div>
                   <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
-                    {(e.tags||[]).map(t => <span key={t} style={{ background:"#f0f0f0", color:"#666", borderRadius:12, padding:"2px 8px", fontSize:11 }}>#{t}</span>)}
+                    {(e.tags||[]).map(t => <span key={t} style={{ background:"#16241C", color:"#666", borderRadius:12, padding:"2px 8px", fontSize:11 }}>#{t}</span>)}
                   </div>
                 </div>
                 <div style={{ display:"flex", gap:6, flexShrink:0 }}>
@@ -10978,23 +11114,23 @@ const ILUSTRACIONES = {
 
 "ej001": ({}) => (
 <svg viewBox="0 0 260 220" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="220" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="220" fill="#123321" rx="14"/>
   {/* Green surface */}
-  <ellipse cx="130" cy="130" rx="110" ry="75" fill="#4caf65" opacity="0.3"/>
-  <ellipse cx="130" cy="130" rx="85" ry="58" fill="#2e7d3c" opacity="0.2"/>
+  <ellipse cx="130" cy="130" rx="110" ry="75" fill="#4CBE72" opacity="0.3"/>
+  <ellipse cx="130" cy="130" rx="85" ry="58" fill="#4CBE72" opacity="0.2"/>
   {/* Hole */}
-  <circle cx="130" cy="125" r="11" fill="#1a2e1d"/>
-  <circle cx="130" cy="125" r="7" fill="#0d1f10"/>
+  <circle cx="130" cy="125" r="11" fill="#F5F7F2"/>
+  <circle cx="130" cy="125" r="7" fill="#040D08"/>
   {/* Flag */}
   <line x1="130" y1="114" x2="130" y2="78" stroke="#999" strokeWidth="2.5"/>
-  <polygon points="130,78 152,86 130,94" fill="#c0392b"/>
+  <polygon points="130,78 152,86 130,94" fill="#E2685C"/>
   {/* Square 1m */}
-  <rect x="82" y="83" width="96" height="96" fill="none" stroke="#c8a84b" strokeWidth="2.5" strokeDasharray="8,5" rx="3"/>
+  <rect x="82" y="83" width="96" height="96" fill="none" stroke="#D9BC72" strokeWidth="2.5" strokeDasharray="8,5" rx="3"/>
   {/* Tee markers at corners */}
   {[["82","83"],["178","83"],["82","179"],["178","179"]].map(([cx,cy],i)=>(
     <g key={i}>
-      <line x1={Number(cx)} y1={Number(cy)-10} x2={Number(cx)} y2={Number(cy)} stroke="#8B6914" strokeWidth="3" strokeLinecap="round"/>
-      <line x1={Number(cx)-5} y1={Number(cy)-2} x2={Number(cx)+5} y2={Number(cy)-2} stroke="#8B6914" strokeWidth="3" strokeLinecap="round"/>
+      <line x1={Number(cx)} y1={Number(cy)-10} x2={Number(cx)} y2={Number(cy)} stroke="#E0B368" strokeWidth="3" strokeLinecap="round"/>
+      <line x1={Number(cx)-5} y1={Number(cy)-2} x2={Number(cx)+5} y2={Number(cy)-2} stroke="#E0B368" strokeWidth="3" strokeLinecap="round"/>
     </g>
   ))}
   {/* Balls */}
@@ -11003,10 +11139,10 @@ const ILUSTRACIONES = {
   <circle cx="82" cy="179" r="6" fill="white" stroke="#aaa" strokeWidth="2"/>
   <circle cx="178" cy="179" r="6" fill="white" stroke="#aaa" strokeWidth="2"/>
   {/* Arrow from top-left ball to hole */}
-  <path d="M88,89 Q110,100 121,116" fill="none" stroke="#1a5c2a" strokeWidth="2.5" markerEnd="url(#a1)"/>
-  <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#1a5c2a"/></marker></defs>
+  <path d="M88,89 Q110,100 121,116" fill="none" stroke="#3FA05F" strokeWidth="2.5" markerEnd="url(#a1)"/>
+  <defs><marker id="a1" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#3FA05F"/></marker></defs>
   {/* Dimension labels */}
-  <text x="130" y="210" textAnchor="middle" fontSize="12" fill="#1a2e1d" fontWeight="bold">1 metro entre tees</text>
+  <text x="130" y="210" textAnchor="middle" fontSize="12" fill="#F5F7F2" fontWeight="bold">1 metro entre tees</text>
   <text x="130" y="30" textAnchor="middle" fontSize="10" fill="#555">Embocar 3 consecutivos desde cada esquina</text>
   <text x="130" y="44" textAnchor="middle" fontSize="10" fill="#555">sin fallar · Repite hasta conseguirlo</text>
 </svg>
@@ -11014,15 +11150,15 @@ const ILUSTRACIONES = {
 
 "ej002": ({}) => (
 <svg viewBox="0 0 260 260" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="260" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="260" fill="#123321" rx="14"/>
   {/* Green circles */}
-  <circle cx="130" cy="130" r="110" fill="#4caf65" opacity="0.2"/>
-  <circle cx="130" cy="130" r="80" fill="#2e7d3c" opacity="0.15"/>
-  <circle cx="130" cy="130" r="50" fill="#1a5c2a" opacity="0.12"/>
+  <circle cx="130" cy="130" r="110" fill="#4CBE72" opacity="0.2"/>
+  <circle cx="130" cy="130" r="80" fill="#4CBE72" opacity="0.15"/>
+  <circle cx="130" cy="130" r="50" fill="#3FA05F" opacity="0.12"/>
   {/* Hole */}
-  <circle cx="130" cy="130" r="10" fill="#1a2e1d"/>
+  <circle cx="130" cy="130" r="10" fill="#F5F7F2"/>
   <line x1="130" y1="120" x2="130" y2="90" stroke="#aaa" strokeWidth="2"/>
-  <polygon points="130,90 148,98 130,106" fill="#c0392b"/>
+  <polygon points="130,90 148,98 130,106" fill="#E2685C"/>
   {/* 12 balls at clock positions */}
   {Array.from({length:12},(_,i)=>{
     const ang=(i*30-90)*Math.PI/180;
@@ -11030,7 +11166,7 @@ const ILUSTRACIONES = {
     const hour=i===0?12:i;
     const done=i<4;
     return <g key={i}>
-      <circle cx={bx} cy={by} r="8" fill={done?"#c8a84b":"white"} stroke={done?"#8B6914":"#aaa"} strokeWidth="2"/>
+      <circle cx={bx} cy={by} r="8" fill={done?"#D9BC72":"white"} stroke={done?"#E0B368":"#aaa"} strokeWidth="2"/>
       <text x={bx} y={by+4} textAnchor="middle" fontSize="8" fill={done?"white":"#555"} fontWeight="bold">{hour}</text>
     </g>;
   })}
@@ -11039,48 +11175,48 @@ const ILUSTRACIONES = {
     const ang=(i*30-90)*Math.PI/180;
     return <line key={i} x1={130+42*Math.cos(ang)} y1={130+42*Math.sin(ang)}
       x2={130+78*Math.cos(ang)} y2={130+78*Math.sin(ang)}
-      stroke="#2e7d3c" strokeWidth="1" opacity="0.3"/>;
+      stroke="#4CBE72" strokeWidth="1" opacity="0.3"/>;
   })}
-  <text x="130" y="252" textAnchor="middle" fontSize="11" fill="#1a2e1d" fontWeight="bold">12 posiciones · Sin fallar ninguna</text>
+  <text x="130" y="252" textAnchor="middle" fontSize="11" fill="#F5F7F2" fontWeight="bold">12 posiciones · Sin fallar ninguna</text>
 </svg>
 ),
 
 "ej003": ({}) => (
 <svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
-  <rect width="280" height="200" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="50" width="260" height="120" fill="#4caf65" opacity="0.2" rx="8"/>
+  <rect width="280" height="200" fill="#123321" rx="14"/>
+  <rect x="10" y="50" width="260" height="120" fill="#4CBE72" opacity="0.2" rx="8"/>
   {/* Hole+flag */}
-  <circle cx="240" cy="115" r="10" fill="#1a2e1d"/>
+  <circle cx="240" cy="115" r="10" fill="#F5F7F2"/>
   <line x1="240" y1="105" x2="240" y2="75" stroke="#aaa" strokeWidth="2"/>
-  <polygon points="240,75 258,83 240,91" fill="#c0392b"/>
+  <polygon points="240,75 258,83 240,91" fill="#E2685C"/>
   {/* Target ring */}
-  <circle cx="240" cy="115" r="22" fill="none" stroke="#c0392b" strokeWidth="2" strokeDasharray="5,3" opacity="0.8"/>
-  <text x="240" y="148" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">zona 30cm</text>
+  <circle cx="240" cy="115" r="22" fill="none" stroke="#E2685C" strokeWidth="2" strokeDasharray="5,3" opacity="0.8"/>
+  <text x="240" y="148" textAnchor="middle" fontSize="9" fill="#E2685C" fontWeight="bold">zona 30cm</text>
   {/* Distance lines */}
   {[[60,"3m"],[120,"6m"],[180,"9m"]].map(([x,label])=>(
     <g key={label}>
-      <line x1={x} y1="52" x2={x} y2="168" stroke="#c8a84b" strokeWidth="1.5" strokeDasharray="6,4"/>
-      <text x={x} y="46" textAnchor="middle" fontSize="11" fill="#8B6914" fontWeight="bold">{label}</text>
+      <line x1={x} y1="52" x2={x} y2="168" stroke="#D9BC72" strokeWidth="1.5" strokeDasharray="6,4"/>
+      <text x={x} y="46" textAnchor="middle" fontSize="11" fill="#E0B368" fontWeight="bold">{label}</text>
     </g>
   ))}
   {/* Balls */}
   {[[60,115],[120,115],[180,115]].map(([x,y],i)=>(
     <g key={i}>
       <circle cx={x} cy={y} r="7" fill="white" stroke="#888" strokeWidth="2"/>
-      <line x1={x+7} y1={y} x2={220} y2={115} stroke="#1a5c2a" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.5"/>
+      <line x1={x+7} y1={y} x2={220} y2={115} stroke="#3FA05F" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.5"/>
     </g>
   ))}
   {/* Putter */}
   <line x1="30" y1="90" x2="52" y2="112" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
   <rect x="47" y="110" width="14" height="8" fill="#777" rx="3"/>
-  <text x="140" y="192" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Deja la bola cerca del hoyo — controla la velocidad</text>
+  <text x="140" y="192" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Deja la bola cerca del hoyo — controla la velocidad</text>
 </svg>
 ),
 
 "ej004": ({}) => (
 <svg viewBox="0 0 260 230" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="230" fill="#e8f5eb" rx="14"/>
-  <ellipse cx="130" cy="115" rx="115" ry="90" fill="#4caf65" opacity="0.25"/>
+  <rect width="260" height="230" fill="#123321" rx="14"/>
+  <ellipse cx="130" cy="115" rx="115" ry="90" fill="#4CBE72" opacity="0.25"/>
   {/* 18 numbered holes as a winding path */}
   {[
     [30,80],[58,55],[95,45],[135,48],[170,60],[200,85],[210,115],
@@ -11088,22 +11224,22 @@ const ILUSTRACIONES = {
     [72,90],[108,75],[148,80],[182,105]
   ].map(([x,y],i)=>(
     <g key={i}>
-      <circle cx={x} cy={y} r="9" fill={i<9?"#1a5c2a":"#3a7abf"} stroke="white" strokeWidth="1.5"/>
+      <circle cx={x} cy={y} r="9" fill={i<9?"#3FA05F":"#6FB3E8"} stroke="white" strokeWidth="1.5"/>
       <text x={x} y={y+4} textAnchor="middle" fontSize="7.5" fill="white" fontWeight="bold">{i+1}</text>
     </g>
   ))}
   {/* Winding path */}
   <polyline points="30,80 58,55 95,45 135,48 170,60 200,85 210,115 198,148 170,170 135,178 95,175 58,162 35,138 45,108 72,90 108,75 148,80 182,105"
-    fill="none" stroke="#c8a84b" strokeWidth="2" strokeDasharray="6,4" opacity="0.6"/>
+    fill="none" stroke="#D9BC72" strokeWidth="2" strokeDasharray="6,4" opacity="0.6"/>
   {/* Putter + ball at start */}
   <circle cx="30" cy="80" r="6" fill="white" stroke="#888" strokeWidth="2"/>
   <line x1="20" y1="65" x2="28" y2="77" stroke="#555" strokeWidth="3" strokeLinecap="round"/>
   {/* Legend */}
-  <circle cx="20" cy="210" r="7" fill="#1a5c2a"/>
+  <circle cx="20" cy="210" r="7" fill="#3FA05F"/>
   <text x="32" y="214" fontSize="10" fill="#555">Hoyos 1-9</text>
-  <circle cx="110" cy="210" r="7" fill="#3a7abf"/>
+  <circle cx="110" cy="210" r="7" fill="#6FB3E8"/>
   <text x="122" y="214" fontSize="10" fill="#555">Hoyos 10-18</text>
-  <text x="130" y="228" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Diseña tu propio recorrido de 18 putts</text>
+  <text x="130" y="228" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Diseña tu propio recorrido de 18 putts</text>
 </svg>
 ),
 
@@ -11113,62 +11249,62 @@ const ILUSTRACIONES = {
 
 "ej005": ({}) => (
 <svg viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
-  <rect width="280" height="210" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="55" width="260" height="125" fill="#4caf65" opacity="0.25" rx="8"/>
+  <rect width="280" height="210" fill="#123321" rx="14"/>
+  <rect x="10" y="55" width="260" height="125" fill="#4CBE72" opacity="0.25" rx="8"/>
   {/* Green */}
-  <ellipse cx="230" cy="120" rx="40" ry="30" fill="#2e7d3c" opacity="0.5"/>
-  <circle cx="230" cy="116" r="8" fill="#1a2e1d"/>
+  <ellipse cx="230" cy="120" rx="40" ry="30" fill="#4CBE72" opacity="0.5"/>
+  <circle cx="230" cy="116" r="8" fill="#F5F7F2"/>
   <line x1="230" y1="108" x2="230" y2="82" stroke="#aaa" strokeWidth="2"/>
-  <polygon points="230,82 246,90 230,98" fill="#c0392b"/>
+  <polygon points="230,82 246,90 230,98" fill="#E2685C"/>
   {/* Ball */}
   <circle cx="30" cy="120" r="8" fill="white" stroke="#888" strokeWidth="2"/>
   {/* Landing coin */}
-  <circle cx="110" cy="118" r="9" fill="#c8a84b" stroke="#8B6914" strokeWidth="2"/>
+  <circle cx="110" cy="118" r="9" fill="#D9BC72" stroke="#E0B368" strokeWidth="2"/>
   <text x="110" y="122" textAnchor="middle" fontSize="9" fill="#4a3000" fontWeight="bold">€</text>
-  <line x1="110" y1="108" x2="110" y2="98" stroke="#8B6914" strokeWidth="1.5"/>
-  <text x="110" y="95" textAnchor="middle" fontSize="9" fill="#8B6914" fontWeight="bold">1/3</text>
+  <line x1="110" y1="108" x2="110" y2="98" stroke="#E0B368" strokeWidth="1.5"/>
+  <text x="110" y="95" textAnchor="middle" fontSize="9" fill="#E0B368" fontWeight="bold">1/3</text>
   {/* Trajectory arc */}
-  <path d="M38,118 Q110,55 202,116" fill="none" stroke="#1a5c2a" strokeWidth="3" strokeDasharray="7,4"/>
-  <polygon points="202,116 192,112 194,123" fill="#1a5c2a"/>
+  <path d="M38,118 Q110,55 202,116" fill="none" stroke="#3FA05F" strokeWidth="3" strokeDasharray="7,4"/>
+  <polygon points="202,116 192,112 194,123" fill="#3FA05F"/>
   {/* Roll arrow */}
-  <path d="M202,116 Q218,118 222,116" fill="none" stroke="#1a5c2a" strokeWidth="2"/>
+  <path d="M202,116 Q218,118 222,116" fill="none" stroke="#3FA05F" strokeWidth="2"/>
   {/* Labels */}
   <text x="30" y="148" textAnchor="middle" fontSize="9" fill="#555">bola</text>
   <text x="230" y="158" textAnchor="middle" fontSize="9" fill="#555">objetivo</text>
-  <text x="140" y="200" textAnchor="middle" fontSize="11" fill="#1a2e1d" fontWeight="bold">Moneda = punto de caída (1/3 distancia)</text>
+  <text x="140" y="200" textAnchor="middle" fontSize="11" fill="#F5F7F2" fontWeight="bold">Moneda = punto de caída (1/3 distancia)</text>
 </svg>
 ),
 
 "ej006": ({}) => (
 <svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
-  <rect width="280" height="200" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="45" width="260" height="120" fill="#4caf65" opacity="0.25" rx="8"/>
+  <rect width="280" height="200" fill="#123321" rx="14"/>
+  <rect x="10" y="45" width="260" height="120" fill="#4CBE72" opacity="0.25" rx="8"/>
   {/* Player silhouette */}
-  <circle cx="30" cy="95" r="10" fill="#1a5c2a"/>
-  <line x1="30" y1="105" x2="30" y2="130" stroke="#1a5c2a" strokeWidth="4" strokeLinecap="round"/>
-  <line x1="30" y1="115" x2="18" y2="128" stroke="#1a5c2a" strokeWidth="3" strokeLinecap="round"/>
-  <line x1="30" y1="115" x2="44" y2="126" stroke="#1a5c2a" strokeWidth="3" strokeLinecap="round"/>
+  <circle cx="30" cy="95" r="10" fill="#3FA05F"/>
+  <line x1="30" y1="105" x2="30" y2="130" stroke="#3FA05F" strokeWidth="4" strokeLinecap="round"/>
+  <line x1="30" y1="115" x2="18" y2="128" stroke="#3FA05F" strokeWidth="3" strokeLinecap="round"/>
+  <line x1="30" y1="115" x2="44" y2="126" stroke="#3FA05F" strokeWidth="3" strokeLinecap="round"/>
   {/* Distance markers */}
   {[[70,"5m"],[120,"10m"],[170,"15m"],[230,"20m"]].map(([x,label],i)=>(
     <g key={i}>
-      <line x1={x} y1="48" x2={x} y2="165" stroke={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} strokeWidth="2" strokeDasharray="6,4"/>
-      <text x={x} y="43" textAnchor="middle" fontSize="11" fill={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} fontWeight="bold">{label}</text>
+      <line x1={x} y1="48" x2={x} y2="165" stroke={["#6FB3E8","#4CBE72","#D9BC72","#E2685C"][i]} strokeWidth="2" strokeDasharray="6,4"/>
+      <text x={x} y="43" textAnchor="middle" fontSize="11" fill={["#6FB3E8","#4CBE72","#D9BC72","#E2685C"][i]} fontWeight="bold">{label}</text>
       {/* Ball arc for each */}
       <path d={`M42,118 Q${(42+x)/2},${75-i*8} ${x-3},118`} fill="none"
-        stroke={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} strokeWidth="2" strokeDasharray="5,3" opacity="0.8"/>
-      <circle cx={x-3} cy="118" r="5" fill="white" stroke={["#3a7abf","#2e7d3c","#c8a84b","#c0392b"][i]} strokeWidth="1.5"/>
+        stroke={["#6FB3E8","#4CBE72","#D9BC72","#E2685C"][i]} strokeWidth="2" strokeDasharray="5,3" opacity="0.8"/>
+      <circle cx={x-3} cy="118" r="5" fill="white" stroke={["#6FB3E8","#4CBE72","#D9BC72","#E2685C"][i]} strokeWidth="1.5"/>
     </g>
   ))}
-  <text x="140" y="192" textAnchor="middle" fontSize="11" fill="#1a2e1d" fontWeight="bold">Mismo palo · Varía solo el tamaño del swing</text>
+  <text x="140" y="192" textAnchor="middle" fontSize="11" fill="#F5F7F2" fontWeight="bold">Mismo palo · Varía solo el tamaño del swing</text>
 </svg>
 ),
 
 "ej007": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
   {/* Bunker shape */}
-  <ellipse cx="125" cy="155" rx="100" ry="50" fill="#f5f0e8"/>
-  <ellipse cx="125" cy="155" rx="88" ry="42" fill="#e8d5a0"/>
+  <ellipse cx="125" cy="155" rx="100" ry="50" fill="#071710"/>
+  <ellipse cx="125" cy="155" rx="88" ry="42" fill="#332B10"/>
   {/* Sand texture dots */}
   {[[80,145],[100,160],[120,148],[140,162],[160,145],[90,168],[150,168],[115,172]].map(([x,y],i)=>(
     <ellipse key={i} cx={x} cy={y} rx="7" ry="3.5" fill="#d4b866" opacity="0.45" transform={`rotate(${i*22},${x},${y})`}/>
@@ -11176,37 +11312,37 @@ const ILUSTRACIONES = {
   {/* Ball in bunker */}
   <circle cx="115" cy="148" r="8" fill="white" stroke="#888" strokeWidth="2"/>
   {/* Entry point - 5-7cm behind */}
-  <line x1="96" y1="148" x2="107" y2="148" stroke="#c0392b" strokeWidth="3" strokeLinecap="round"/>
-  <text x="95" y="143" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">5-7cm</text>
+  <line x1="96" y1="148" x2="107" y2="148" stroke="#E2685C" strokeWidth="3" strokeLinecap="round"/>
+  <text x="95" y="143" textAnchor="middle" fontSize="9" fill="#E2685C" fontWeight="bold">5-7cm</text>
   {/* Club - open face indicator */}
   <line x1="80" y1="95" x2="105" y2="142" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
   <ellipse cx="107" cy="146" rx="12" ry="6" fill="none" stroke="#555" strokeWidth="3" transform="rotate(-25,107,146)"/>
   <text x="68" y="108" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">cara</text>
   <text x="68" y="118" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">abierta</text>
   {/* Trajectory */}
-  <path d="M115,140 Q148,75 195,65" fill="none" stroke="#1a5c2a" strokeWidth="3"/>
-  <polygon points="195,65 183,68 186,79" fill="#1a5c2a"/>
+  <path d="M115,140 Q148,75 195,65" fill="none" stroke="#3FA05F" strokeWidth="3"/>
+  <polygon points="195,65 183,68 186,79" fill="#3FA05F"/>
   {/* Green target */}
-  <ellipse cx="210" cy="60" rx="30" ry="18" fill="#2e7d3c" opacity="0.6"/>
-  <circle cx="210" cy="57" r="6" fill="#1a2e1d"/>
+  <ellipse cx="210" cy="60" rx="30" ry="18" fill="#4CBE72" opacity="0.6"/>
+  <circle cx="210" cy="57" r="6" fill="#F5F7F2"/>
   <line x1="210" y1="51" x2="210" y2="35" stroke="#aaa" strokeWidth="1.5"/>
-  <polygon points="210,35 222,41 210,47" fill="#c0392b"/>
-  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Entrada 5-7cm tras la bola · Cara abierta · Explosión</text>
+  <polygon points="210,35 222,41 210,47" fill="#E2685C"/>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Entrada 5-7cm tras la bola · Cara abierta · Explosión</text>
 </svg>
 ),
 
 "ej008": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="140" width="240" height="50" fill="#4caf65" opacity="0.35" rx="5"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
+  <rect x="10" y="140" width="240" height="50" fill="#4CBE72" opacity="0.35" rx="5"/>
   {/* Green target */}
-  <ellipse cx="210" cy="138" rx="32" ry="12" fill="#2e7d3c" opacity="0.7"/>
-  <circle cx="210" cy="135" r="6" fill="#1a2e1d"/>
+  <ellipse cx="210" cy="138" rx="32" ry="12" fill="#4CBE72" opacity="0.7"/>
+  <circle cx="210" cy="135" r="6" fill="#F5F7F2"/>
   <line x1="210" y1="129" x2="210" y2="108" stroke="#aaa" strokeWidth="1.5"/>
-  <polygon points="210,108 222,114 210,120" fill="#c0392b"/>
+  <polygon points="210,108 222,114 210,120" fill="#E2685C"/>
   {/* Obstacle */}
   <rect x="110" y="70" width="8" height="72" fill="#888" rx="3"/>
-  <rect x="90" y="67" width="48" height="10" fill="#c0392b" rx="4"/>
+  <rect x="90" y="67" width="48" height="10" fill="#E2685C" rx="4"/>
   <text x="114" y="63" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">obstáculo</text>
   {/* Measurement */}
   <line x1="90" y1="55" x2="90" y2="67" stroke="#555" strokeWidth="1" strokeDasharray="3,2"/>
@@ -11216,42 +11352,42 @@ const ILUSTRACIONES = {
   {/* Ball */}
   <circle cx="38" cy="138" r="8" fill="white" stroke="#888" strokeWidth="2"/>
   {/* High lob trajectory */}
-  <path d="M46,134 Q114,18 178,134" fill="none" stroke="#1a5c2a" strokeWidth="3"/>
-  <polygon points="178,134 168,130 170,141" fill="#1a5c2a"/>
+  <path d="M46,134 Q114,18 178,134" fill="none" stroke="#3FA05F" strokeWidth="3"/>
+  <polygon points="178,134 168,130 170,141" fill="#3FA05F"/>
   {/* Swing arc */}
-  <path d="M26,150 Q38,112 50,150" fill="none" stroke="#c8a84b" strokeWidth="2.5" strokeDasharray="4,3"/>
-  <text x="35" y="170" textAnchor="middle" fontSize="9" fill="#c8a84b">swing U</text>
-  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Lob sobre obstáculo · Cara muy abierta · Swing en U</text>
+  <path d="M26,150 Q38,112 50,150" fill="none" stroke="#D9BC72" strokeWidth="2.5" strokeDasharray="4,3"/>
+  <text x="35" y="170" textAnchor="middle" fontSize="9" fill="#D9BC72">swing U</text>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Lob sobre obstáculo · Cara muy abierta · Swing en U</text>
 </svg>
 ),
 
 "ej009": ({}) => (
 <svg viewBox="0 0 260 240" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="240" fill="#e8f5eb" rx="14"/>
-  <ellipse cx="130" cy="110" rx="110" ry="85" fill="#2e7d3c" opacity="0.3"/>
+  <rect width="260" height="240" fill="#123321" rx="14"/>
+  <ellipse cx="130" cy="110" rx="110" ry="85" fill="#4CBE72" opacity="0.3"/>
   {/* Hole */}
-  <circle cx="130" cy="100" r="10" fill="#1a2e1d"/>
+  <circle cx="130" cy="100" r="10" fill="#F5F7F2"/>
   <line x1="130" y1="90" x2="130" y2="62" stroke="#aaa" strokeWidth="2"/>
-  <polygon points="130,62 146,70 130,78" fill="#c0392b"/>
+  <polygon points="130,62 146,70 130,78" fill="#E2685C"/>
   {/* 9 positions with terrain types */}
   {[
-    [22,85,"rough","#2e7d3c"],
-    [30,148,"pendiente","#4caf65"],
-    [72,188,"bunker","#e8d5a0"],
+    [22,85,"rough","#4CBE72"],
+    [30,148,"pendiente","#4CBE72"],
+    [72,188,"bunker","#332B10"],
     [130,196,"fairway","#81c784"],
-    [190,188,"rough","#2e7d3c"],
-    [232,140,"pendiente","#4caf65"],
-    [236,80,"rough","#2e7d3c"],
+    [190,188,"rough","#4CBE72"],
+    [232,140,"pendiente","#4CBE72"],
+    [236,80,"rough","#4CBE72"],
     [185,30,"fairway","#81c784"],
-    [65,32,"bunker","#e8d5a0"],
+    [65,32,"bunker","#332B10"],
   ].map(([x,y,tipo,color],i)=>(
     <g key={i}>
       <circle cx={x} cy={y} r="14" fill={color} stroke="#555" strokeWidth="1.5"/>
-      <text x={x} y={y+5} textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">{i+1}</text>
+      <text x={x} y={y+5} textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">{i+1}</text>
     </g>
   ))}
   {/* Legend */}
-  {[["#e8d5a0","bunker"],["#2e7d3c","rough"],["#81c784","fairway"],["#4caf65","pendiente"]].map(([c,l],i)=>(
+  {[["#332B10","bunker"],["#4CBE72","rough"],["#81c784","fairway"],["#4CBE72","pendiente"]].map(([c,l],i)=>(
     <g key={l}>
       <rect x={10+i*62} y={218} width="12" height="12" fill={c} stroke="#555" strokeWidth="1" rx="3"/>
       <text x={25+i*62} y={228} fontSize="9" fill="#555">{l}</text>
@@ -11266,104 +11402,104 @@ const ILUSTRACIONES = {
 
 "ej010": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="125" width="240" height="55" fill="#4caf65" opacity="0.35" rx="6"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
+  <rect x="10" y="125" width="240" height="55" fill="#4CBE72" opacity="0.35" rx="6"/>
   {/* Ball */}
   <circle cx="130" cy="123" r="9" fill="white" stroke="#888" strokeWidth="2.5"/>
   {/* Divot AFTER ball */}
-  <path d="M140,130 Q162,136 182,129" fill="#8B6914" opacity="0.7"/>
-  <text x="162" y="150" textAnchor="middle" fontSize="9" fill="#8B6914" fontWeight="bold">divot → delante</text>
-  <line x1="162" y1="142" x2="158" y2="130" stroke="#8B6914" strokeWidth="1.5"/>
+  <path d="M140,130 Q162,136 182,129" fill="#E0B368" opacity="0.7"/>
+  <text x="162" y="150" textAnchor="middle" fontSize="9" fill="#E0B368" fontWeight="bold">divot → delante</text>
+  <line x1="162" y1="142" x2="158" y2="130" stroke="#E0B368" strokeWidth="1.5"/>
   {/* Club - 7 iron */}
   <line x1="108" y1="55" x2="128" y2="118" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
   <rect x="122" y="116" width="16" height="20" fill="#777" rx="3" transform="rotate(-15,130,126)"/>
   {/* Pendulum arc */}
-  <path d="M72,75 Q130,42 188,75" fill="none" stroke="#c8a84b" strokeWidth="2.5" strokeDasharray="6,4"/>
-  <text x="130" y="38" textAnchor="middle" fontSize="10" fill="#c8a84b" fontWeight="bold">swing pendular</text>
+  <path d="M72,75 Q130,42 188,75" fill="none" stroke="#D9BC72" strokeWidth="2.5" strokeDasharray="6,4"/>
+  <text x="130" y="38" textAnchor="middle" fontSize="10" fill="#D9BC72" fontWeight="bold">swing pendular</text>
   {/* Weight arrows */}
-  <text x="55" y="100" textAnchor="middle" fontSize="11" fill="#1a5c2a" fontWeight="bold">50%</text>
-  <text x="205" y="100" textAnchor="middle" fontSize="11" fill="#1a5c2a" fontWeight="bold">50%</text>
+  <text x="55" y="100" textAnchor="middle" fontSize="11" fill="#3FA05F" fontWeight="bold">50%</text>
+  <text x="205" y="100" textAnchor="middle" fontSize="11" fill="#3FA05F" fontWeight="bold">50%</text>
   <text x="55" y="112" textAnchor="middle" fontSize="9" fill="#555">atrás</text>
   <text x="205" y="112" textAnchor="middle" fontSize="9" fill="#555">adelante</text>
   {/* Foot marks */}
-  <ellipse cx="108" cy="162" rx="14" ry="7" fill="#1a5c2a" opacity="0.3"/>
-  <ellipse cx="152" cy="162" rx="14" ry="7" fill="#1a5c2a" opacity="0.3"/>
-  <text x="130" y="202" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">7-hierro al 50% · Solo el contacto importa</text>
+  <ellipse cx="108" cy="162" rx="14" ry="7" fill="#3FA05F" opacity="0.3"/>
+  <ellipse cx="152" cy="162" rx="14" ry="7" fill="#3FA05F" opacity="0.3"/>
+  <text x="130" y="202" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">7-hierro al 50% · Solo el contacto importa</text>
 </svg>
 ),
 
 "ej011": ({}) => (
 <svg viewBox="0 0 280 200" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
-  <rect width="280" height="200" fill="#e8f5eb" rx="14"/>
+  <rect width="280" height="200" fill="#123321" rx="14"/>
   {/* Fairway */}
-  <rect x="10" y="55" width="260" height="110" fill="#4caf65" opacity="0.3" rx="6"/>
+  <rect x="10" y="55" width="260" height="110" fill="#4CBE72" opacity="0.3" rx="6"/>
   {/* Rough sides */}
-  <rect x="10" y="55" width="38" height="110" fill="#2e7d3c" opacity="0.5"/>
-  <rect x="232" y="55" width="38" height="110" fill="#2e7d3c" opacity="0.5"/>
+  <rect x="10" y="55" width="38" height="110" fill="#4CBE72" opacity="0.5"/>
+  <rect x="232" y="55" width="38" height="110" fill="#4CBE72" opacity="0.5"/>
   <text x="29" y="115" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold" transform="rotate(-90,29,115)">ROUGH</text>
   <text x="251" y="115" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold" transform="rotate(90,251,115)">ROUGH</text>
   {/* Target zone */}
-  <rect x="158" y="72" width="62" height="76" fill="#c8a84b" opacity="0.3" rx="5"/>
-  <rect x="158" y="72" width="62" height="76" fill="none" stroke="#c8a84b" strokeWidth="3" rx="5" strokeDasharray="7,4"/>
-  <text x="189" y="112" textAnchor="middle" fontSize="11" fill="#8B6914" fontWeight="bold">ZONA</text>
-  <text x="189" y="126" textAnchor="middle" fontSize="10" fill="#8B6914">20×20m</text>
+  <rect x="158" y="72" width="62" height="76" fill="#D9BC72" opacity="0.3" rx="5"/>
+  <rect x="158" y="72" width="62" height="76" fill="none" stroke="#D9BC72" strokeWidth="3" rx="5" strokeDasharray="7,4"/>
+  <text x="189" y="112" textAnchor="middle" fontSize="11" fill="#E0B368" fontWeight="bold">ZONA</text>
+  <text x="189" y="126" textAnchor="middle" fontSize="10" fill="#E0B368">20×20m</text>
   {/* Player */}
-  <circle cx="42" cy="108" r="9" fill="#1a5c2a"/>
-  <line x1="42" y1="117" x2="42" y2="138" stroke="#1a5c2a" strokeWidth="3" strokeLinecap="round"/>
+  <circle cx="42" cy="108" r="9" fill="#3FA05F"/>
+  <line x1="42" y1="117" x2="42" y2="138" stroke="#3FA05F" strokeWidth="3" strokeLinecap="round"/>
   {/* Trajectories */}
-  <path d="M52,108 Q105,72 165,108" fill="none" stroke="#1a5c2a" strokeWidth="2.5" strokeDasharray="6,3"/>
-  <path d="M52,110 Q100,85 168,100" fill="none" stroke="#1a5c2a" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6"/>
-  <path d="M52,106 Q108,78 160,118" fill="none" stroke="#1a5c2a" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6"/>
+  <path d="M52,108 Q105,72 165,108" fill="none" stroke="#3FA05F" strokeWidth="2.5" strokeDasharray="6,3"/>
+  <path d="M52,110 Q100,85 168,100" fill="none" stroke="#3FA05F" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6"/>
+  <path d="M52,106 Q108,78 160,118" fill="none" stroke="#3FA05F" strokeWidth="1.5" strokeDasharray="4,3" opacity="0.6"/>
   <circle cx="168" cy="106" r="6" fill="white" stroke="#888" strokeWidth="2"/>
-  <text x="140" y="192" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">30 golpes · Aterriza en la zona objetivo</text>
+  <text x="140" y="192" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">30 golpes · Aterriza en la zona objetivo</text>
 </svg>
 ),
 
 "ej012": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
   {/* Fairway top view */}
-  <rect x="95" y="15" width="70" height="178" fill="#4caf65" opacity="0.3" rx="10"/>
+  <rect x="95" y="15" width="70" height="178" fill="#4CBE72" opacity="0.3" rx="10"/>
   {/* Tee */}
   <rect x="108" y="168" width="44" height="10" fill="#888" rx="3"/>
   <circle cx="130" cy="166" r="7" fill="white" stroke="#888" strokeWidth="2.5"/>
   {/* Draw - curves right to left */}
-  <path d="M130,166 Q162,108 145,22" fill="none" stroke="#3a7abf" strokeWidth="3.5"/>
-  <polygon points="145,22 137,33 148,31" fill="#3a7abf"/>
-  <text x="170" y="70" fontSize="11" fill="#3a7abf" fontWeight="bold">DRAW</text>
-  <text x="170" y="84" fontSize="9" fill="#3a7abf">der→izq</text>
+  <path d="M130,166 Q162,108 145,22" fill="none" stroke="#6FB3E8" strokeWidth="3.5"/>
+  <polygon points="145,22 137,33 148,31" fill="#6FB3E8"/>
+  <text x="170" y="70" fontSize="11" fill="#6FB3E8" fontWeight="bold">DRAW</text>
+  <text x="170" y="84" fontSize="9" fill="#6FB3E8">der→izq</text>
   {/* Fade - curves left to right */}
-  <path d="M130,166 Q98,108 115,22" fill="none" stroke="#c0392b" strokeWidth="3.5"/>
-  <polygon points="115,22 108,31 119,33" fill="#c0392b"/>
-  <text x="22" y="70" fontSize="11" fill="#c0392b" fontWeight="bold">FADE</text>
-  <text x="22" y="84" fontSize="9" fill="#c0392b">izq→der</text>
+  <path d="M130,166 Q98,108 115,22" fill="none" stroke="#E2685C" strokeWidth="3.5"/>
+  <polygon points="115,22 108,31 119,33" fill="#E2685C"/>
+  <text x="22" y="70" fontSize="11" fill="#E2685C" fontWeight="bold">FADE</text>
+  <text x="22" y="84" fontSize="9" fill="#E2685C">izq→der</text>
   {/* Straight reference */}
   <line x1="130" y1="166" x2="130" y2="20" stroke="#555" strokeWidth="1.5" strokeDasharray="5,4" opacity="0.35"/>
   {/* Driver club */}
   <line x1="116" y1="174" x2="106" y2="190" stroke="#555" strokeWidth="4" strokeLinecap="round"/>
   <ellipse cx="105" cy="192" rx="9" ry="6" fill="#333"/>
-  <text x="130" y="208" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Alterna draw (azul) y fade (rojo) · 10 de cada</text>
+  <text x="130" y="208" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Alterna draw (azul) y fade (rojo) · 10 de cada</text>
 </svg>
 ),
 
 "ej013": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
   {/* Table */}
-  <rect x="12" y="14" width="236" height="28" fill="#1a5c2a" rx="8"/>
+  <rect x="12" y="14" width="236" height="28" fill="#3FA05F" rx="8"/>
   <text x="130" y="33" textAnchor="middle" fontSize="13" fill="white" fontWeight="bold">Mi tabla de distancias</text>
   {[
-    ["🏌️ Driver","230m","#c8a84b"],
-    ["🌲 3-madera","200m","#3a7abf"],
-    ["🔷 5-hierro","165m","#2e7d3c"],
-    ["7️⃣ 7-hierro","140m","#1a5c2a"],
-    ["9️⃣ 9-hierro","115m","#7b5ea7"],
-    ["🎯 PW","95m","#c8a84b"],
-    ["⛳ SW","70m","#c0392b"],
+    ["🏌️ Driver","230m","#D9BC72"],
+    ["🌲 3-madera","200m","#6FB3E8"],
+    ["🔷 5-hierro","165m","#4CBE72"],
+    ["7️⃣ 7-hierro","140m","#3FA05F"],
+    ["9️⃣ 9-hierro","115m","#A98FD1"],
+    ["🎯 PW","95m","#D9BC72"],
+    ["⛳ SW","70m","#E2685C"],
   ].map(([palo,dist,col],i)=>(
     <g key={i}>
-      <rect x="12" y={46+i*23} width="236" height="23" fill={i%2===0?"#f0f8f0":"white"} rx="2"/>
-      <text x="22" y={62+i*23} fontSize="12" fill="#1a2e1d">{palo}</text>
+      <rect x="12" y={46+i*23} width="236" height="23" fill={i%2===0?"#16241C":"white"} rx="2"/>
+      <text x="22" y={62+i*23} fontSize="12" fill="#F5F7F2">{palo}</text>
       <rect x="168" y={48+i*23} width="68" height="19" fill={col} opacity="0.2" rx="4"/>
       <text x="202" y={62+i*23} textAnchor="middle" fontSize="12" fill={col} fontWeight="bold">{dist}</text>
     </g>
@@ -11374,32 +11510,32 @@ const ILUSTRACIONES = {
 
 "ej014": ({}) => (
 <svg viewBox="0 0 260 220" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="220" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="220" fill="#123321" rx="14"/>
   {/* Hole layout - dogleg */}
   <path d="M25,185 L88,185 L88,128 L152,128 L152,60 L215,60"
-    fill="none" stroke="#4caf65" strokeWidth="24" strokeOpacity="0.35" strokeLinecap="round" strokeLinejoin="round"/>
+    fill="none" stroke="#4CBE72" strokeWidth="24" strokeOpacity="0.35" strokeLinecap="round" strokeLinejoin="round"/>
   <path d="M25,185 L88,185 L88,128 L152,128 L152,60 L215,60"
-    fill="none" stroke="#2e7d3c" strokeWidth="9" strokeOpacity="0.65" strokeLinecap="round" strokeLinejoin="round"/>
+    fill="none" stroke="#4CBE72" strokeWidth="9" strokeOpacity="0.65" strokeLinecap="round" strokeLinejoin="round"/>
   {/* Water */}
-  <ellipse cx="120" cy="128" rx="26" ry="18" fill="#3a7abf" opacity="0.65"/>
+  <ellipse cx="120" cy="128" rx="26" ry="18" fill="#6FB3E8" opacity="0.65"/>
   <text x="120" y="133" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold">💧agua</text>
   {/* Tree */}
-  <circle cx="88" cy="96" r="16" fill="#1a5c2a" opacity="0.85"/>
+  <circle cx="88" cy="96" r="16" fill="#3FA05F" opacity="0.85"/>
   <line x1="88" y1="112" x2="88" y2="126" stroke="#6B3A2A" strokeWidth="4"/>
-  <text x="88" y="82" textAnchor="middle" fontSize="9" fill="#1a2e1d">árbol</text>
+  <text x="88" y="82" textAnchor="middle" fontSize="9" fill="#F5F7F2">árbol</text>
   {/* Green */}
-  <ellipse cx="210" cy="60" rx="24" ry="18" fill="#4caf65" opacity="0.9"/>
-  <circle cx="210" cy="57" r="6" fill="#1a2e1d"/>
+  <ellipse cx="210" cy="60" rx="24" ry="18" fill="#4CBE72" opacity="0.9"/>
+  <circle cx="210" cy="57" r="6" fill="#F5F7F2"/>
   <line x1="210" y1="51" x2="210" y2="34" stroke="#aaa" strokeWidth="2"/>
-  <polygon points="210,34 222,41 210,48" fill="#c0392b"/>
+  <polygon points="210,34 222,41 210,48" fill="#E2685C"/>
   {/* Tee */}
   <circle cx="32" cy="177" r="8" fill="white" stroke="#888" strokeWidth="2.5"/>
   {/* Arrows */}
-  <path d="M40,170 Q65,148 100,132" fill="none" stroke="#1a5c2a" strokeWidth="2.5" strokeDasharray="6,3"/>
-  <polygon points="100,132 90,129 92,140" fill="#1a5c2a"/>
-  <text x="72" y="162" fontSize="9" fill="#1a5c2a" fontWeight="bold">zona segura</text>
-  <path d="M40,172 Q85,152 120,132" fill="none" stroke="#c0392b" strokeWidth="2" strokeDasharray="4,3" opacity="0.7"/>
-  <text x="130" y="215" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Planifica antes de golpear · Zona segura siempre</text>
+  <path d="M40,170 Q65,148 100,132" fill="none" stroke="#3FA05F" strokeWidth="2.5" strokeDasharray="6,3"/>
+  <polygon points="100,132 90,129 92,140" fill="#3FA05F"/>
+  <text x="72" y="162" fontSize="9" fill="#3FA05F" fontWeight="bold">zona segura</text>
+  <path d="M40,172 Q85,152 120,132" fill="none" stroke="#E2685C" strokeWidth="2" strokeDasharray="4,3" opacity="0.7"/>
+  <text x="130" y="215" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Planifica antes de golpear · Zona segura siempre</text>
 </svg>
 ),
 
@@ -11409,41 +11545,41 @@ const ILUSTRACIONES = {
 
 "ej015": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
-  <path d="M25,180 Q115,165 205,105" fill="none" stroke="#4caf65" strokeWidth="24" strokeOpacity="0.35" strokeLinecap="round"/>
-  <path d="M25,180 Q115,165 205,105" fill="none" stroke="#2e7d3c" strokeWidth="9" strokeOpacity="0.6" strokeLinecap="round"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
+  <path d="M25,180 Q115,165 205,105" fill="none" stroke="#4CBE72" strokeWidth="24" strokeOpacity="0.35" strokeLinecap="round"/>
+  <path d="M25,180 Q115,165 205,105" fill="none" stroke="#4CBE72" strokeWidth="9" strokeOpacity="0.6" strokeLinecap="round"/>
   {/* Danger zone */}
-  <ellipse cx="172" cy="118" rx="32" ry="22" fill="#c0392b" opacity="0.3"/>
-  <text x="172" y="115" textAnchor="middle" fontSize="10" fill="#c0392b" fontWeight="bold">⚠ RIESGO</text>
-  <text x="172" y="128" textAnchor="middle" fontSize="9" fill="#c0392b">agua/OB</text>
+  <ellipse cx="172" cy="118" rx="32" ry="22" fill="#E2685C" opacity="0.3"/>
+  <text x="172" y="115" textAnchor="middle" fontSize="10" fill="#E2685C" fontWeight="bold">⚠ RIESGO</text>
+  <text x="172" y="128" textAnchor="middle" fontSize="9" fill="#E2685C">agua/OB</text>
   {/* Safe zone */}
-  <ellipse cx="115" cy="150" rx="34" ry="22" fill="#1a5c2a" opacity="0.2"/>
-  <text x="115" y="148" textAnchor="middle" fontSize="10" fill="#1a5c2a" fontWeight="bold">✓ SEGURO</text>
+  <ellipse cx="115" cy="150" rx="34" ry="22" fill="#3FA05F" opacity="0.2"/>
+  <text x="115" y="148" textAnchor="middle" fontSize="10" fill="#3FA05F" fontWeight="bold">✓ SEGURO</text>
   {/* Ball */}
   <circle cx="32" cy="172" r="8" fill="white" stroke="#888" strokeWidth="2.5"/>
   {/* Safe arrow */}
-  <path d="M40,168 Q78,155 106,152" fill="none" stroke="#1a5c2a" strokeWidth="3.5"/>
-  <polygon points="106,152 96,147 96,158" fill="#1a5c2a"/>
+  <path d="M40,168 Q78,155 106,152" fill="none" stroke="#3FA05F" strokeWidth="3.5"/>
+  <polygon points="106,152 96,147 96,158" fill="#3FA05F"/>
   {/* Risky arrow */}
-  <path d="M40,170 Q108,140 158,120" fill="none" stroke="#c0392b" strokeWidth="2.5" strokeDasharray="6,3" opacity="0.75"/>
-  <polygon points="158,120 148,117 150,128" fill="#c0392b" opacity="0.75"/>
+  <path d="M40,170 Q108,140 158,120" fill="none" stroke="#E2685C" strokeWidth="2.5" strokeDasharray="6,3" opacity="0.75"/>
+  <polygon points="158,120 148,117 150,128" fill="#E2685C" opacity="0.75"/>
   {/* Green */}
-  <ellipse cx="210" cy="104" rx="25" ry="18" fill="#4caf65" opacity="0.75"/>
-  <circle cx="210" cy="101" r="6" fill="#1a2e1d"/>
-  <text x="130" y="204" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Elige siempre la zona segura · Evita riesgos</text>
+  <ellipse cx="210" cy="104" rx="25" ry="18" fill="#4CBE72" opacity="0.75"/>
+  <circle cx="210" cy="101" r="6" fill="#F5F7F2"/>
+  <text x="130" y="204" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Elige siempre la zona segura · Evita riesgos</text>
 </svg>
 ),
 
 "ej016": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="12" width="240" height="32" fill="#1a5c2a" rx="8"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
+  <rect x="10" y="12" width="240" height="32" fill="#3FA05F" rx="8"/>
   <text x="130" y="33" textAnchor="middle" fontSize="13" fill="white" fontWeight="bold">GAME PLAN — Hoyo 7 par 4</text>
   {[
-    ["1","Salida","Fairway izq · Evitar OB derecho · 5-hierro","#3a7abf"],
-    ["2","Approach","Desde zona A: 130m · 8-hierro · Centro del green","#2e7d3c"],
-    ["3","No hacer","Bunker trasero izq · No atacar bandera atrás","#c0392b"],
-    ["4","Green","Leer desde detrás · Lag putt a 1m · Sin 3-putt","#7b5ea7"],
+    ["1","Salida","Fairway izq · Evitar OB derecho · 5-hierro","#6FB3E8"],
+    ["2","Approach","Desde zona A: 130m · 8-hierro · Centro del green","#4CBE72"],
+    ["3","No hacer","Bunker trasero izq · No atacar bandera atrás","#E2685C"],
+    ["4","Green","Leer desde detrás · Lag putt a 1m · Sin 3-putt","#A98FD1"],
   ].map(([n,tit,desc,col],i)=>(
     <g key={n}>
       <rect x="10" y={50+i*38} width="240" height="36" fill="white" stroke={col} strokeWidth="2" rx="8"/>
@@ -11459,8 +11595,8 @@ const ILUSTRACIONES = {
 
 "ej017": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
-  <rect x="10" y="12" width="240" height="28" fill="#1a5c2a" rx="7"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
+  <rect x="10" y="12" width="240" height="28" fill="#3FA05F" rx="7"/>
   <text x="130" y="31" textAnchor="middle" fontSize="12" fill="white" fontWeight="bold">Par propio — Hándicap 18</text>
   {/* Table */}
   {[["Hoyo","Dif.","Par oficial","Tu par","Objetivo"],
@@ -11472,10 +11608,10 @@ const ILUSTRACIONES = {
     ["...","...","...","...","..."],
   ].map((row,i)=>(
     <g key={i}>
-      <rect x="10" y={44+i*25} width="240" height="25" fill={i===0?"#2e7d3c":i%2===0?"#f0f8f0":"white"} rx={i===0?4:2}/>
+      <rect x="10" y={44+i*25} width="240" height="25" fill={i===0?"#4CBE72":i%2===0?"#16241C":"white"} rx={i===0?4:2}/>
       {row.map((cell,j)=>(
         <text key={j} x={20+j*48} y={61+i*25} fontSize={i===0?9.5:9}
-          fill={i===0?"white":j===3?"#3a7abf":j===4?"#2e7d3c":"#1a2e1d"}
+          fill={i===0?"white":j===3?"#6FB3E8":j===4?"#4CBE72":"#F5F7F2"}
           fontWeight={i===0||j===3?"bold":"normal"}>{cell}</text>
       ))}
     </g>
@@ -11490,12 +11626,12 @@ const ILUSTRACIONES = {
 
 "ej018": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
   {/* Book */}
-  <rect x="28" y="18" width="168" height="140" fill="white" stroke="#1a5c2a" strokeWidth="3" rx="8"/>
-  <rect x="28" y="18" width="10" height="140" fill="#1a5c2a" rx="4"/>
-  <text x="118" y="46" textAnchor="middle" fontSize="12" fill="#1a5c2a" fontWeight="bold">REGLAMENTO</text>
-  <text x="118" y="60" textAnchor="middle" fontSize="11" fill="#1a5c2a" fontWeight="bold">RFEG 2023</text>
+  <rect x="28" y="18" width="168" height="140" fill="white" stroke="#3FA05F" strokeWidth="3" rx="8"/>
+  <rect x="28" y="18" width="10" height="140" fill="#3FA05F" rx="4"/>
+  <text x="118" y="46" textAnchor="middle" fontSize="12" fill="#3FA05F" fontWeight="bold">REGLAMENTO</text>
+  <text x="118" y="60" textAnchor="middle" fontSize="11" fill="#3FA05F" fontWeight="bold">RFEG 2023</text>
   {[
     ["💧","Zona roja → 3 opciones de alivio"],
     ["🔍","Bola perdida → 3 min búsqueda"],
@@ -11505,59 +11641,59 @@ const ILUSTRACIONES = {
   ].map(([icon,text],i)=>(
     <g key={i}>
       <text x="42" y={82+i*18} fontSize="13">{icon}</text>
-      <text x="60" y={82+i*18} fontSize="9.5" fill="#1a2e1d">{text}</text>
+      <text x="60" y={82+i*18} fontSize="9.5" fill="#F5F7F2">{text}</text>
     </g>
   ))}
   {/* Stakes */}
-  <line x1="58" y1="168" x2="66" y2="205" stroke="#c0392b" strokeWidth="5" strokeLinecap="round"/>
-  <line x1="78" y1="168" x2="86" y2="205" stroke="#c0392b" strokeWidth="5" strokeLinecap="round"/>
-  <text x="72" y="164" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">ROJA</text>
+  <line x1="58" y1="168" x2="66" y2="205" stroke="#E2685C" strokeWidth="5" strokeLinecap="round"/>
+  <line x1="78" y1="168" x2="86" y2="205" stroke="#E2685C" strokeWidth="5" strokeLinecap="round"/>
+  <text x="72" y="164" textAnchor="middle" fontSize="9" fill="#E2685C" fontWeight="bold">ROJA</text>
   <line x1="175" y1="168" x2="183" y2="205" stroke="white" strokeWidth="4" strokeLinecap="round"/>
   <line x1="175" y1="168" x2="183" y2="205" stroke="#aaa" strokeWidth="1.5" strokeDasharray="4,3"/>
   <text x="179" y="164" textAnchor="middle" fontSize="9" fill="#555" fontWeight="bold">OB</text>
-  <line x1="115" y1="168" x2="123" y2="205" stroke="#3a7abf" strokeWidth="5" strokeLinecap="round"/>
-  <text x="119" y="164" textAnchor="middle" fontSize="9" fill="#3a7abf" fontWeight="bold">AZUL</text>
+  <line x1="115" y1="168" x2="123" y2="205" stroke="#6FB3E8" strokeWidth="5" strokeLinecap="round"/>
+  <text x="119" y="164" textAnchor="middle" fontSize="9" fill="#6FB3E8" fontWeight="bold">AZUL</text>
 </svg>
 ),
 
 "ej019": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
-  <ellipse cx="130" cy="105" rx="110" ry="85" fill="#2e7d3c" opacity="0.35"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
+  <ellipse cx="130" cy="105" rx="110" ry="85" fill="#4CBE72" opacity="0.35"/>
   {/* Hole */}
-  <circle cx="130" cy="98" r="10" fill="#1a2e1d"/>
+  <circle cx="130" cy="98" r="10" fill="#F5F7F2"/>
   <line x1="130" y1="88" x2="130" y2="62" stroke="white" strokeWidth="2"/>
-  <polygon points="130,62 148,70 130,78" fill="#c0392b"/>
+  <polygon points="130,62 148,70 130,78" fill="#E2685C"/>
   {/* Pitchmark to repair */}
-  <ellipse cx="92" cy="108" rx="10" ry="6" fill="#1a5c2a" opacity="0.7"/>
-  <text x="92" y="124" textAnchor="middle" fontSize="8" fill="#1a5c2a" fontWeight="bold">reparar ✓</text>
+  <ellipse cx="92" cy="108" rx="10" ry="6" fill="#3FA05F" opacity="0.7"/>
+  <text x="92" y="124" textAnchor="middle" fontSize="8" fill="#3FA05F" fontWeight="bold">reparar ✓</text>
   {/* Ball marked */}
   <circle cx="72" cy="96" r="8" fill="white" stroke="#888" strokeWidth="2"/>
-  <rect x="68" y="105" width="10" height="6" fill="#c8a84b" rx="2"/>
+  <rect x="68" y="105" width="10" height="6" fill="#D9BC72" rx="2"/>
   <text x="72" y="120" textAnchor="middle" fontSize="8" fill="#555">marcar</text>
   {/* Competitor ball */}
   <circle cx="162" cy="114" r="8" fill="#f5f549" stroke="#888" strokeWidth="2"/>
-  <rect x="158" y="123" width="10" height="6" fill="#3a7abf" rx="2"/>
+  <rect x="158" y="123" width="10" height="6" fill="#6FB3E8" rx="2"/>
   <text x="162" y="138" textAnchor="middle" fontSize="8" fill="#555">rival</text>
   {/* Casual water */}
-  <ellipse cx="145" cy="82" rx="18" ry="10" fill="#3a7abf" opacity="0.5"/>
-  <text x="145" y="86" textAnchor="middle" fontSize="7.5" fill="#1a2e1d">agua casual</text>
-  <text x="145" y="68" textAnchor="middle" fontSize="8" fill="#3a7abf" fontWeight="bold">alivio s/pen.</text>
-  <line x1="145" y1="70" x2="145" y2="72" stroke="#3a7abf" strokeWidth="1.5"/>
+  <ellipse cx="145" cy="82" rx="18" ry="10" fill="#6FB3E8" opacity="0.5"/>
+  <text x="145" y="86" textAnchor="middle" fontSize="7.5" fill="#F5F7F2">agua casual</text>
+  <text x="145" y="68" textAnchor="middle" fontSize="8" fill="#6FB3E8" fontWeight="bold">alivio s/pen.</text>
+  <line x1="145" y1="70" x2="145" y2="72" stroke="#6FB3E8" strokeWidth="1.5"/>
   {/* Putt line */}
-  <path d="M78,97 Q105,88 120,94" fill="none" stroke="#1a5c2a" strokeWidth="2" strokeDasharray="4,2"/>
-  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Reglas del green · Marcar · Reparar · Respetar</text>
+  <path d="M78,97 Q105,88 120,94" fill="none" stroke="#3FA05F" strokeWidth="2" strokeDasharray="4,2"/>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Reglas del green · Marcar · Reparar · Respetar</text>
 </svg>
 ),
 
 "ej020": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
   {[
-    {x:65,y:55,icon:"⛳",label:"Bola incrustada",sub:"alivio sin penalidad",col:"#1a5c2a"},
-    {x:195,y:55,icon:"📋",label:"Score incorrecto",sub:"descalificación",col:"#c0392b"},
-    {x:65,y:135,icon:"⚠️",label:"Bola equivocada",sub:"2 golpes penalización",col:"#c8a84b"},
-    {x:195,y:135,icon:"🎯",label:"Caddie alineando",sub:"1 golpe penalización",col:"#3a7abf"},
+    {x:65,y:55,icon:"⛳",label:"Bola incrustada",sub:"alivio sin penalidad",col:"#3FA05F"},
+    {x:195,y:55,icon:"📋",label:"Score incorrecto",sub:"descalificación",col:"#E2685C"},
+    {x:65,y:135,icon:"⚠️",label:"Bola equivocada",sub:"2 golpes penalización",col:"#D9BC72"},
+    {x:195,y:135,icon:"🎯",label:"Caddie alineando",sub:"1 golpe penalización",col:"#6FB3E8"},
   ].map(({x,y,icon,label,sub,col})=>(
     <g key={label}>
       <rect x={x-52} y={y-32} width="104" height="66" fill="white" stroke={col} strokeWidth="2.5" rx="10"/>
@@ -11567,10 +11703,10 @@ const ILUSTRACIONES = {
     </g>
   ))}
   {/* RFEG badge */}
-  <circle cx="130" cy="95" r="22" fill="none" stroke="#1a5c2a" strokeWidth="2.5"/>
-  <text x="130" y="92" textAnchor="middle" fontSize="10" fill="#1a5c2a" fontWeight="bold">RFEG</text>
-  <text x="130" y="105" textAnchor="middle" fontSize="8" fill="#1a5c2a">2023</text>
-  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Situaciones avanzadas en competición</text>
+  <circle cx="130" cy="95" r="22" fill="none" stroke="#3FA05F" strokeWidth="2.5"/>
+  <text x="130" y="92" textAnchor="middle" fontSize="10" fill="#3FA05F" fontWeight="bold">RFEG</text>
+  <text x="130" y="105" textAnchor="middle" fontSize="8" fill="#3FA05F">2023</text>
+  <text x="130" y="205" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Situaciones avanzadas en competición</text>
 </svg>
 ),
 
@@ -11580,15 +11716,15 @@ const ILUSTRACIONES = {
 
 "ej021": ({}) => (
 <svg viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
-  <rect width="280" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="280" height="210" fill="#123321" rx="14"/>
   {/* Timeline */}
   <line x1="20" y1="110" x2="260" y2="110" stroke="#ddd" strokeWidth="4"/>
   {[
-    {x:20,n:"1",l:"Leer",s:"situación",c:"#3a7abf"},
-    {x:68,n:"2",l:"Elegir",s:"palo/obj.",c:"#2e7d3c"},
-    {x:120,n:"3",l:"2 swings",s:"práctica",c:"#c8a84b"},
-    {x:172,n:"4",l:"Alinear",s:"cara+pies",c:"#7b5ea7"},
-    {x:230,n:"5",l:"Gatillo",s:"inicio",c:"#c0392b"},
+    {x:20,n:"1",l:"Leer",s:"situación",c:"#6FB3E8"},
+    {x:68,n:"2",l:"Elegir",s:"palo/obj.",c:"#4CBE72"},
+    {x:120,n:"3",l:"2 swings",s:"práctica",c:"#D9BC72"},
+    {x:172,n:"4",l:"Alinear",s:"cara+pies",c:"#A98FD1"},
+    {x:230,n:"5",l:"Gatillo",s:"inicio",c:"#E2685C"},
   ].map(({x,n,l,s,c})=>(
     <g key={n}>
       <circle cx={x} cy="110" r="20" fill={c} stroke="white" strokeWidth="2"/>
@@ -11598,79 +11734,79 @@ const ILUSTRACIONES = {
     </g>
   ))}
   {/* Clock */}
-  <circle cx="140" cy="55" r="35" fill="white" stroke="#c8a84b" strokeWidth="3.5"/>
-  <line x1="140" y1="55" x2="140" y2="28" stroke="#c8a84b" strokeWidth="3" strokeLinecap="round"/>
-  <line x1="140" y1="55" x2="158" y2="61" stroke="#1a2e1d" strokeWidth="3" strokeLinecap="round"/>
-  <circle cx="140" cy="55" r="4" fill="#1a2e1d"/>
+  <circle cx="140" cy="55" r="35" fill="white" stroke="#D9BC72" strokeWidth="3.5"/>
+  <line x1="140" y1="55" x2="140" y2="28" stroke="#D9BC72" strokeWidth="3" strokeLinecap="round"/>
+  <line x1="140" y1="55" x2="158" y2="61" stroke="#F5F7F2" strokeWidth="3" strokeLinecap="round"/>
+  <circle cx="140" cy="55" r="4" fill="#F5F7F2"/>
   {/* Tick marks */}
   {Array.from({length:12},(_,i)=>{
     const a=(i*30-90)*Math.PI/180;
     return <line key={i} x1={140+28*Math.cos(a)} y1={55+28*Math.sin(a)}
       x2={140+33*Math.cos(a)} y2={55+33*Math.sin(a)} stroke="#ccc" strokeWidth="2"/>;
   })}
-  <text x="140" y="72" textAnchor="middle" fontSize="8.5" fill="#c8a84b" fontWeight="bold">20-25 seg</text>
-  <text x="140" y="204" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Misma rutina · Mismo tiempo · Siempre</text>
+  <text x="140" y="72" textAnchor="middle" fontSize="8.5" fill="#D9BC72" fontWeight="bold">20-25 seg</text>
+  <text x="140" y="204" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Misma rutina · Mismo tiempo · Siempre</text>
 </svg>
 ),
 
 "ej022": ({}) => (
 <svg viewBox="0 0 220 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:260,display:"block",margin:"0 auto"}}>
-  <rect width="220" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="220" height="210" fill="#123321" rx="14"/>
   {/* Traffic light body */}
   <rect x="75" y="14" width="70" height="148" fill="#333" rx="35"/>
   {/* Red */}
-  <circle cx="110" cy="45" r="22" fill="#c0392b"/>
+  <circle cx="110" cy="45" r="22" fill="#E2685C"/>
   <text x="110" y="41" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">ROJO</text>
   <text x="110" y="53" textAnchor="middle" fontSize="9" fill="white">0-10 seg</text>
   {/* Amber */}
-  <circle cx="110" cy="90" r="22" fill="#c8a84b"/>
+  <circle cx="110" cy="90" r="22" fill="#D9BC72"/>
   <text x="110" y="86" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">ÁMBAR</text>
   <text x="110" y="98" textAnchor="middle" fontSize="9" fill="white">10-30 seg</text>
   {/* Green */}
-  <circle cx="110" cy="135" r="22" fill="#2e7d3c"/>
+  <circle cx="110" cy="135" r="22" fill="#4CBE72"/>
   <text x="110" y="131" textAnchor="middle" fontSize="10" fill="white" fontWeight="bold">VERDE</text>
   <text x="110" y="143" textAnchor="middle" fontSize="9" fill="white">&gt;30 seg</text>
   {/* Labels right */}
-  <text x="152" y="42" fontSize="9" fill="#c0392b" fontWeight="bold">Reacción</text>
+  <text x="152" y="42" fontSize="9" fill="#E2685C" fontWeight="bold">Reacción</text>
   <text x="152" y="53" fontSize="8.5" fill="#555">natural</text>
-  <text x="152" y="87" fontSize="9" fill="#c8a84b" fontWeight="bold">Respira</text>
+  <text x="152" y="87" fontSize="9" fill="#D9BC72" fontWeight="bold">Respira</text>
   <text x="152" y="98" fontSize="8.5" fill="#555">y suelta</text>
-  <text x="152" y="132" fontSize="9" fill="#2e7d3c" fontWeight="bold">Siguiente</text>
+  <text x="152" y="132" fontSize="9" fill="#4CBE72" fontWeight="bold">Siguiente</text>
   <text x="152" y="143" fontSize="8.5" fill="#555">golpe</text>
   {/* Post */}
   <rect x="107" y="162" width="6" height="28" fill="#555"/>
-  <text x="110" y="205" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Reset emocional tras cada mal golpe</text>
+  <text x="110" y="205" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Reset emocional tras cada mal golpe</text>
 </svg>
 ),
 
 "ej023": ({}) => (
 <svg viewBox="0 0 240 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:280,display:"block",margin:"0 auto"}}>
-  <rect width="240" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="240" height="210" fill="#123321" rx="14"/>
   {/* Head outline */}
-  <ellipse cx="120" cy="80" rx="62" ry="68" fill="#f0ebfa" stroke="#7b5ea7" strokeWidth="3"/>
+  <ellipse cx="120" cy="80" rx="62" ry="68" fill="#2A2140" stroke="#A98FD1" strokeWidth="3"/>
   {/* Brain folds */}
   {["M80,52 Q100,42 120,52 Q140,42 160,52","M75,68 Q98,55 120,68 Q142,55 165,68",
     "M72,84 Q95,72 120,84 Q145,72 168,84"].map((d,i)=>(
-    <path key={i} d={d} fill="none" stroke="#7b5ea7" strokeWidth="1.5" opacity="0.4"/>
+    <path key={i} d={d} fill="none" stroke="#A98FD1" strokeWidth="1.5" opacity="0.4"/>
   ))}
   {/* Golf scene inside */}
-  <ellipse cx="120" cy="88" rx="44" ry="32" fill="#4caf65" opacity="0.4"/>
+  <ellipse cx="120" cy="88" rx="44" ry="32" fill="#4CBE72" opacity="0.4"/>
   {/* Mini golfer */}
-  <circle cx="90" cy="78" r="6" fill="#1a5c2a"/>
-  <line x1="90" y1="84" x2="90" y2="96" stroke="#1a5c2a" strokeWidth="2.5" strokeLinecap="round"/>
-  <line x1="90" y1="88" x2="82" y2="94" stroke="#1a5c2a" strokeWidth="2" strokeLinecap="round"/>
+  <circle cx="90" cy="78" r="6" fill="#3FA05F"/>
+  <line x1="90" y1="84" x2="90" y2="96" stroke="#3FA05F" strokeWidth="2.5" strokeLinecap="round"/>
+  <line x1="90" y1="88" x2="82" y2="94" stroke="#3FA05F" strokeWidth="2" strokeLinecap="round"/>
   {/* Ball flight */}
-  <path d="M93,80 Q118,58 150,78" fill="none" stroke="#c8a84b" strokeWidth="3"/>
+  <path d="M93,80 Q118,58 150,78" fill="none" stroke="#D9BC72" strokeWidth="3"/>
   <circle cx="150" cy="78" r="5" fill="white" stroke="#888" strokeWidth="1.5"/>
   {/* Sparkles */}
   {[[95,55],[130,50],[158,62],[75,62]].map(([x,y],i)=>(
     <text key={i} x={x} y={y} fontSize="12">✨</text>
   ))}
   {/* Steps */}
-  <text x="120" y="162" textAnchor="middle" fontSize="9.5" fill="#7b5ea7" fontWeight="bold">Cierra los ojos · Imagina el golpe perfecto</text>
-  <text x="120" y="176" textAnchor="middle" fontSize="9" fill="#7b5ea7">Siente el contacto · Ve la bola volar</text>
+  <text x="120" y="162" textAnchor="middle" fontSize="9.5" fill="#A98FD1" fontWeight="bold">Cierra los ojos · Imagina el golpe perfecto</text>
+  <text x="120" y="176" textAnchor="middle" fontSize="9" fill="#A98FD1">Siente el contacto · Ve la bola volar</text>
   <text x="120" y="190" textAnchor="middle" fontSize="8.5" fill="#555">10 minutos diarios · Antes de entrenar</text>
-  <text x="120" y="206" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Visualización · El swing mental perfecto</text>
+  <text x="120" y="206" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Visualización · El swing mental perfecto</text>
 </svg>
 ),
 
@@ -11680,7 +11816,7 @@ const ILUSTRACIONES = {
 
 "ej024": ({}) => (
 <svg viewBox="0 0 280 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:320,display:"block",margin:"0 auto"}}>
-  <rect width="280" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="280" height="210" fill="#123321" rx="14"/>
   {/* 5 exercise circles */}
   {[
     {x:50,y:62,icon:"🧘",label:"Hip 90/90",sub:"2×30seg"},
@@ -11690,35 +11826,35 @@ const ILUSTRACIONES = {
     {x:190,y:152,icon:"🤸",label:"Hip hinge",sub:"3×12"},
   ].map(({x,y,icon,label,sub})=>(
     <g key={label}>
-      <circle cx={x} cy={y} r="34" fill="white" stroke="#d4651a" strokeWidth="2.5"/>
+      <circle cx={x} cy={y} r="34" fill="white" stroke="#F0985A" strokeWidth="2.5"/>
       <text x={x} y={y-8} textAnchor="middle" fontSize="18">{icon}</text>
-      <text x={x} y={y+10} textAnchor="middle" fontSize="8.5" fill="#d4651a" fontWeight="bold">{label}</text>
+      <text x={x} y={y+10} textAnchor="middle" fontSize="8.5" fill="#F0985A" fontWeight="bold">{label}</text>
       <text x={x} y={y+22} textAnchor="middle" fontSize="8.5" fill="#555">{sub}</text>
     </g>
   ))}
   {/* Hip rotation arrow */}
-  <path d="M104,120 Q140,108 176,120" fill="none" stroke="#d4651a" strokeWidth="3"/>
-  <polygon points="176,120 165,114 165,126" fill="#d4651a"/>
-  <text x="140" y="116" textAnchor="middle" fontSize="9" fill="#d4651a" fontWeight="bold">rotación</text>
-  <text x="140" y="204" textAnchor="middle" fontSize="10" fill="#1a2e1d" fontWeight="bold">Movilidad de cadera → más velocidad de swing</text>
+  <path d="M104,120 Q140,108 176,120" fill="none" stroke="#F0985A" strokeWidth="3"/>
+  <polygon points="176,120 165,114 165,126" fill="#F0985A"/>
+  <text x="140" y="116" textAnchor="middle" fontSize="9" fill="#F0985A" fontWeight="bold">rotación</text>
+  <text x="140" y="204" textAnchor="middle" fontSize="10" fill="#F5F7F2" fontWeight="bold">Movilidad de cadera → más velocidad de swing</text>
 </svg>
 ),
 
 "ej025": ({}) => (
 <svg viewBox="0 0 260 210" xmlns="http://www.w3.org/2000/svg" style={{width:"100%",maxWidth:300,display:"block",margin:"0 auto"}}>
-  <rect width="260" height="210" fill="#e8f5eb" rx="14"/>
+  <rect width="260" height="210" fill="#123321" rx="14"/>
   {/* Plank figure */}
-  <rect x="28" y="90" width="130" height="14" fill="#1a5c2a" opacity="0.85" rx="7"/>
+  <rect x="28" y="90" width="130" height="14" fill="#3FA05F" opacity="0.85" rx="7"/>
   <circle cx="172" cy="93" r="14" fill="#d4a574"/>
   {/* Arms */}
-  <line x1="28" y1="97" x2="14" y2="116" stroke="#1a5c2a" strokeWidth="7" strokeLinecap="round"/>
+  <line x1="28" y1="97" x2="14" y2="116" stroke="#3FA05F" strokeWidth="7" strokeLinecap="round"/>
   <rect x="6" y="114" width="18" height="7" fill="#888" rx="3"/>
   {/* Legs */}
-  <line x1="28" y1="104" x2="12" y2="128" stroke="#1a5c2a" strokeWidth="6" strokeLinecap="round"/>
-  <line x1="20" y1="104" x2="5" y2="126" stroke="#1a5c2a" strokeWidth="5" strokeLinecap="round"/>
+  <line x1="28" y1="104" x2="12" y2="128" stroke="#3FA05F" strokeWidth="6" strokeLinecap="round"/>
+  <line x1="20" y1="104" x2="5" y2="126" stroke="#3FA05F" strokeWidth="5" strokeLinecap="round"/>
   {/* Core triangle */}
-  <polygon points="80,85 120,85 100,58" fill="none" stroke="#c0392b" strokeWidth="3" strokeDasharray="5,3"/>
-  <text x="100" y="75" textAnchor="middle" fontSize="9" fill="#c0392b" fontWeight="bold">CORE</text>
+  <polygon points="80,85 120,85 100,58" fill="none" stroke="#E2685C" strokeWidth="3" strokeDasharray="5,3"/>
+  <text x="100" y="75" textAnchor="middle" fontSize="9" fill="#E2685C" fontWeight="bold">CORE</text>
   {/* Exercises list */}
   {[
     ["1","Plank + toque hombros","3×20"],
@@ -11728,13 +11864,13 @@ const ILUSTRACIONES = {
     ["5","Rotación con palo","3×15"],
   ].map(([n,ex,sets],i)=>(
     <g key={n}>
-      <circle cx="22" cy={130+i*14} r="8" fill="#1a5c2a"/>
+      <circle cx="22" cy={130+i*14} r="8" fill="#3FA05F"/>
       <text x="22" y={134+i*14} textAnchor="middle" fontSize="8.5" fill="white" fontWeight="bold">{n}</text>
-      <text x="34" y={134+i*14} fontSize="9" fill="#1a2e1d">{ex}</text>
+      <text x="34" y={134+i*14} fontSize="9" fill="#F5F7F2">{ex}</text>
       <text x="248" y={134+i*14} textAnchor="end" fontSize="8.5" fill="#888">{sets}</text>
     </g>
   ))}
-  <text x="130" y="207" textAnchor="middle" fontSize="9.5" fill="#1a2e1d" fontWeight="bold">Core estable = postura consistente en el swing</text>
+  <text x="130" y="207" textAnchor="middle" fontSize="9.5" fill="#F5F7F2" fontWeight="bold">Core estable = postura consistente en el swing</text>
 </svg>
 ),
 
@@ -11747,7 +11883,7 @@ function EjercicioDetalle({ ej, onClose, onAsignar }) {
   const nivelColor = (ej.nivel==="Iniciación"||ej.nivel==="Básico")?"green":ej.nivel==="Intermedio"?"gold":ej.nivel==="Avanzado"?"blue":"gray";
   return (
     <Modal title={ej.nombre} onClose={onClose} wide color={G.grass}>
-      {Ilus && <div style={{background:"#f0f8f0",borderRadius:12,padding:"12px 8px",marginBottom:16}}><Ilus/></div>}
+      {Ilus && <div style={{background:"#16241C",borderRadius:12,padding:"12px 8px",marginBottom:16}}><Ilus/></div>}
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         <div style={{fontSize:32}}>{ej.icono||CAT_ICONS[catNombre]||"📌"}</div>
         <Badge color={CAT_COLORS[catNombre]||"green"}>{CAT_ICONS[catNombre]||""} {catNombre}</Badge>
@@ -11780,7 +11916,7 @@ function EjercicioDetalle({ ej, onClose, onAsignar }) {
       )}
 
       {ej.esquema && (
-        <div style={{ background:"#f5f5f5", borderRadius:10, padding:"10px 14px", marginBottom:14, fontFamily:"monospace", fontSize:13, color:G.ink }}>
+        <div style={{ background:"#16241C", borderRadius:10, padding:"10px 14px", marginBottom:14, fontFamily:"monospace", fontSize:13, color:G.ink }}>
           {ej.esquema}
         </div>
       )}
@@ -11821,7 +11957,7 @@ function EjercicioDetalle({ ej, onClose, onAsignar }) {
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
         <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
-          {(ej.tags||[]).map(t=><span key={t} style={{ background:"#f0f0f0",color:"#666",borderRadius:12,padding:"2px 8px",fontSize:11 }}>#{t}</span>)}
+          {(ej.tags||[]).map(t=><span key={t} style={{ background:"#16241C",color:"#666",borderRadius:12,padding:"2px 8px",fontSize:11 }}>#{t}</span>)}
         </div>
         <div style={{ display:"flex", gap:8 }}>
           <Btn color="secondary" onClick={onClose}>Cerrar</Btn>
@@ -11958,7 +12094,7 @@ function PanelTests({ data, setData, modo, alumnoId }) {
           <Badge color={CAT_COLORS[testActivo.cat]||"gray"}>{CAT_ICONS[testActivo.cat]} {testActivo.cat}</Badge>
           <span style={{ fontSize:13, color:G.soft }}>Pregunta {testActivo.idx+1} de {testActivo.pregs.length}</span>
         </div>
-        <div style={{ background:"#e8e8e8", borderRadius:6, height:6, marginBottom:20, overflow:"hidden" }}>
+        <div style={{ background:"#16241C", borderRadius:6, height:6, marginBottom:20, overflow:"hidden" }}>
           <div style={{ width:`${progreso}%`, height:"100%", background:G.grass, transition:"width .3s" }}/>
         </div>
         <Card>
@@ -12012,7 +12148,7 @@ function PanelTests({ data, setData, modo, alumnoId }) {
                   <span style={{ fontWeight:600, color:G.soft }}>Correcta: </span>
                   <span style={{ color:G.grass }}>✔ {p.opciones[p.correcta]}</span>
                 </div>}
-                <div style={{ fontSize:12, color:"#555", background:"#f9f9f9", borderRadius:8, padding:"6px 10px", marginTop:6, lineHeight:1.5 }}>
+                <div style={{ fontSize:12, color:"#555", background:"#16241C", borderRadius:8, padding:"6px 10px", marginTop:6, lineHeight:1.5 }}>
                   💡 {p.explicacion}
                 </div>
               </Card>
@@ -12121,11 +12257,11 @@ function ModEjerciciosAlumno({ data, setData, alumnoId }) {
 // ═══════════════════════════════════════════════════════════════════
 
 const TIPOS_CLASE = [
-  { id:"Individual",  label:"👤 Individual",      color:"#1a5c2a", bg:"#e8f5eb" },
-  { id:"Grupo",       label:"👥 Grupo",            color:"#3a7abf", bg:"#e8f0fb" },
-  { id:"Empresa",     label:"🏢 Empresa/Evento",   color:"#c0392b", bg:"#fdecea" },
-  { id:"Junior",      label:"🧒 Junior/Infantil",  color:"#c8a84b", bg:"#fdf6e3" },
-  { id:"Online",      label:"💻 Online",           color:"#555",    bg:"#f0f0f0" },
+  { id:"Individual",  label:"👤 Individual",      color:"#3FA05F", bg:"#123321" },
+  { id:"Grupo",       label:"👥 Grupo",            color:"#6FB3E8", bg:"#16222E" },
+  { id:"Empresa",     label:"🏢 Empresa/Evento",   color:"#E2685C", bg:"#3A241F" },
+  { id:"Junior",      label:"🧒 Junior/Infantil",  color:"#D9BC72", bg:"#16241C" },
+  { id:"Online",      label:"💻 Online",           color:"#555",    bg:"#16241C" },
 ];
 
 // Contenidos específicos de clase
@@ -12151,9 +12287,9 @@ const CONTENIDOS_CLASE = [
 ];
 
 const TRIMESTRES_CURSO = [
-  { id:"t1", label:"1er Trimestre", meses:"Sep–Dic 2026", color:"#3a7abf" },
-  { id:"t2", label:"2º Trimestre",  meses:"Ene–Mar 2027", color:"#2e7d3c" },
-  { id:"t3", label:"3er Trimestre", meses:"Abr–Jun 2027", color:"#c0392b" },
+  { id:"t1", label:"1er Trimestre", meses:"Sep–Dic 2026", color:"#6FB3E8" },
+  { id:"t2", label:"2º Trimestre",  meses:"Ene–Mar 2027", color:"#4CBE72" },
+  { id:"t3", label:"3er Trimestre", meses:"Abr–Jun 2027", color:"#E2685C" },
 ];
 
 // ── Subcomponente: Sesión individual de clase ─────────────────────
@@ -12187,7 +12323,7 @@ function SesionRow({sesion, alumnos, onUpdate, onDelete}){
         </Field>
         <Field label="Tipo de clase">
           <select value={sesion.tipo||"tecnica"} onChange={e=>onUpdate({...sesion,tipo:e.target.value})}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             {TIPOS_CLASE.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
@@ -12216,14 +12352,14 @@ function SesionRow({sesion, alumnos, onUpdate, onDelete}){
             const alumno = alumnos.find(x=>x.id===a.alumnoId);
             if(!alumno) return null;
             return <div key={a.alumnoId} style={{display:"flex",alignItems:"center",gap:10,
-              background:a.presente?"#e8f5eb":"#fdecea",borderRadius:8,padding:"8px 12px"}}>
+              background:a.presente?"#123321":"#3A241F",borderRadius:8,padding:"8px 12px"}}>
               <span style={{fontSize:16}}>{a.presente?"✅":"❌"}</span>
               <span style={{flex:1,fontWeight:600,fontSize:14}}>{alumno.nombre}</span>
               <button onClick={()=>{
                 const newAs=[...(sesion.asistencia||[])];
                 newAs[i]={...newAs[i],presente:!newAs[i].presente};
                 onUpdate({...sesion,asistencia:newAs});
-              }} style={{background:a.presente?"#c0392b":"#2e7d3c",color:"#fff",border:"none",
+              }} style={{background:a.presente?"#E2685C":"#4CBE72",color:"#fff",border:"none",
                 borderRadius:8,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                 {a.presente?"Marcar ausente":"Marcar presente"}
               </button>
@@ -12267,7 +12403,7 @@ function SesionRow({sesion, alumnos, onUpdate, onDelete}){
           + Añadir ejercicio
         </button>
         <button onClick={()=>{if(golfConfirm("¿Eliminar esta sesión?"))onDelete();}}
-          style={{background:"#fdecea",color:G.danger,border:"none",borderRadius:8,
+          style={{background:"#3A241F",color:G.danger,border:"none",borderRadius:8,
             padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
           🗑 Eliminar sesión
         </button>
@@ -12363,7 +12499,7 @@ function ProgramaDetalle({prog, data, setData, onBack}){
         [totalSesiones,"Sesiones","📅",trimestre.color],
         [alumnosPrograma.length,"Alumnos","👥",G.fairway],
         [sesionesConFecha,"Realizadas","✅",G.grass],
-        [pctAsistencia+"%","Asistencia","✋","#c8a84b"],
+        [pctAsistencia+"%","Asistencia","✋","#D9BC72"],
       ].map(([v,l,i,c])=>(
         <Card key={l} style={{textAlign:"center",padding:12}}>
           <div style={{fontSize:18}}>{i}</div>
@@ -12408,7 +12544,7 @@ function ProgramaDetalle({prog, data, setData, onBack}){
             const inscrito=(prog.alumnoIds||[]).includes(a.id);
             const grupo = GRUPOS_EDAD.find(g=>g.id===a.nivel)||{emoji:"👤",color:G.fairway};
             return <div key={a.id} style={{display:"flex",alignItems:"center",gap:10,
-              background:inscrito?G.mist:"#f9f9f9",borderRadius:10,padding:"10px 14px",
+              background:inscrito?G.mist:"#16241C",borderRadius:10,padding:"10px 14px",
               border:`2px solid ${inscrito?G.grass:"#eee"}`}}>
               <span style={{fontSize:20}}>{grupo.emoji}</span>
               <span style={{flex:1,fontWeight:inscrito?700:400,color:G.ink}}>{a.nombre}</span>
@@ -12438,7 +12574,7 @@ function ProgramaDetalle({prog, data, setData, onBack}){
             return acc+(r?.presente?1:0);
           },0);
           const pct = sesionesConAl.length>0?Math.round(presentes/sesionesConAl.length*100):0;
-          const barColor = pct>=80?G.grass:pct>=60?"#c8a84b":G.danger;
+          const barColor = pct>=80?G.grass:pct>=60?"#D9BC72":G.danger;
           return <div key={a.id} style={{marginBottom:14}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
               <span style={{fontWeight:700,fontSize:14}}>{a.nombre}</span>
@@ -12454,10 +12590,10 @@ function ProgramaDetalle({prog, data, setData, onBack}){
                 const r=(s.asistencia||[]).find(x=>x.alumnoId===a.id);
                 return <div key={s.id} title={`${s.fecha||"?"}: ${r?.presente?"Presente":"Ausente"}`}
                   style={{width:20,height:20,borderRadius:4,
-                    background:r?.presente?G.grass:"#fdecea",
-                    border:`1px solid ${r?.presente?"#2e7d3c":"#c0392b"}`,
+                    background:r?.presente?G.grass:"#3A241F",
+                    border:`1px solid ${r?.presente?"#4CBE72":"#E2685C"}`,
                     fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",
-                    color:r?.presente?"#fff":"#c0392b"}}>
+                    color:r?.presente?"#fff":"#E2685C"}}>
                   {r?.presente?"✓":"✗"}
                 </div>;
               })}
@@ -12678,14 +12814,14 @@ function ModProgramas({data, setData}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Trimestre">
           <select value={form.trimestre||"t1"} onChange={e=>setForm(f=>({...f,trimestre:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             {TRIMESTRES_CURSO.map(t=><option key={t.id} value={t.id}>{t.label} — {t.meses}</option>)}
           </select>
         </Field>
         <Field label="Grupo de edad">
           <select value={form.grupo||""} onChange={e=>setForm(f=>({...f,grupo:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             <option value="">Sin especificar</option>
             {GRUPOS_EDAD.map(g=><option key={g.id} value={g.id}>{g.emoji} {g.nombre} ({g.rango})</option>)}
@@ -12760,11 +12896,11 @@ const AREAS_TECNICAS = [
 ];
 
 const VALORACIONES = [
-  { id:"5", label:"⭐⭐⭐⭐⭐ Excelente",  color:"#1a5c2a" },
-  { id:"4", label:"⭐⭐⭐⭐  Muy bien",    color:"#2e7d3c" },
-  { id:"3", label:"⭐⭐⭐   Bien",         color:"#c8a84b" },
-  { id:"2", label:"⭐⭐    En progreso",   color:"#d4651a" },
-  { id:"1", label:"⭐     A trabajar",    color:"#c0392b" },
+  { id:"5", label:"⭐⭐⭐⭐⭐ Excelente",  color:"#3FA05F" },
+  { id:"4", label:"⭐⭐⭐⭐  Muy bien",    color:"#4CBE72" },
+  { id:"3", label:"⭐⭐⭐   Bien",         color:"#D9BC72" },
+  { id:"2", label:"⭐⭐    En progreso",   color:"#F0985A" },
+  { id:"1", label:"⭐     A trabajar",    color:"#E2685C" },
 ];
 
 // ── Mini gráfica de evolución HCP ────────────────────────────────
@@ -12788,19 +12924,19 @@ function HcpChart({stats}){
       {/* Grid lines */}
       {[0,0.25,0.5,0.75,1].map(p=>(
         <line key={p} x1={px} y1={py+p*(H-py*2)} x2={W-px} y2={py+p*(H-py*2)}
-          stroke="#e0e0e0" strokeWidth="1"/>
+          stroke="#2A2A2A" strokeWidth="1"/>
       ))}
       {/* Area fill */}
       <polygon points={`${pts[0].split(",")[0]},${H-py} ${polyline} ${last[0]},${H-py}`}
-        fill="#1a5c2a" opacity="0.1"/>
+        fill="#3FA05F" opacity="0.1"/>
       {/* Line */}
-      <polyline fill="none" stroke="#1a5c2a" strokeWidth="2.5" points={polyline}/>
+      <polyline fill="none" stroke="#3FA05F" strokeWidth="2.5" points={polyline}/>
       {/* Points */}
       {pts.map((pt,i)=>{
         const [x,y]=pt.split(",");
         return <g key={i}>
-          <circle cx={x} cy={y} r="5" fill="#1a5c2a" stroke="white" strokeWidth="1.5"/>
-          <text x={x} y={Number(y)-10} textAnchor="middle" fontSize="10" fill="#1a5c2a" fontWeight="bold">
+          <circle cx={x} cy={y} r="5" fill="#3FA05F" stroke="white" strokeWidth="1.5"/>
+          <text x={x} y={Number(y)-10} textAnchor="middle" fontSize="10" fill="#3FA05F" fontWeight="bold">
             {vals[i]}
           </text>
         </g>;
@@ -12814,8 +12950,8 @@ function HcpChart({stats}){
       })}
       {/* Trend arrow */}
       {vals[0]>vals[vals.length-1]
-        ? <text x={W-px} y={py} textAnchor="end" fontSize="11" fill="#2e7d3c" fontWeight="bold">▼ Bajando ✓</text>
-        : <text x={W-px} y={py} textAnchor="end" fontSize="11" fill="#c0392b" fontWeight="bold">▲ Subiendo</text>
+        ? <text x={W-px} y={py} textAnchor="end" fontSize="11" fill="#4CBE72" fontWeight="bold">▼ Bajando ✓</text>
+        : <text x={W-px} y={py} textAnchor="end" fontSize="11" fill="#E2685C" fontWeight="bold">▲ Subiendo</text>
       }
     </svg>
     <div style={{display:"flex",justifyContent:"space-between",padding:"0 20px",fontSize:12,color:G.soft}}>
@@ -12836,9 +12972,9 @@ function StatsResumen({stats}){
     ["⛳ Golpes medios",    avg(num("golpes")),              G.fairway],
     ["🏆 Mejor ronda",     best(num("golpes")),             G.grass],
     ["🎯 Fairways %",      avg(num("fairwaysPorcentaje")),  G.sky],
-    ["✅ GIR %",           avg(num("greensRegulacion")),    "#7b5ea7"],
+    ["✅ GIR %",           avg(num("greensRegulacion")),    "#A98FD1"],
     ["⚪ Putts medios",    avg(num("putts")),               G.flag],
-    ["🏖️ Bunkers medios", avg(num("bunkers")),             "#c8a84b"],
+    ["🏖️ Bunkers medios", avg(num("bunkers")),             "#D9BC72"],
   ];
   return <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
     {campos.map(([label,val,color])=>(
@@ -13050,7 +13186,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
         </Field>
         <Field label="Alumno">
           <select value={rpt.alumnoId||""} onChange={e=>upd("alumnoId",e.target.value)}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:14,background:"#fff",fontFamily:"inherit"}}>
             <option value="">Seleccionar alumno</option>
             {alumnos.map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
@@ -13076,7 +13212,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
           {INFORME_SECCIONES.map(sec=>{
             const activa=(rpt.secciones||[]).includes(sec.id);
             return <div key={sec.id} style={{display:"flex",alignItems:"center",gap:12,
-              background:activa?G.mist:"#f9f9f9",borderRadius:10,padding:"10px 14px",
+              background:activa?G.mist:"#16241C",borderRadius:10,padding:"10px 14px",
               border:`2px solid ${activa?G.grass:"#eee"}`}}>
               <input type="checkbox" checked={activa} onChange={()=>toggleSeccion(sec.id)}
                 style={{width:18,height:18,flexShrink:0}}/>
@@ -13120,14 +13256,14 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
         {AREAS_TECNICAS.map(area=>{
           const ev=rpt.areasEval?.[area]||{val:"",notas:""};
           const valInfo=VALORACIONES.find(v=>v.id===ev.val);
-          return <div key={area} style={{background:"#f9f9f9",borderRadius:10,padding:12,
+          return <div key={area} style={{background:"#16241C",borderRadius:10,padding:12,
             borderLeft:`4px solid ${valInfo?.color||"#ddd"}`}}>
             <div style={{fontWeight:700,color:G.ink,fontSize:14,marginBottom:8}}>{area}</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               <div>
                 <label style={{fontSize:11,color:G.soft,fontWeight:600,display:"block",marginBottom:4}}>VALORACIÓN</label>
                 <select value={ev.val||""} onChange={e=>updArea(area,"val",e.target.value)}
-                  style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"7px 10px",
+                  style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"7px 10px",
                     fontSize:13,background:"#fff",fontFamily:"inherit",
                     color:valInfo?.color||"#555",fontWeight:valInfo?"700":"400"}}>
                   <option value="">Sin evaluar</option>
@@ -13166,7 +13302,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
             {(rpt.imagenesData||[]).map((img,i)=>(
               <div key={i} style={{background:"#fff",borderRadius:12,overflow:"hidden",
                 boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>
-                <img src={img.base64} alt="" style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
+                <img src={img.base64} alt="" style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#16241C",display:"block"}}/>
                 <div style={{padding:10}}>
                   <Input value={img.caption||""} onChange={v=>updCaption(i,v)}
                     placeholder="Descripción de la foto..."/>
@@ -13197,7 +13333,7 @@ function InformeEditor({rpt, alumnos, data, onChange, onPreview, onBack}){
           </div>
         : <div style={{display:"grid",gap:12}}>
             {(rpt.videosNotas||[]).map((vid,i)=>(
-              <Card key={i} style={{borderLeft:"4px solid #c0392b"}}>
+              <Card key={i} style={{borderLeft:"4px solid #E2685C"}}>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                   <Field label="Título del vídeo">
                     <Input value={vid.titulo||""} onChange={v=>updVideo(i,"titulo",v)}
@@ -13298,7 +13434,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
     {children}
   </div>;
 
-  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #e0eee0",
+  const SecBody=({children})=><div style={{background:"#fff",border:"1px solid #16241C",
     borderTop:"none",borderRadius:"0 0 10px 10px",padding:16,marginBottom:4}}>
     {children}
   </div>;
@@ -13325,11 +13461,11 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
     {/* ── CONTENIDO DEL INFORME (para PDF) ── */}
     <div id="informe-preview-content">
     {/* ── PORTADA ── */}
-    {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#0f3518)`,
+    {secs.includes("portada")&&<div style={{background:`linear-gradient(160deg,${G.fairway},#040D08)`,
       borderRadius:14,padding:"30px 24px",marginBottom:4,textAlign:"center",color:"#fff"}}>
       <div style={{display:"flex",justifyContent:"center",gap:16,marginBottom:16,alignItems:"center"}}>
-        <img src={LOGO_GCR} alt="GCR" style={{height:56,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
-        <img src={LOGO_PGA} alt="PGA" style={{height:52,objectFit:"contain",background:"white",borderRadius:8,padding:"4px 6px"}}/>
+        <img src={LOGO_GCR} alt="GCR" style={{height:56,objectFit:"contain",background:"#123321",borderRadius:8,padding:"4px 6px"}}/>
+        <img src={LOGO_PGA} alt="PGA" style={{height:52,objectFit:"contain",background:"#123321",borderRadius:8,padding:"4px 6px"}}/>
       </div>
       <div style={{fontSize:22,fontWeight:800,marginBottom:6}}>{rpt.titulo}</div>
       <div style={{fontSize:16,opacity:.85,marginBottom:4}}>
@@ -13353,13 +13489,13 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
 
     {/* ── HCP ── */}
     {secs.includes("hcp")&&<>
-      <SecTitle color="#2e7d3c">📈 Evolución del hándicap</SecTitle>
+      <SecTitle color="#4CBE72">📈 Evolución del hándicap</SecTitle>
       <SecBody><HcpChart stats={stats}/></SecBody>
     </>}
 
     {/* ── ESTADÍSTICAS ── */}
     {secs.includes("estadisticas")&&<>
-      <SecTitle color="#3a7abf">📊 Estadísticas del período</SecTitle>
+      <SecTitle color="#6FB3E8">📊 Estadísticas del período</SecTitle>
       <SecBody>
         <StatsResumen stats={stats}/>
         {stats.length>0&&<div style={{marginTop:12,overflowX:"auto"}}>
@@ -13373,7 +13509,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
             </thead>
             <tbody>
               {stats.sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map((s,i)=>(
-                <tr key={i} style={{background:i%2?"#f9f9f9":"#fff"}}>
+                <tr key={i} style={{background:i%2?"#16241C":"#fff"}}>
                   {[s.fecha,s.hoyos,s.golpes,s.fairwaysPorcentaje?s.fairwaysPorcentaje+"%":"—",
                     s.greensRegulacion?s.greensRegulacion+"%":"—",s.putts,s.handicap||"—"].map((v,j)=>(
                     <td key={j} style={{padding:"5px 8px",textAlign:"center",borderBottom:"1px solid #eee"}}>{v||"—"}</td>
@@ -13388,14 +13524,14 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
 
     {/* ── TÉCNICO ── */}
     {secs.includes("tecnico")&&Object.keys(rpt.areasEval||{}).length>0&&<>
-      <SecTitle color="#7b5ea7">🏌️ Análisis técnico</SecTitle>
+      <SecTitle color="#A98FD1">🏌️ Análisis técnico</SecTitle>
       <SecBody>
         <div style={{display:"grid",gap:8}}>
           {AREAS_TECNICAS.filter(a=>rpt.areasEval?.[a]?.val).map(area=>{
             const ev=rpt.areasEval[area];
             const vi=VALORACIONES.find(v=>v.id===ev.val);
             return <div key={area} style={{display:"flex",gap:12,alignItems:"center",
-              background:"#f9f9f9",borderRadius:8,padding:"8px 12px",
+              background:"#16241C",borderRadius:8,padding:"8px 12px",
               borderLeft:`4px solid ${vi?.color||"#ddd"}`}}>
               <div style={{flex:1}}>
                 <div style={{fontWeight:600,fontSize:13}}>{area}</div>
@@ -13410,13 +13546,13 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
 
     {/* ── IMÁGENES ── */}
     {secs.includes("imagenes")&&(rpt.imagenesData||[]).length>0&&<>
-      <SecTitle color="#c8a84b">📷 Imágenes</SecTitle>
+      <SecTitle color="#D9BC72">📷 Imágenes</SecTitle>
       <SecBody>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
           {(rpt.imagenesData||[]).map((img,i)=>(
             <div key={i} style={{borderRadius:10,overflow:"hidden",boxShadow:"0 2px 6px rgba(0,0,0,.1)"}}>
-              <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#f5f5f5",display:"block"}}/>
-              {img.caption&&<div style={{padding:"6px 10px",fontSize:12,color:"#555",background:"#fafafa"}}>
+              <img src={img.base64} alt={img.caption||""} style={{width:"100%",maxHeight:280,objectFit:"contain",background:"#16241C",display:"block"}}/>
+              {img.caption&&<div style={{padding:"6px 10px",fontSize:12,color:"#555",background:"#16241C"}}>
                 {img.caption}
               </div>}
             </div>
@@ -13427,7 +13563,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
 
     {/* ── VÍDEOS ── */}
     {secs.includes("videos")&&(rpt.videosNotas||[]).length>0&&<>
-      <SecTitle color="#c0392b">🎬 Vídeos de análisis</SecTitle>
+      <SecTitle color="#E2685C">🎬 Vídeos de análisis</SecTitle>
       <SecBody>
         {(rpt.videosNotas||[]).map((vid,i)=>(
           <div key={i} style={{marginBottom:16,paddingBottom:16,borderBottom:"1px solid #eee"}}>
@@ -13442,7 +13578,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
                 width="100%" height="200" frameBorder="0" allowFullScreen style={{borderRadius:8,display:"block"}}/>
             </div>}
             {vid.notas&&<div style={{fontSize:13,color:"#555",lineHeight:1.6,
-              background:"#f9f9f9",borderRadius:8,padding:"8px 12px",whiteSpace:"pre-wrap"}}>
+              background:"#16241C",borderRadius:8,padding:"8px 12px",whiteSpace:"pre-wrap"}}>
               {vid.notas}
             </div>}
           </div>
@@ -13452,7 +13588,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
 
     {/* ── EJERCICIOS ── */}
     {secs.includes("ejercicios")&&<>
-      <SecTitle color="#d4651a">🏋️ Ejercicios del período</SecTitle>
+      <SecTitle color="#F0985A">🏋️ Ejercicios del período</SecTitle>
       <SecBody>
         {(data.asignaciones||[]).filter(a=>a.alumnoId===rpt.alumnoId&&a.completado).length===0
           ? <div style={{color:G.soft,fontSize:13}}>Sin ejercicios completados en este período.</div>
@@ -13485,7 +13621,7 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
           <p style={{margin:0,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.objetivosProximos}</p>
         </div>}
         {rpt.planTrabajo&&<div>
-          <div style={{fontWeight:700,color:"#7b5ea7",marginBottom:6}}>📋 Plan de trabajo</div>
+          <div style={{fontWeight:700,color:"#A98FD1",marginBottom:6}}>📋 Plan de trabajo</div>
           <p style={{margin:0,fontSize:14,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{rpt.planTrabajo}</p>
         </div>}
       </SecBody>
@@ -13521,24 +13657,24 @@ function InformePreview({rpt, alumnos, data, onEdit, onBack, onPublicar}){
 // ZONAS DE TRABAJO
 // ═══════════════════════════════════════════════════════════════════
 const ZONAS_TRABAJO = [
-  { id:"putting",   nombre:"Zona Putting Green",    color:"#1a5c2a", bg:"#e8f5eb", emoji:"🏌️" },
-  { id:"corto",     nombre:"Zona Juego Corto",       color:"#c8a84b", bg:"#fdf6e3", emoji:"⛳" },
-  { id:"techada",   nombre:"Zona Cancha Techada",    color:"#3a7abf", bg:"#e8f0fb", emoji:"🏠" },
-  { id:"largo",     nombre:"Zona Juego Largo",       color:"#7b5ea7", bg:"#f0ebfa", emoji:"🎯" },
-  { id:"hoyo8",     nombre:"Zona Hoyo 8 P&P",        color:"#c0392b", bg:"#fdecea", emoji:"🚩" },
-  { id:"general",   nombre:"General / Instalaciones",color:"#555555", bg:"#f0f0f0", emoji:"🔧" },
+  { id:"putting",   nombre:"Zona Putting Green",    color:"#3FA05F", bg:"#123321", emoji:"🏌️" },
+  { id:"corto",     nombre:"Zona Juego Corto",       color:"#D9BC72", bg:"#16241C", emoji:"⛳" },
+  { id:"techada",   nombre:"Zona Cancha Techada",    color:"#6FB3E8", bg:"#16222E", emoji:"🏠" },
+  { id:"largo",     nombre:"Zona Juego Largo",       color:"#A98FD1", bg:"#2A2140", emoji:"🎯" },
+  { id:"hoyo8",     nombre:"Zona Hoyo 8 P&P",        color:"#E2685C", bg:"#3A241F", emoji:"🚩" },
+  { id:"general",   nombre:"General / Instalaciones",color:"#B8C4CE", bg:"#16241C", emoji:"🔧" },
 ];
 
 const PRIORIDADES = [
-  { id:"alta",   label:"Alta",   color:"#c0392b", bg:"#fdecea" },
-  { id:"media",  label:"Media",  color:"#c8a84b", bg:"#fdf6e3" },
-  { id:"baja",   label:"Baja",   color:"#2e7d3c", bg:"#e8f5eb" },
+  { id:"alta",   label:"Alta",   color:"#E2685C", bg:"#3A241F" },
+  { id:"media",  label:"Media",  color:"#D9BC72", bg:"#16241C" },
+  { id:"baja",   label:"Baja",   color:"#4CBE72", bg:"#123321" },
 ];
 
 const ESTADOS_TAREA = [
-  { id:"pendiente",    label:"Pendiente",    color:"#c8a84b" },
-  { id:"en_curso",     label:"En curso",     color:"#3a7abf" },
-  { id:"completada",   label:"Completada",   color:"#2e7d3c" },
+  { id:"pendiente",    label:"Pendiente",    color:"#D9BC72" },
+  { id:"en_curso",     label:"En curso",     color:"#6FB3E8" },
+  { id:"completada",   label:"Completada",   color:"#4CBE72" },
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -13598,7 +13734,7 @@ function ModTareas({data,setData}){
   return <div>
     {/* KPIs */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:20}}>
-      {[[tareas.length,"Total",G.fairway,"📋"],[pendientes,"Pendientes","#c8a84b","⏳"],[enCurso,"En curso",G.sky,"🔄"],[completadas,"Completadas",G.grass,"✅"]].map(([v,l,c,i])=>(
+      {[[tareas.length,"Total",G.fairway,"📋"],[pendientes,"Pendientes","#D9BC72","⏳"],[enCurso,"En curso",G.sky,"🔄"],[completadas,"Completadas",G.grass,"✅"]].map(([v,l,c,i])=>(
         <Card key={l} style={{textAlign:"center"}}>
           <div style={{fontSize:20,marginBottom:4}}>{i}</div>
           <div style={{fontSize:22,fontWeight:800,color:c}}>{v}</div>
@@ -13623,7 +13759,7 @@ function ModTareas({data,setData}){
       <div style={{display:"flex",gap:6}}>
         {[{id:"todos",label:"Todas"},...ESTADOS_TAREA].map(e=>(
           <button key={e.id} onClick={()=>setFiltroEstado(e.id)}
-            style={{background:filtroEstado===e.id?(e.color||G.fairway):"#f0f0f0",color:filtroEstado===e.id?G.white:"#555",
+            style={{background:filtroEstado===e.id?(e.color||G.fairway):"#16241C",color:filtroEstado===e.id?G.white:"#555",
               border:"none",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
             {e.label}
           </button>
@@ -13641,7 +13777,7 @@ function ModTareas({data,setData}){
         const zona=zonaInfo(t.zona);
         const prio=prioInfo(t.prioridad);
         const est=estadoInfo(t.estado);
-        return <div key={t.id} style={{background:G.white,borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",overflow:"hidden",borderLeft:`5px solid ${zona.color}`}}>
+        return <div key={t.id} style={{background:"#123321",borderRadius:14,boxShadow:"0 2px 12px rgba(0,0,0,.07)",overflow:"hidden",borderLeft:`5px solid ${zona.color}`}}>
           {/* Cabecera de zona */}
           <div style={{background:zona.bg,padding:"6px 16px",display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:16}}>{zona.emoji}</span>
@@ -13695,19 +13831,19 @@ function ModTareas({data,setData}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
         <Field label="Prioridad">
           <select value={form.prioridad||"media"} onChange={e=>setForm({...form,prioridad:e.target.value})}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#123321",fontFamily:"inherit"}}>
             {PRIORIDADES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
           </select>
         </Field>
         <Field label="Estado">
           <select value={form.estado||"pendiente"} onChange={e=>setForm({...form,estado:e.target.value})}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#123321",fontFamily:"inherit"}}>
             {ESTADOS_TAREA.map(e=><option key={e.id} value={e.id}>{e.label}</option>)}
           </select>
         </Field>
         <Field label="Asignado a">
           <select value={form.asignado||""} onChange={e=>setForm({...form,asignado:e.target.value})}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",fontSize:14,background:G.white,fontFamily:"inherit"}}>
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#123321",fontFamily:"inherit"}}>
             <option value="">Sin asignar</option>
             {trabajadores.map(w=><option key={w} value={w}>{w}</option>)}
           </select>
@@ -13749,6 +13885,7 @@ const ADMIN_TABS=[
   {id:"analisis",label:"Vídeo Análisis",icon:"🎬"},
   {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️"},
   {id:"informes",label:"Informes",icon:"📑"},
+  {id:"negocio",label:"Informe Profesor",icon:"📈"},
   {id:"archivos",label:"Archivos",icon:"📁"},
   {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
   {id:"tareas",label:"Tareas",icon:"📋"},
@@ -13922,7 +14059,7 @@ function NotifBell({notifs, pendientesCount=0, mensajesNoLeidos=0}){
         padding:"6px 12px",cursor:"pointer",color:"white",fontSize:20,position:"relative"}}>
       🔔
       {noLeidas>0&&<span style={{position:"absolute",top:-4,right:-4,
-        background:"#c0392b",color:"white",borderRadius:"50%",
+        background:"#E2685C",color:"white",borderRadius:"50%",
         width:18,height:18,fontSize:11,fontWeight:800,
         display:"flex",alignItems:"center",justifyContent:"center"}}>
         {noLeidas}
@@ -13930,7 +14067,7 @@ function NotifBell({notifs, pendientesCount=0, mensajesNoLeidos=0}){
     </button>
 
     {open&&<div style={{position:"absolute",right:0,top:48,width:340,maxHeight:480,
-      overflowY:"auto",background:"white",borderRadius:14,
+      overflowY:"auto",background:"#123321",borderRadius:14,
       boxShadow:"0 8px 32px rgba(0,0,0,.25)",zIndex:9999}}>
       {/* Header */}
       <div style={{background:G.fairway,color:"white",padding:"12px 16px",
@@ -13949,7 +14086,7 @@ function NotifBell({notifs, pendientesCount=0, mensajesNoLeidos=0}){
           </div>
         : (notifs||[]).map(n=>(
           <div key={n.id} onClick={()=>marcarLeida(n.id)}
-            style={{padding:"12px 16px",borderBottom:"1px solid #f0f0f0",cursor:"pointer",
+            style={{padding:"12px 16px",borderBottom:"1px solid #16241C",cursor:"pointer",
               background:n.leida?"white":"#e8f5fb",
               display:"flex",gap:10,alignItems:"flex-start"}}>
             <div style={{fontSize:22,flexShrink:0}}>
@@ -14030,7 +14167,7 @@ function ModRegistrosPendientes({data, setData, notifs}){
           Alumnos que se han registrado online y esperan activación
         </div>
       </div>
-      <div style={{background:pendientes.length>0?"#c0392b":G.grass,color:"white",
+      <div style={{background:pendientes.length>0?"#E2685C":G.grass,color:"white",
         borderRadius:20,padding:"4px 14px",fontWeight:700,fontSize:14}}>
         {pendientes.length} pendiente{pendientes.length!==1?"s":""}
       </div>
@@ -14044,7 +14181,7 @@ function ModRegistrosPendientes({data, setData, notifs}){
         </div>
       : <div style={{display:"grid",gap:12}}>
           {pendientes.map(reg=>(
-            <Card key={reg._docId} style={{borderLeft:"5px solid #c0392b"}}>
+            <Card key={reg._docId} style={{borderLeft:"5px solid #E2685C"}}>
               <div style={{display:"flex",gap:12,alignItems:"flex-start",flexWrap:"wrap"}}>
                 <FotoAlumno foto="" nombre={reg.nombre} size={48}/>
                 <div style={{flex:1,minWidth:200}}>
@@ -14056,14 +14193,14 @@ function ModRegistrosPendientes({data, setData, notifs}){
                   </div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
                     <span style={{background:reg.tipoEscuela==="infantil"?"#D6E4F7":"#D4EDDA",
-                      color:reg.tipoEscuela==="infantil"?"#2e5fa3":"#1a5c2a",
+                      color:reg.tipoEscuela==="infantil"?"#2e5fa3":"#3FA05F",
                       borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
                       {reg.tipoEscuela==="infantil"?"🧒 Escuela Infantil":"🏌️ Escuela Adultos"}
                     </span>
                     {reg.nivel&&<span style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
                       {GRUPOS_EDAD.find(g=>g.id===reg.nivel)?.emoji} {reg.nivel}
                     </span>}
-                    <span style={{background:"#e8f5eb",color:G.grass,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
+                    <span style={{background:"#123321",color:G.grass,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
                       ✓ RGPD aceptado
                     </span>
                   </div>
@@ -14078,7 +14215,7 @@ function ModRegistrosPendientes({data, setData, notifs}){
                   {reg.medicacion&&<div style={{marginTop:4,fontSize:12,color:"#1B5E20",background:"#E8F5E9",borderRadius:8,padding:"4px 10px"}}>
                     💊 {reg.medicacion}
                   </div>}
-                  {reg.tutores?.[0]&&<div style={{marginTop:6,fontSize:12,color:"#555",background:"#f0f0f0",borderRadius:8,padding:"4px 10px"}}>
+                  {reg.tutores?.[0]&&<div style={{marginTop:6,fontSize:12,color:"#555",background:"#16241C",borderRadius:8,padding:"4px 10px"}}>
                     👨‍👩‍👦 Tutor: {reg.tutores[0].nombre} ({reg.tutores[0].relacion}) · {reg.tutores[0].telefono}
                   </div>}
                 </div>
@@ -14263,13 +14400,13 @@ function ModArchivos({data,setData}){
     {/* Filtro por alumno */}
     <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
       <button onClick={()=>setFiltro("todos")}
-        style={{background:filtro==="todos"?G.fairway:"#f0f0f0",color:filtro==="todos"?"#fff":G.ink,
+        style={{background:filtro==="todos"?G.fairway:"#16241C",color:filtro==="todos"?"#fff":G.ink,
           border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
         Todos los archivos
       </button>
       {alumnos.filter(a=>a.activo).map(a=>(
         <button key={a.id} onClick={()=>setFiltro(a.id)}
-          style={{background:filtro===a.id?G.fairway:"#f0f0f0",color:filtro===a.id?"#fff":G.ink,
+          style={{background:filtro===a.id?G.fairway:"#16241C",color:filtro===a.id?"#fff":G.ink,
             border:"none",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
           {a.nombre.split(" ")[0]}
         </button>
@@ -14293,7 +14430,7 @@ function ModArchivos({data,setData}){
             <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{a.nombre}</div>
             {a.descripcion&&<div style={{fontSize:12,color:G.soft,marginTop:2}}>{a.descripcion}</div>}
             <div style={{display:"flex",gap:8,marginTop:4,flexWrap:"wrap"}}>
-              <span style={{fontSize:11,background:"#e8f5eb",color:G.fairway,borderRadius:4,padding:"2px 7px",fontWeight:600}}>
+              <span style={{fontSize:11,background:"#123321",color:G.fairway,borderRadius:4,padding:"2px 7px",fontWeight:600}}>
                 👤 {destinoLabel}
               </span>
               <span style={{fontSize:11,color:G.soft}}>{fmtDate(a.fecha)}</span>
@@ -14358,7 +14495,7 @@ function ModArchivos({data,setData}){
 
       {form.destinatarios==="seleccion"&&<Field label="Selecciona los alumnos">
         <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:200,overflowY:"auto",
-          border:"1px solid #e0e0e0",borderRadius:8,padding:10}}>
+          border:"1px solid #2A2A2A",borderRadius:8,padding:10}}>
           {alumnos.filter(a=>a.activo).map(a=>(
             <label key={a.id} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
               <input type="checkbox" checked={form.alumnosSelec.includes(a.id)}
@@ -14548,7 +14685,7 @@ function ModBonos({data, setData}){
   const bonos   = data.bonos||[];
 
   const PACKS = [
-    {n:5,  label:"Pack 5 clases",  color:"#3a7abf"},
+    {n:5,  label:"Pack 5 clases",  color:"#6FB3E8"},
     {n:10, label:"Pack 10 clases", color:G.fairway},
     {n:20, label:"Pack 20 clases", color:G.grass},
   ];
@@ -14601,21 +14738,21 @@ function ModBonos({data, setData}){
     {/* Barra superior */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
       <select value={filtroAlumno} onChange={e=>setFiltroAlumno(e.target.value)}
-        style={{flex:1,minWidth:160,border:"1.5px solid #d0e0d0",borderRadius:8,
+        style={{flex:1,minWidth:160,border:"1.5px solid #2A4A3A",borderRadius:8,
           padding:"8px 12px",fontSize:14,background:"#fff",fontFamily:"inherit",color:G.fairway,fontWeight:600}}>
         <option value="todos">Todos los alumnos</option>
         {alumnos.filter(a=>a.activo).map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
       </select>
       {[["activos","✅ Activos"],["agotados","❌ Agotados"],["todos","📋 Todos"]].map(([id,label])=>(
         <button key={id} onClick={()=>setFiltroEstado(id)}
-          style={{background:filtroEstado===id?G.fairway:"#f0f0f0",
+          style={{background:filtroEstado===id?G.fairway:"#16241C",
             color:filtroEstado===id?"#fff":"#555",border:"none",borderRadius:8,
             padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
           {label}
         </button>
       ))}
       <button onClick={()=>setVistaHistorial(v=>!v)}
-        style={{background:vistaHistorial?G.fairway:"#f0f0f0",color:vistaHistorial?"#fff":"#555",
+        style={{background:vistaHistorial?G.fairway:"#16241C",color:vistaHistorial?"#fff":"#555",
           border:"none",borderRadius:8,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
         🕓 Historial
       </button>
@@ -14653,7 +14790,7 @@ function ModBonos({data, setData}){
               <span style={{fontWeight:800,fontSize:15,color:G.fairway,flex:1}}>{a.nombre}</span>
               <span style={{fontSize:11,background:G.mist,color:G.fairway,borderRadius:6,padding:"3px 10px",fontWeight:700}}>{a.bonos.length} bono{a.bonos.length!==1?"s":""}</span>
               <span style={{fontSize:11,background:"#e8f5e9",color:G.grass,borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalClases} clases</span>
-              {totalPrecio>0&&<span style={{fontSize:11,background:"#fff8e1",color:"#c17900",borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalPrecio.toFixed(2)}€</span>}
+              {totalPrecio>0&&<span style={{fontSize:11,background:"#332B10",color:"#c17900",borderRadius:6,padding:"3px 10px",fontWeight:700}}>{totalPrecio.toFixed(2)}€</span>}
             </div>
             {/* Línea de tiempo */}
             <div style={{display:"flex",flexDirection:"column",gap:0}}>
@@ -14684,7 +14821,7 @@ function ModBonos({data, setData}){
                     </div>
                     {/* Mini barra */}
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <div style={{flex:1,maxWidth:180,background:"#e8e8e8",borderRadius:6,height:7,overflow:"hidden"}}>
+                      <div style={{flex:1,maxWidth:180,background:"#16241C",borderRadius:6,height:7,overflow:"hidden"}}>
                         <div style={{width:`${pct}%`,height:"100%",background:agotado?"#aaa":G.grass,borderRadius:6}}/>
                       </div>
                       <span style={{fontSize:11,color:G.soft}}>{b.usadas||0}/{b.clases} usadas</span>
@@ -14696,7 +14833,7 @@ function ModBonos({data, setData}){
               })}
             </div>
             {/* Resumen pie */}
-            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #e8e8e8",
+            <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid #16241C",
               display:"flex",gap:16,fontSize:12,color:G.soft,flexWrap:"wrap"}}>
               <span>📋 Total clases compradas: <b style={{color:G.ink}}>{totalClases}</b></span>
               <span>✅ Total clases usadas: <b style={{color:G.grass}}>{totalUsadas}</b></span>
@@ -14757,7 +14894,7 @@ function ModBonos({data, setData}){
                       <span style={{color:G.soft}}>{usadas} de {total} clases usadas</span>
                       <span style={{fontWeight:700,color}}>{restantes} restantes</span>
                     </div>
-                    <div style={{background:"#e8e8e8",borderRadius:8,height:12,overflow:"hidden"}}>
+                    <div style={{background:"#16241C",borderRadius:8,height:12,overflow:"hidden"}}>
                       <div style={{width:`${pct}%`,height:"100%",
                         background:agotado?"#aaa":pct>=80?G.flag:G.grass,
                         borderRadius:8,transition:"width .3s"}}/>
@@ -14766,8 +14903,8 @@ function ModBonos({data, setData}){
                     <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
                       {Array.from({length:total},(_,i)=>(
                         <div key={i} style={{width:18,height:18,borderRadius:4,
-                          background:i<usadas?"#1a5c2a":"#e0f0e0",
-                          border:"1px solid",borderColor:i<usadas?"#0f3518":"#a0c8a0",
+                          background:i<usadas?"#3FA05F":"#e0f0e0",
+                          border:"1px solid",borderColor:i<usadas?"#040D08":"#a0c8a0",
                           display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>
                           {i<usadas?"✓":""}
                         </div>
@@ -14802,7 +14939,7 @@ function ModBonos({data, setData}){
     {modalBono==="new"&&<Modal title="🎫 Nuevo bono de clases" onClose={()=>setModalBono(null)}>
       <Field label="Alumno *">
         <select value={form.alumnoId} onChange={e=>setForm(f=>({...f,alumnoId:e.target.value}))}
-          style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"9px 12px",
+          style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"9px 12px",
             fontSize:14,background:"#fff",fontFamily:"inherit"}}>
           {alumnos.filter(a=>a.activo).map(a=><option key={a.id} value={a.id}>{a.nombre}</option>)}
         </select>
@@ -14811,7 +14948,7 @@ function ModBonos({data, setData}){
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {PACKS.map(p=>(
             <button key={p.n} type="button" onClick={()=>setForm(f=>({...f,clases:p.n}))}
-              style={{flex:1,minWidth:80,background:form.clases===p.n?p.color:"#f0f0f0",
+              style={{flex:1,minWidth:80,background:form.clases===p.n?p.color:"#16241C",
                 color:form.clases===p.n?"#fff":"#555",border:"none",borderRadius:8,
                 padding:"10px 6px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
               {p.label}
@@ -14828,7 +14965,7 @@ function ModBonos({data, setData}){
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <Field label="Tipo">
           <select value={form.tipo} onChange={e=>setForm(f=>({...f,tipo:e.target.value}))}
-            style={{width:"100%",border:"1.5px solid #d0e0d0",borderRadius:8,padding:"8px 10px",
+            style={{width:"100%",border:"1.5px solid #2A4A3A",borderRadius:8,padding:"8px 10px",
               fontSize:13,background:"#fff",fontFamily:"inherit"}}>
             {["Individual","Grupal","Intensivo","Pollitos","Escuela adultos"].map(t=>(
               <option key={t} value={t}>{t}</option>
@@ -14865,12 +15002,12 @@ function ModBonos({data, setData}){
 // ═══════════════════════════════════════════════════════════════════
 
 const NOTIF_COLORS = {
-  clase:       {bg:"linear-gradient(135deg,#1a5c2a,#2e7d44)", icon:"📅"},
-  informe:     {bg:"linear-gradient(135deg,#7b5ea7,#9b7ec7)", icon:"📑"},
+  clase:       {bg:"linear-gradient(135deg,#3FA05F,#2e7d44)", icon:"📅"},
+  informe:     {bg:"linear-gradient(135deg,#A98FD1,#9b7ec7)", icon:"📑"},
   mensaje:     {bg:"linear-gradient(135deg,#2980b9,#3498db)", icon:"✉️"},
-  archivo:     {bg:"linear-gradient(135deg,#c8a84b,#e0c060)", icon:"📁"},
-  estadistica: {bg:"linear-gradient(135deg,#e67e22,#f39c12)", icon:"📊"},
-  inscripcion: {bg:"linear-gradient(135deg,#1a5c2a,#2e7d44)", icon:"🔔"},
+  archivo:     {bg:"linear-gradient(135deg,#D9BC72,#e0c060)", icon:"📁"},
+  estadistica: {bg:"linear-gradient(135deg,#F0985A,#f39c12)", icon:"📊"},
+  inscripcion: {bg:"linear-gradient(135deg,#3FA05F,#2e7d44)", icon:"🔔"},
 };
 
 // ── Banner (desaparece solo en 6s) ───────────────────────────────
@@ -14930,7 +15067,7 @@ function NotifModal({notif, onClose, onClick}){
       {/* Cuerpo */}
       <div style={{padding:"20px 22px"}}>
         <p style={{margin:"0 0 16px",fontSize:14,color:"#333",lineHeight:1.6,textAlign:"center"}}>{notif.cuerpo}</p>
-        {notif.detalle&&<div style={{background:"#f5f5f5",borderRadius:10,padding:"10px 14px",
+        {notif.detalle&&<div style={{background:"#16241C",borderRadius:10,padding:"10px 14px",
           fontSize:13,color:"#555",marginBottom:16}}>{notif.detalle}</div>}
         <div style={{display:"flex",gap:10}}>
           {onClick&&<button onClick={()=>{onClick();onClose();}}
@@ -14939,7 +15076,7 @@ function NotifModal({notif, onClose, onClick}){
             Ver ahora
           </button>}
           <button onClick={onClose}
-            style={{flex:1,background:"#f0f0f0",color:"#555",border:"none",borderRadius:10,
+            style={{flex:1,background:"#16241C",color:"#555",border:"none",borderRadius:10,
               padding:"12px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
             {onClick?"Después":"Cerrar"}
           </button>
@@ -15014,7 +15151,7 @@ function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
 
   return <div onClick={()=>{onVerAhora();cerrar();}}
     style={{position:"fixed",bottom:24,right:24,zIndex:99999,
-      width:320,background:"linear-gradient(135deg,#1a5c2a,#2e7d44)",
+      width:320,background:"linear-gradient(135deg,#3FA05F,#2e7d44)",
       color:"white",borderRadius:16,boxShadow:"0 8px 32px rgba(0,0,0,.35)",
       cursor:"pointer",overflow:"hidden",
       transition:"all .4s cubic-bezier(.34,1.56,.64,1)",
@@ -15053,11 +15190,11 @@ function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
 
 // ─── Selector de apps Golf B (fila de iconos, siempre visible) ────────
 const GOLFB_APPS = [
-  { id:"academia", nombre:"Academia", color:"#B03A2E", url:"https://jmcaballerofdez.github.io/golf-academia-app/", emoji:"🎓" },
-  { id:"mantenimiento", nombre:"Mantenimiento", color:"#1A5C2A", url:"https://jmcaballerofdez.github.io/golf-mantenimiento-app/", emoji:"🔧" },
-  { id:"proshop", nombre:"Proshop", color:"#2E6DA4", url:"https://jmcaballerofdez.github.io/golf-proshop-app/", emoji:"🛒" },
-  { id:"finanzas", nombre:"Finanzas", color:"#8E969E", url:"https://jmcaballerofdez.github.io/golf-finanzas-app/", emoji:"💰" },
-  { id:"master", nombre:"Golf B Máster", color:"#C9A227", url:"https://jmcaballerofdez.github.io/golf-master-app/", emoji:"🏠" },
+  { id:"academia", nombre:"Academia", color:"#B03A2E", url:"https://academia.golfb.es/", emoji:"🎓" },
+  { id:"mantenimiento", nombre:"Mantenimiento", color:"#3FA05F", url:"https://mantenimiento.golfb.es/", emoji:"🔧" },
+  { id:"proshop", nombre:"Proshop", color:"#2E6DA4", url:"https://proshop.golfb.es/", emoji:"🛒" },
+  { id:"finanzas", nombre:"Finanzas", color:"#8E969E", url:"https://finanzas.golfb.es/", emoji:"💰" },
+  { id:"master", nombre:"Golf B Máster", color:"#C9A227", url:"https://golfb.es/", emoji:"🏠" },
 ];
 function AppSwitcher({ actual }){
   return <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -15076,6 +15213,298 @@ function AppSwitcher({ actual }){
   </div>;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: INFORME PROFESOR (negocio del profesor)
+// Comparativa y evolución de ingresos, horas impartidas, particulares
+// vs colectivas, y comisión configurable del campo/escuela.
+// La configuración de comisión se guarda en data.comisionCfg y es
+// 100% configurable (cada club/profesor la ajusta a su modelo).
+// ═══════════════════════════════════════════════════════════════════
+function ModInformeNegocio({data,setData,profesorId=null,esSuperAdmin=false}){
+  const anioActual=new Date().getFullYear();
+  const hoyStr=new Date().toISOString().slice(0,10);
+
+  // ── Filtro por profesor (solo en panel superadmin) ────────────────
+  const [profFiltro,setProfFiltro]=useState("todos");
+  function fp(arr){
+    if(!esSuperAdmin||profFiltro==="todos") return arr||[];
+    if(profFiltro==="principal") return (arr||[]).filter(x=>!x.profesorId);
+    return (arr||[]).filter(x=>x.profesorId===profFiltro);
+  }
+  const clasesAll=fp(data.clases);
+  const ingresosAll=fp(data.ingresos);
+  const alumnos=data.alumnos||[];
+
+  // ── Selección de periodo ──────────────────────────────────────────
+  const aniosDisponibles=[...new Set([
+    ...clasesAll.map(c=>(c.fecha||"").slice(0,4)),
+    ...ingresosAll.map(i=>(i.fecha||"").slice(0,4)),
+    String(anioActual),
+  ].filter(a=>a&&a.length===4))].sort().reverse();
+
+  const [modo,setModo]=useState("anio");            // "anio" | "personalizado"
+  const [anio,setAnio]=useState(String(anioActual));
+  const [desde,setDesde]=useState(anioActual+"-01-01");
+  const [hasta,setHasta]=useState(hoyStr);
+  const [compararCon,setCompararCon]=useState(aniosDisponibles.includes(String(anioActual-1))?String(anioActual-1):"ninguno");
+
+  const rango = modo==="anio" ? {d:anio+"-01-01",h:anio+"-12-31"} : {d:desde,h:hasta};
+  // Comparativa: otro año completo, o el mismo rango personalizado un año atrás
+  const shiftAnio=(f)=>f?(Number(f.slice(0,4))-1)+f.slice(4):f;
+  const rangoComp = compararCon==="ninguno" ? null
+    : modo==="anio" ? {d:compararCon+"-01-01",h:compararCon+"-12-31"}
+    : {d:shiftAnio(desde),h:shiftAnio(hasta)};
+  const etiquetaPeriodo = modo==="anio" ? anio : fmtDate(desde)+" – "+fmtDate(hasta);
+  const etiquetaComp = !rangoComp ? "" : (modo==="anio" ? compararCon : "mismo periodo año anterior");
+
+  const enRango=(f,r)=>r&&f&&f>=r.d&&f<=r.h;
+
+  // ── Configuración de comisión del campo/escuela ───────────────────
+  const cfg = data.comisionCfg || {modo:"porcentaje",Individual:0,Grupo:0,Empresa:0,Junior:0,Online:0};
+  const [editCfg,setEditCfg]=useState(false);
+  const [formCfg,setFormCfg]=useState(cfg);
+  function guardarCfg(){ setData({...data,comisionCfg:{...formCfg}}); setEditCfg(false); }
+
+  const comisionDe=(c)=>{
+    const p=Number(c.precio||0); if(!p) return 0;
+    const v=Number(cfg[c.tipo||"Individual"]||0);
+    return cfg.modo==="porcentaje" ? p*v/100 : v;
+  };
+
+  // ── Cálculos del periodo ──────────────────────────────────────────
+  const esParticular=(t)=>t==="Individual"||t==="Online";
+  function resumen(r){
+    if(!r) return null;
+    const cs=clasesAll.filter(c=>c.asistio&&enRango(c.fecha,r));
+    const ing=ingresosAll.filter(i=>enRango(i.fecha,r));
+    const horas=(arr)=>arr.reduce((s,c)=>s+Number(c.duracion||60),0)/60;
+    const part=cs.filter(c=>esParticular(c.tipo||"Individual"));
+    const col=cs.filter(c=>!esParticular(c.tipo||"Individual"));
+    const brutoClases=cs.reduce((s,c)=>s+Number(c.precio||0),0);
+    const comision=cs.reduce((s,c)=>s+comisionDe(c),0);
+    return {
+      cs, nClases:cs.length, nPart:part.length, nCol:col.length,
+      horasTot:horas(cs), horasPart:horas(part), horasCol:horas(col),
+      brutoClases, comision, neto:brutoClases-comision,
+      ingPartBase:part.reduce((s,c)=>s+Number(c.precio||0),0),
+      ingColBase:col.reduce((s,c)=>s+Number(c.precio||0),0),
+      totalIngresos:ing.reduce((s,i)=>s+Number(i.importeBase||0),0),
+      alumnosActivos:new Set(cs.map(c=>c.alumnoId).filter(Boolean)).size,
+    };
+  }
+  const R=resumen(rango);
+  const RC=resumen(rangoComp);
+
+  // ── Ingresos por mes (para el gráfico evolutivo) ──────────────────
+  function porMes(r){
+    const m=Array(12).fill(0);
+    if(!r) return m;
+    ingresosAll.forEach(i=>{ if(enRango(i.fecha,r)) m[Number(i.fecha.slice(5,7))-1]+=Number(i.importeBase||0); });
+    return m;
+  }
+  const mesesP=porMes(rango), mesesC=porMes(rangoComp);
+  const maxMes=Math.max(1,...mesesP,...mesesC);
+  const MESES_L=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+
+  // ── Top alumnos del periodo ───────────────────────────────────────
+  const topAlumnos=(()=>{ if(!R) return [];
+    const acc={};
+    R.cs.forEach(c=>{ if(c.alumnoId) acc[c.alumnoId]=(acc[c.alumnoId]||0)+Number(c.precio||0); });
+    return Object.entries(acc).sort((a,b)=>b[1]-a[1]).slice(0,5)
+      .map(([id,tot])=>({nombre:alumnos.find(a=>a.id===id)?.nombre||"—",tot}));
+  })();
+
+  const eurHoraNeto = R&&R.horasTot>0 ? R.neto/R.horasTot : 0;
+  const varPct=(a,b)=>b>0?((a-b)/b*100):null;
+  const fmtVar=(v)=>v===null?"":` (${v>=0?"+":""}${v.toFixed(1)}% vs ${etiquetaComp})`;
+  const eur=(n)=>Number(n||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2})+" €";
+  const hrs=(n)=>Number(n||0).toLocaleString("es-ES",{maximumFractionDigits:1})+" h";
+
+  // ── Exportar informe a PDF ────────────────────────────────────────
+  async function exportarPDF(){
+    await cargarJsPDF();
+    const { jsPDF } = window.jspdf;
+    const doc=new jsPDF();
+    let y=18;
+    doc.setFontSize(16); doc.setTextColor(18,51,33);
+    doc.text("Informe de Profesor — Golf B Academia",14,y); y+=8;
+    doc.setFontSize(10); doc.setTextColor(90);
+    doc.text(`Periodo: ${etiquetaPeriodo}${rangoComp?"  ·  Comparado con: "+etiquetaComp:""}`,14,y); y+=5;
+    doc.text(`Generado: ${fmtDate(hoyStr)}`,14,y); y+=9;
+    doc.setDrawColor(217,188,114); doc.line(14,y,196,y); y+=8;
+    doc.setFontSize(11); doc.setTextColor(30);
+    const fila=(lbl,val,valC)=>{ doc.text(lbl,14,y); doc.text(String(val),120,y,{align:"right"}); if(valC!==undefined&&RC)doc.text(String(valC),196,y,{align:"right"}); y+=6; };
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text("Concepto",14,y); doc.text(etiquetaPeriodo,120,y,{align:"right"}); if(RC)doc.text(etiquetaComp,196,y,{align:"right"}); y+=5;
+    doc.setFontSize(10); doc.setTextColor(30);
+    fila("Ingresos totales (base imponible)",eur(R.totalIngresos),RC?eur(RC.totalIngresos):undefined);
+    fila("Ingresos por clases (bruto)",eur(R.brutoClases),RC?eur(RC.brutoClases):undefined);
+    fila("Comisión campo/escuela",eur(R.comision),RC?eur(RC.comision):undefined);
+    fila("Neto profesor (clases)",eur(R.neto),RC?eur(RC.neto):undefined);
+    y+=2;
+    fila("Clases impartidas",R.nClases,RC?RC.nClases:undefined);
+    fila("· Particulares",`${R.nPart} (${hrs(R.horasPart)} · ${eur(R.ingPartBase)})`,RC?RC.nPart:undefined);
+    fila("· Colectivas",`${R.nCol} (${hrs(R.horasCol)} · ${eur(R.ingColBase)})`,RC?RC.nCol:undefined);
+    fila("Horas impartidas",hrs(R.horasTot),RC?hrs(RC.horasTot):undefined);
+    fila("€/hora efectivo (neto)",eur(eurHoraNeto));
+    fila("Alumnos activos en el periodo",R.alumnosActivos,RC?RC.alumnosActivos:undefined);
+    y+=4; doc.setDrawColor(217,188,114); doc.line(14,y,196,y); y+=8;
+    doc.setFontSize(11); doc.text("Evolución mensual de ingresos (base)",14,y); y+=6;
+    doc.setFontSize(9);
+    MESES_L.forEach((m,i)=>{
+      doc.setTextColor(90); doc.text(m,14,y);
+      doc.setTextColor(30); doc.text(eur(mesesP[i]),80,y,{align:"right"});
+      if(rangoComp){ doc.setTextColor(120); doc.text(eur(mesesC[i]),140,y,{align:"right"}); }
+      y+=5;
+      if(y>276){ doc.addPage(); y=18; }
+    });
+    if(topAlumnos.length){
+      y+=4; doc.setFontSize(11); doc.setTextColor(30);
+      doc.text("Top alumnos del periodo (por ingresos de clases)",14,y); y+=6; doc.setFontSize(9);
+      topAlumnos.forEach((t,i)=>{ doc.setTextColor(90); doc.text(`${i+1}. ${t.nombre}`,14,y); doc.setTextColor(30); doc.text(eur(t.tot),80,y,{align:"right"}); y+=5; });
+    }
+    doc.save(`informe-profesor-${etiquetaPeriodo.replaceAll(" ","")}.pdf`);
+  }
+
+  const kpi=(icono,label,valor,extra)=>(
+    <Card style={{flex:"1 1 160px",minWidth:150,padding:14}}>
+      <div style={{fontSize:20}}>{icono}</div>
+      <div style={{fontWeight:800,fontSize:18,color:G.ink,marginTop:4}}>{valor}</div>
+      <div style={{fontSize:11.5,color:G.soft}}>{label}</div>
+      {extra?<div style={{fontSize:10.5,color:G.flag,marginTop:2}}>{extra}</div>:null}
+    </Card>
+  );
+
+  return <div>
+    {/* ── Controles de periodo ── */}
+    <Card style={{marginBottom:16}}>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"flex-end"}}>
+        {esSuperAdmin&&<Field label="Profesor">
+          <Sel value={profFiltro} onChange={setProfFiltro} options={[
+            {value:"todos",label:"👥 Todos"},
+            {value:"principal",label:"👨‍🏫 Principal"},
+            ...(data.profesores||[]).filter(p=>p.activo).map(p=>({value:p.id,label:"👨‍🏫 "+p.nombre})),
+          ]}/>
+        </Field>}
+        <Field label="Periodo">
+          <Sel value={modo} onChange={setModo} options={[{value:"anio",label:"📆 Año completo"},{value:"personalizado",label:"🗓️ Personalizado"}]}/>
+        </Field>
+        {modo==="anio"
+          ? <Field label="Año"><Sel value={anio} onChange={setAnio} options={aniosDisponibles.map(a=>({value:a,label:a}))}/></Field>
+          : <>
+              <Field label="Desde"><Input type="date" value={desde} onChange={setDesde}/></Field>
+              <Field label="Hasta"><Input type="date" value={hasta} onChange={setHasta}/></Field>
+            </>}
+        <Field label="Comparar con">
+          <Sel value={compararCon} onChange={setCompararCon} options={[
+            {value:"ninguno",label:"— Sin comparativa"},
+            ...(modo==="anio"
+              ? aniosDisponibles.filter(a=>a!==anio).map(a=>({value:a,label:"Año "+a}))
+              : [{value:"anterior",label:"Mismo periodo, año anterior"}]),
+          ]}/>
+        </Field>
+        <div style={{marginBottom:14}}><Btn color="gold" onClick={exportarPDF}>📄 Exportar PDF</Btn></div>
+      </div>
+    </Card>
+
+    {/* ── KPIs principales ── */}
+    <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:16}}>
+      {kpi("💶","Ingresos totales (base)",eur(R.totalIngresos),RC?fmtVar(varPct(R.totalIngresos,RC.totalIngresos)).trim():null)}
+      {kpi("🏫","Comisión campo/escuela",eur(R.comision),cfg.modo==="porcentaje"?"según % configurado":"importe fijo por clase")}
+      {kpi("👨‍🏫","Neto profesor (clases)",eur(R.neto),RC?fmtVar(varPct(R.neto,RC.neto)).trim():null)}
+      {kpi("⏱️","Horas impartidas",hrs(R.horasTot),RC?fmtVar(varPct(R.horasTot,RC.horasTot)).trim():null)}
+      {kpi("⚡","€/hora efectivo (neto)",eur(eurHoraNeto),null)}
+      {kpi("👥","Alumnos activos",R.alumnosActivos,null)}
+    </div>
+
+    {/* ── Particulares vs colectivas ── */}
+    <Card style={{marginBottom:16}}>
+      <div style={{fontWeight:700,color:G.ink,marginBottom:10}}>👤 Particulares vs 👥 Colectivas — {etiquetaPeriodo}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
+        {[["👤 Particulares",R.nPart,R.horasPart,R.ingPartBase,RC?.nPart,RC?.horasPart,RC?.ingPartBase],
+          ["👥 Colectivas",R.nCol,R.horasCol,R.ingColBase,RC?.nCol,RC?.horasCol,RC?.ingColBase]].map(([lbl,n,h,imp,nC,hC,impC])=>(
+          <div key={lbl} style={{background:"#16241C",borderRadius:10,padding:14}}>
+            <div style={{fontWeight:700,color:G.flag,marginBottom:6}}>{lbl}</div>
+            <div style={{fontSize:13,color:G.ink}}>{n} clases · {hrs(h)} · {eur(imp)}</div>
+            {RC&&<div style={{fontSize:11.5,color:G.soft,marginTop:4}}>{etiquetaComp}: {nC} clases · {hrs(hC)} · {eur(impC)}</div>}
+          </div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:G.soft,marginTop:10}}>
+        Particulares = Individual y Online · Colectivas = Grupo, Empresa/Evento y Junior. Solo cuentan clases con asistencia marcada.
+      </div>
+    </Card>
+
+    {/* ── Evolución mensual ── */}
+    <Card style={{marginBottom:16}}>
+      <div style={{fontWeight:700,color:G.ink,marginBottom:4}}>📈 Evolución mensual de ingresos (base imponible)</div>
+      <div style={{fontSize:11.5,color:G.soft,marginBottom:12}}>
+        <span style={{color:G.grass}}>■</span> {etiquetaPeriodo}{rangoComp&&<> · <span style={{color:G.flag}}>■</span> {etiquetaComp}</>}
+      </div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:6,height:150,overflowX:"auto"}}>
+        {MESES_L.map((m,i)=>(
+          <div key={m} style={{flex:1,minWidth:34,display:"flex",flexDirection:"column",alignItems:"center",gap:3,height:"100%",justifyContent:"flex-end"}}>
+            <div style={{display:"flex",gap:2,alignItems:"flex-end",height:"100%",width:"100%",justifyContent:"center"}}>
+              <div title={`${m}: ${eur(mesesP[i])}`} style={{width:rangoComp?10:16,background:G.grass,borderRadius:"3px 3px 0 0",height:`${(mesesP[i]/maxMes)*100}%`,minHeight:mesesP[i]>0?3:0}}/>
+              {rangoComp&&<div title={`${m} (${etiquetaComp}): ${eur(mesesC[i])}`} style={{width:10,background:G.flag,borderRadius:"3px 3px 0 0",height:`${(mesesC[i]/maxMes)*100}%`,minHeight:mesesC[i]>0?3:0,opacity:.85}}/>}
+            </div>
+            <div style={{fontSize:9.5,color:G.soft}}>{m}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
+      {/* ── Configuración de comisión ── */}
+      <Card>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontWeight:700,color:G.ink}}>🏫 Comisión del campo/escuela</div>
+          {!editCfg&&<Btn small color="secondary" onClick={()=>{setFormCfg(cfg);setEditCfg(true);}}>✏️ Configurar</Btn>}
+        </div>
+        {!editCfg ? <div>
+          <div style={{fontSize:12.5,color:G.soft,marginBottom:8}}>
+            Modelo: <b style={{color:G.ink}}>{cfg.modo==="porcentaje"?"Porcentaje sobre cada clase":"Importe fijo por clase"}</b>
+          </div>
+          {TIPOS_CLASE.map(t=>(
+            <div key={t.id} style={{display:"flex",justifyContent:"space-between",fontSize:12.5,padding:"4px 0",borderBottom:"1px solid #16241C"}}>
+              <span style={{color:G.soft}}>{t.label}</span>
+              <b style={{color:G.ink}}>{Number(cfg[t.id]||0)}{cfg.modo==="porcentaje"?" %":" €"}</b>
+            </div>
+          ))}
+          <div style={{fontSize:11,color:G.soft,marginTop:8}}>La comisión se descuenta del bruto de cada clase para calcular tu neto. Cada club o profesor puede ajustarla a su acuerdo.</div>
+        </div> : <div>
+          <Field label="Modelo de comisión">
+            <Sel value={formCfg.modo} onChange={v=>setFormCfg({...formCfg,modo:v})}
+              options={[{value:"porcentaje",label:"% sobre el precio de cada clase"},{value:"fijo",label:"€ fijos por clase"}]}/>
+          </Field>
+          {TIPOS_CLASE.map(t=>(
+            <Field key={t.id} label={t.label+" ("+(formCfg.modo==="porcentaje"?"%":"€")+")"}>
+              <Input type="number" value={String(formCfg[t.id]??0)} onChange={v=>setFormCfg({...formCfg,[t.id]:v})}/>
+            </Field>
+          ))}
+          <div style={{display:"flex",gap:8}}>
+            <Btn color="primary" onClick={guardarCfg}>💾 Guardar</Btn>
+            <Btn color="secondary" onClick={()=>setEditCfg(false)}>Cancelar</Btn>
+          </div>
+        </div>}
+      </Card>
+
+      {/* ── Top alumnos ── */}
+      <Card>
+        <div style={{fontWeight:700,color:G.ink,marginBottom:10}}>🏆 Top alumnos del periodo</div>
+        {topAlumnos.length===0&&<div style={{fontSize:12.5,color:G.soft}}>Sin clases con precio en este periodo.</div>}
+        {topAlumnos.map((t,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"6px 0",borderBottom:"1px solid #16241C"}}>
+            <span style={{color:G.ink}}>{i+1}. {t.nombre}</span>
+            <b style={{color:G.flag}}>{eur(t.tot)}</b>
+          </div>
+        ))}
+        <div style={{fontSize:11,color:G.soft,marginTop:8}}>Por ingresos de clases (base) con asistencia en el periodo seleccionado.</div>
+      </Card>
+    </div>
+  </div>;
+}
+
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false}){
   const [tab,setTab]=useState("calendario");
   const [verSinClase,setVerSinClase]=useState(false);
@@ -15083,6 +15512,8 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
   const [msgTexto,setMsgTexto]=useState("");
   const [msgAsunto,setMsgAsunto]=useState("Recordatorio de clase");
   const [msgEnviado,setMsgEnviado]=useState({});
+  const [waAbierto,setWaAbierto]=useState(null);   // id del alumno con el editor de WhatsApp abierto
+  const [waTexto,setWaTexto]=useState("");
   const {mostrarBanner,mostrarModal,UI:NotifUI} = useNotifManager();
 
   // ── Detección de cambios para notificaciones al profesor ──────────
@@ -15157,11 +15588,11 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             {/* Golf B — logo principal */}
-            <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{height:44,objectFit:"contain",background:"white",borderRadius:6,padding:"3px 8px"}}/>
+            <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{height:56,objectFit:"contain",background:"#123321",borderRadius:6,padding:"4px 10px"}}/>
             {/* Logos secundarios */}
-            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:44,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
-            <img src={LOGO_PGA} alt="PGA España" style={{height:44,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
-            <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:44,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:44,objectFit:"contain",background:"#123321",borderRadius:6,padding:"2px 4px"}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:44,objectFit:"contain",background:"#123321",borderRadius:6,padding:"2px 4px"}}/>
+            <img src={LOGO_ENG} alt="Escuela Nacional" style={{height:44,objectFit:"contain",background:"#123321",borderRadius:6,padding:"2px 4px"}}/>
             <div style={{marginLeft:6}}>
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>{nombrePanel}</div>
             </div>
@@ -15180,9 +15611,9 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             return <button key={t.id} onClick={()=>setTab(t.id)}
               style={{background:tab===t.id?G.white:"transparent",color:tab===t.id?G.fairway:"rgba(255,255,255,.8)",border:"none",borderRadius:"8px 8px 0 0",padding:"8px 10px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",position:"relative",flexShrink:0}}>
               {t.icon} {t.label}
-              {t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
-              {t.id==="mensajes"&&mensajesNoLeidos>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#c0392b",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{mensajesNoLeidos}</span>}
-              {t.id==="bonos"&&bonosAgotando>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#e67e22",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{bonosAgotando}</span>}
+              {t.id==="pendientes"&&pendientesCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#E2685C",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{pendientesCount}</span>}
+              {t.id==="mensajes"&&mensajesNoLeidos>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#E2685C",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{mensajesNoLeidos}</span>}
+              {t.id==="bonos"&&bonosAgotando>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#F0985A",color:"white",borderRadius:"50%",width:16,height:16,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{bonosAgotando}</span>}
             </button>;
           })}
         </div>
@@ -15190,7 +15621,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
     </div>
     <div style={{maxWidth:920,margin:"0 auto",padding:"22px 14px 60px"}}>
       {pendientesCount>0&&tab!=="pendientes"&&<div onClick={()=>setTab("pendientes")}
-        style={{background:"linear-gradient(135deg,#c0392b,#e74c3c)",color:"white",
+        style={{background:"linear-gradient(135deg,#E2685C,#e74c3c)",color:"white",
           borderRadius:14,padding:"16px 20px",marginBottom:18,cursor:"pointer",
           display:"flex",alignItems:"center",gap:14,boxShadow:"0 4px 16px rgba(192,57,43,.3)",
           animation:"pulse 2s infinite"}}>
@@ -15220,7 +15651,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         }).filter(a=>!a.ultimaClase||a.ultimaClase<lim)
           .sort((a,b)=>(a.ultimaClase||"0000")<(b.ultimaClase||"0000")?-1:1);
         if(sinClase.length===0) return null;
-        return <div style={{borderRadius:14,border:"2px solid #e67e22",background:"#fffbf5",
+        return <div style={{borderRadius:14,border:"2px solid #F0985A",background:"#fffbf5",
           marginBottom:18,overflow:"hidden"}}>
           <div onClick={()=>setVerSinClase(v=>!v)}
             style={{padding:"12px 18px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",
@@ -15258,7 +15689,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
                 setMsgAsunto("Recordatorio de clase");
               }
               return <div key={a.id}
-                style={{borderRadius:10,border:"1px solid #f5dfc0",overflow:"hidden",background:"white"}}>
+                style={{borderRadius:10,border:"1px solid #f5dfc0",overflow:"hidden",background:"#123321"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px"}}>
                   <span style={{fontSize:20}}>👤</span>
                   <div style={{flex:1}}>
@@ -15271,11 +15702,17 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
                   </div>
                   {a.telefono&&<a href={`tel:${a.telefono}`}
                     style={{fontSize:12,color:G.fairway,fontWeight:600,textDecoration:"none",
-                      background:"#e8f5eb",borderRadius:6,padding:"4px 8px"}}>
+                      background:"#123321",borderRadius:6,padding:"4px 8px"}}>
                     📞 Llamar
                   </a>}
+                  {a.telefono&&<button onClick={()=>{setWaAbierto(waAbierto===a.id?null:a.id);
+                      setWaTexto(`Hola ${a.nombre.split(" ")[0]}, soy de Golf Ciudad Real 🏌️ Hace ${dias} días que no vienes a clase — ¿quieres que te reserve una próxima?`);}}
+                    style={{fontSize:12,color:"#3FA05F",fontWeight:600,border:"none",cursor:"pointer",
+                      background:waAbierto===a.id?"#c8ecd0":"#dcf5e0",borderRadius:6,padding:"4px 8px"}}>
+                    💬 WhatsApp
+                  </button>}
                   <button onClick={()=>{setMsgAbierto(abierto?null:a.id);setMsgTexto("");setMsgAsunto("Recordatorio de clase");}}
-                    style={{fontSize:12,background:yaEnviado?"#e8f5eb":abierto?"#f0f0f0":"#3b82f6",
+                    style={{fontSize:12,background:yaEnviado?"#123321":abierto?"#16241C":"#3b82f6",
                       color:yaEnviado?G.grass:abierto?"#555":"white",border:"none",
                       borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600}}>
                     {yaEnviado?"✓ Enviado":"✉️ Mensaje"}
@@ -15304,7 +15741,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
                       boxSizing:"border-box"}}/>
                   <div style={{display:"flex",gap:8,marginTop:8,justifyContent:"flex-end"}}>
                     <button onClick={()=>setMsgAbierto(null)}
-                      style={{background:"#f0f0f0",border:"none",borderRadius:6,
+                      style={{background:"#16241C",border:"none",borderRadius:6,
                         padding:"6px 14px",fontSize:12,cursor:"pointer"}}>
                       Cancelar
                     </button>
@@ -15315,6 +15752,34 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
                         fontWeight:700,cursor:msgTexto.trim()?"pointer":"default"}}>
                       📤 Enviar
                     </button>
+                  </div>
+                </div>}
+                {waAbierto===a.id&&<div style={{padding:"10px 14px 12px",background:"#f3fbf5",
+                  borderTop:"1px solid #cdecd6"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#3FA05F",marginBottom:6}}>
+                    💬 Mensaje de WhatsApp para {a.nombre}
+                  </div>
+                  <textarea value={waTexto} onChange={e=>setWaTexto(e.target.value)}
+                    placeholder={`Escribe aquí el mensaje para ${a.nombre}...`}
+                    rows={3}
+                    style={{width:"100%",border:"1px solid #cdecd6",borderRadius:7,
+                      padding:"6px 10px",fontSize:13,resize:"vertical",fontFamily:"inherit",
+                      boxSizing:"border-box"}}/>
+                  <div style={{display:"flex",gap:8,marginTop:8,justifyContent:"flex-end"}}>
+                    <button onClick={()=>setWaAbierto(null)}
+                      style={{background:"#16241C",border:"none",borderRadius:6,
+                        padding:"6px 14px",fontSize:12,cursor:"pointer"}}>
+                      Cancelar
+                    </button>
+                    <a href={waTexto.trim()?waLink(a.telefono, waTexto):undefined}
+                      target="_blank" rel="noopener noreferrer"
+                      onClick={()=>setWaAbierto(null)}
+                      style={{background:waTexto.trim()?"#3FA05F":"#a9c9b0",color:"white",
+                        border:"none",borderRadius:6,padding:"6px 16px",fontSize:12,
+                        fontWeight:700,textDecoration:"none",cursor:waTexto.trim()?"pointer":"default",
+                        pointerEvents:waTexto.trim()?"auto":"none"}}>
+                      💬 Abrir WhatsApp
+                    </a>
                   </div>
                 </div>}
               </div>;
@@ -15336,6 +15801,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
       {tab==="ejercicios"&&<ModEjerciciosAdmin data={data} setData={setData}/>}
       {tab==="informes"&&<ModInformes data={data} setData={setData}/>}
+      {tab==="negocio"&&<ModInformeNegocio data={dataProffesor} setData={setData} profesorId={profesorId}/>}
       {tab==="archivos"&&<ModArchivos data={data} setData={setData}/>}
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
@@ -15358,7 +15824,7 @@ function ModProfesores({data,setData}){
   const profesores = data.profesores||[];
 
   function openNew(){
-    setForm({nombre:"",pin:"",email:"",color:"#1a5c2a",activo:true,especialidad:""});
+    setForm({nombre:"",pin:"",email:"",color:"#3FA05F",activo:true,especialidad:""});
     setModal("new");
   }
   function openEdit(p){setForm({...p});setModal(p.id);}
@@ -15385,7 +15851,7 @@ function ModProfesores({data,setData}){
     return {alumnos:alumnos.length,clases:clases.length};
   }
 
-  const COLORES=["#1a5c2a","#3a7abf","#c0392b","#8e44ad","#d35400","#16a085","#2c3e50","#c8a84b"];
+  const COLORES=["#3FA05F","#6FB3E8","#E2685C","#8e44ad","#d35400","#16a085","#B8C4CE","#D9BC72"];
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -15397,7 +15863,7 @@ function ModProfesores({data,setData}){
     </div>
 
     {/* Profesor principal (admin) */}
-    <Card style={{marginBottom:12,borderLeft:"4px solid "+G.fairway,background:"#f0f7f0"}}>
+    <Card style={{marginBottom:12,borderLeft:"4px solid "+G.fairway,background:"#16241C"}}>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
         <div style={{width:44,height:44,borderRadius:"50%",background:G.fairway,
           display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,color:"#fff",flexShrink:0}}>
@@ -15454,7 +15920,7 @@ function ModProfesores({data,setData}){
     })}
 
     {/* Resumen global */}
-    {profesores.length>0&&<Card style={{marginTop:16,background:"#f9f9f9"}}>
+    {profesores.length>0&&<Card style={{marginTop:16,background:"#16241C"}}>
       <div style={{fontWeight:700,color:G.fairway,marginBottom:8}}>📊 Resumen global de la academia</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}}>
         {[
@@ -15515,7 +15981,7 @@ function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
   // Si está "viendo como" un profesor, mostrar su panel
   if(verComo!==null){
     return <div>
-      <div style={{background:"#2c3e50",color:"#fff",padding:"8px 16px",
+      <div style={{background:"#B8C4CE",color:"#fff",padding:"8px 16px",
         display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:13}}>
         <span>👁️ Viendo como: <b>{verComo.profesorId?"Prof. "+verComo.profesorNombre:"Profesor Principal"}</b></span>
         <button onClick={()=>setVerComo(null)}
@@ -15536,16 +16002,17 @@ function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
     {id:"alumnos",   label:"Todos los alumnos",icon:"👤"},
     {id:"clases",    label:"Todas las clases",icon:"📅"},
     {id:"pagos",     label:"Contabilidad global",icon:"💶"},
+    {id:"negocio",   label:"Informe Profesor",icon:"📈"},
     {id:"ajustes",   label:"Ajustes",icon:"⚙️"},
   ];
 
   return <div style={{fontFamily:"'Segoe UI',system-ui,sans-serif",minHeight:"100vh",background:G.sand}}>
     {/* Cabecera */}
-    <div style={{background:"linear-gradient(135deg,#2c3e50,#1a252f)",color:"#fff",padding:"0 16px"}}>
+    <div style={{background:"linear-gradient(135deg,#B8C4CE,#16222E)",color:"#fff",padding:"0 16px"}}>
       <div style={{maxWidth:980,margin:"0 auto"}}>
         <div style={{padding:"14px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",background:"white",borderRadius:6,padding:"2px 4px"}}/>
+            <img src={LOGO_GCR} alt="GCR" style={{height:40,objectFit:"contain",background:"#123321",borderRadius:6,padding:"2px 4px"}}/>
             <div>
               <div style={{fontWeight:800,fontSize:16}}>José Caballero Golf Academy</div>
               <div style={{fontSize:11,color:"rgba(255,255,255,.6)"}}>👑 Panel Administrador</div>
@@ -15577,7 +16044,7 @@ function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
         <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto"}}>
           {SA_TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)}
             style={{background:tab===t.id?G.white:"transparent",
-              color:tab===t.id?"#2c3e50":"rgba(255,255,255,.8)",border:"none",
+              color:tab===t.id?"#B8C4CE":"rgba(255,255,255,.8)",border:"none",
               borderRadius:"8px 8px 0 0",padding:"8px 12px",fontSize:12,fontWeight:600,
               cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
             {t.icon} {t.label}
@@ -15587,13 +16054,14 @@ function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
     </div>
 
     <div style={{maxWidth:980,margin:"0 auto",padding:"22px 14px 60px"}}>
-      <h2 style={{margin:"0 0 18px",color:"#2c3e50",fontSize:19,fontWeight:800}}>
+      <h2 style={{margin:"0 0 18px",color:"#B8C4CE",fontSize:19,fontWeight:800}}>
         {SA_TABS.find(t=>t.id===tab)?.icon} {SA_TABS.find(t=>t.id===tab)?.label}
       </h2>
       {tab==="profesores"&&<ModProfesores data={data} setData={setData}/>}
       {tab==="alumnos"&&<ModAlumnos data={data} setData={setData} modoAdmin={true}/>}
       {tab==="clases"&&<ModClases data={data} setData={setData} modoAdmin={true}/>}
       {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
+      {tab==="negocio"&&<ModInformeNegocio data={data} setData={setData} esSuperAdmin={true}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
   </div>;
@@ -15604,8 +16072,112 @@ function SuperAdminShell({data,setData,onLogout,notifs=[],pendientesCount=0}){
 // ═══════════════════════════════════════════════════════════════════
 const LOGO_JCGA = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjIyNCIgdmlld0JveD0iMCAwIDY4MCAzODAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPHJlY3Qgd2lkdGg9IjY4MCIgaGVpZ2h0PSIzODAiIGZpbGw9IiMwODA4MDgiLz4KICA8cGF0aCBkPSJNIDI1NSAxOTUgQyAyNjggMTMwIDMxMCA3OCAzNjAgODggQyA0MDAgOTYgNDE4IDEyOCA0MDggMTY4IiBmaWxsPSJub25lIiBzdHJva2U9IiMxYTVjMmEiIHN0cm9rZS13aWR0aD0iMzIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxwYXRoIGQ9Ik0gMjU1IDE5NSBDIDI2OCAxMzAgMzEwIDc4IDM2MCA4OCBDIDQwMCA5NiA0MTggMTI4IDQwOCAxNjgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjQwOCIgY3k9IjE2OCIgcj0iMjQiIGZpbGw9IiMwODA4MDgiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjUiLz4KICA8Y2lyY2xlIGN4PSI0MDgiIGN5PSIxNjgiIHI9IjE1IiBmaWxsPSIjMWE1YzJhIi8+CiAgPGNpcmNsZSBjeD0iNDA4IiBjeT0iMTY4IiByPSI3IiBmaWxsPSIjYzhhODRiIi8+CiAgPHBhdGggZD0iTSA0MDggMTY4IEMgNDQ1IDEzOCA0NzIgMTQ4IDQ2OCAxODIgQyA0NjQgMjA4IDQ0OCAyMTggNDQwIDIyNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYzhhODRiIiBzdHJva2Utd2lkdGg9IjAuOCIgc3Ryb2tlLWRhc2hhcnJheT0iMyA3IiBvcGFjaXR5PSIwLjQ1Ii8+CiAgPGxpbmUgeDE9IjE3MiIgeTE9IjIyNiIgeDI9IjUwOCIgeTI9IjIyNiIgc3Ryb2tlPSIjMWE1YzJhIiBzdHJva2Utd2lkdGg9IjIiLz4KICA8bGluZSB4MT0iMTcyIiB5MT0iMjI5IiB4Mj0iNTA4IiB5Mj0iMjI5IiBzdHJva2U9IiNjOGE4NGIiIHN0cm9rZS13aWR0aD0iMC41IiBvcGFjaXR5PSIwLjQiLz4KICA8bGluZSB4MT0iNDQwIiB5MT0iMTg2IiB4Mj0iNDQwIiB5Mj0iMjI2IiBzdHJva2U9IiNmMGViZTAiIHN0cm9rZS13aWR0aD0iMS4yIiBvcGFjaXR5PSIwLjciLz4KICA8cGF0aCBkPSJNIDQ0MCAxODYgTCA0NjAgMTk2IEwgNDQwIDIwNiBaIiBmaWxsPSIjYzhhODRiIi8+CiAgPGVsbGlwc2UgY3g9IjI3MiIgY3k9IjIzMCIgcng9IjI4IiByeT0iNCIgZmlsbD0iIzFhNWMyYSIgb3BhY2l0eT0iMC40Ii8+CiAgPGNpcmNsZSBjeD0iMjcyIiBjeT0iMTg2IiByPSIxMSIgZmlsbD0iI2YwZWJlMCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNzIiIHkxPSIxOTciIHgyPSIyNjQiIHkyPSIyMjYiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNzIiIHkxPSIxOTciIHgyPSIyODAiIHkyPSIyMjYiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyNjQiIHkxPSIyMDgiIHgyPSIyOTYiIHkyPSIxOTgiIHN0cm9rZT0iI2YwZWJlMCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgb3BhY2l0eT0iMC44NSIvPgogIDxsaW5lIHgxPSIyOTYiIHkxPSIxOTgiIHgyPSIyNTYiIHkyPSIxOTYiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIxLjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSIyMjAiIHkxPSIyNTQiIHgyPSI0NjAiIHkyPSIyNTQiIHN0cm9rZT0iIzFhNWMyYSIgc3Ryb2tlLXdpZHRoPSIwLjgiLz4KICA8dGV4dCB4PSIzNDAiIHk9IjI4OCIgZm9udC1mYW1pbHk9IidIZWx2ZXRpY2EgTmV1ZScsSGVsdmV0aWNhLEFyaWFsLHNhbnMtc2VyaWYiIGZpbGw9IiNmMGViZTAiIGxldHRlci1zcGFjaW5nPSI3IiBmb250LXdlaWdodD0iMjAwIiBmb250LXNpemU9IjI0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5KT1PDiSBDQUJBTExFUk88L3RleHQ+CiAgPGxpbmUgeDE9IjIwNSIgeTE9IjMwNCIgeDI9IjMxOCIgeTI9IjMwNCIgc3Ryb2tlPSIjYzhhODRiIiBzdHJva2Utd2lkdGg9IjAuNSIvPgogIDxjaXJjbGUgY3g9IjM0MCIgY3k9IjMwNCIgcj0iMiIgZmlsbD0iI2M4YTg0YiIvPgogIDxsaW5lIHgxPSIzNjIiIHkxPSIzMDQiIHgyPSI0NzUiIHkyPSIzMDQiIHN0cm9rZT0iI2M4YTg0YiIgc3Ryb2tlLXdpZHRoPSIwLjUiLz4KICA8dGV4dCB4PSIzNDAiIHk9IjMzMiIgZm9udC1mYW1pbHk9IidIZWx2ZXRpY2EgTmV1ZScsSGVsdmV0aWNhLEFyaWFsLHNhbnMtc2VyaWYiIGZpbGw9IiNjOGE4NGIiIGxldHRlci1zcGFjaW5nPSIxNCIgZm9udC13ZWlnaHQ9IjMwMCIgZm9udC1zaXplPSIxMiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+R09MRiBBQ0FERU1ZPC90ZXh0PgogIDx0ZXh0IHg9IjM0MCIgeT0iMzYwIiBmb250LWZhbWlseT0iJ0hlbHZldGljYSBOZXVlJyxIZWx2ZXRpY2EsQXJpYWwsc2Fucy1zZXJpZiIgZmlsbD0iI2YwZWJlMCIgbGV0dGVyLXNwYWNpbmc9IjMiIGZvbnQtd2VpZ2h0PSIxMDAiIGZvbnQtc2l6ZT0iOSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgb3BhY2l0eT0iMC4zNSI+Q0lVREFEIFJFQUw8L3RleHQ+Cjwvc3ZnPgo=";
 
+// ═══════════════════════════════════════════════════════════════════
+// LOGIN PROPIO DE ACADEMIA (independiente de Golf B Máster)
+// ═══════════════════════════════════════════════════════════════════
+// Antes, todas las apps de Golf B vivían en el mismo dominio
+// (jmcaballerofdez.github.io) y por eso la sesión de Firebase Auth se
+// compartía sola entre ellas. Ahora cada app tiene su propio
+// subdominio (academia.golfb.es, golfb.es...), y el navegador ya no
+// comparte esa sesión entre sitios distintos — así que Academia
+// necesita su propio formulario de login, igual que Proshop.
+function PantallaLoginAcademia({ onQuieroRegistrarme }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [mostrarReset, setMostrarReset] = useState(false);
+  const [resetEnviado, setResetEnviado] = useState(false);
+
+  async function entrar(e) {
+    e.preventDefault();
+    setError(""); setCargando(true);
+    try { await signInWithEmailAndPassword(auth, email, password); }
+    catch { setError("Email o contraseña incorrectos."); }
+    setCargando(false);
+  }
+  async function recuperar(e) {
+    e.preventDefault();
+    setError(""); setCargando(true);
+    try { await sendPasswordResetEmail(auth, email); setResetEnviado(true); }
+    catch { setError("No se pudo enviar el email. Revisa la dirección."); }
+    setCargando(false);
+  }
+
+  const inputCls = { width:"100%", padding:"10px 14px", borderRadius:10, border:"1px solid rgba(255,255,255,.18)",
+    background:"rgba(255,255,255,.08)", color:"#fff", fontSize:14, outline:"none", boxSizing:"border-box" };
+
+  return (
+    <div style={{minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center",
+      background:`linear-gradient(160deg, ${G.fairway}, #040D08)`, padding:20}}>
+      <div style={{width:"100%", maxWidth:380}}>
+        <div style={{textAlign:"center", marginBottom:28}}>
+          <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:220, objectFit:"contain", margin:"0 auto"}}/>
+          <p style={{color:"rgba(255,255,255,.65)", fontSize:14, marginTop:10}}>Academia · Golf Ciudad Real</p>
+          <div style={{display:"flex", justifyContent:"center", alignItems:"center", gap:14, marginTop:14}}>
+            <img src={LOGO_GCR} alt="Golf Ciudad Real" style={{height:52, objectFit:"contain", borderRadius:8, background:"#fff", padding:"5px 8px"}}/>
+            <img src={LOGO_PGA} alt="PGA España" style={{height:52, objectFit:"contain", borderRadius:8, background:"#fff", padding:"5px 8px"}}/>
+          </div>
+        </div>
+        <div style={{background:"rgba(255,255,255,.06)", borderRadius:16, padding:28, border:`1px solid ${G.flag}33`}}>
+          {!mostrarReset ? (
+            <form onSubmit={entrar}>
+              <h2 style={{color:G.flag, fontSize:19, fontWeight:600, marginBottom:18}}>Iniciar sesión</h2>
+              <div style={{marginBottom:14}}>
+                <label style={{display:"block", color:"rgba(255,255,255,.75)", fontSize:13, marginBottom:5}}>Email</label>
+                <input type="email" required autoFocus value={email} onChange={e=>setEmail(e.target.value)} style={inputCls} placeholder="tu@email.com"/>
+              </div>
+              <div style={{marginBottom:18}}>
+                <label style={{display:"block", color:"rgba(255,255,255,.75)", fontSize:13, marginBottom:5}}>Contraseña</label>
+                <input type="password" required value={password} onChange={e=>setPassword(e.target.value)} style={inputCls} placeholder="••••••••"/>
+              </div>
+              {error && <p style={{color:"#f5a3a3", background:"rgba(192,57,43,.15)", borderRadius:8, padding:"8px 12px", fontSize:13, marginBottom:14}}>{error}</p>}
+              <button type="submit" disabled={cargando} style={{width:"100%", background:G.flag, color:G.ink, border:"none",
+                borderRadius:10, padding:"11px 0", fontSize:14, fontWeight:700, cursor:"pointer", opacity:cargando?.6:1}}>
+                {cargando?"Entrando…":"Entrar"}
+              </button>
+              <button type="button" onClick={()=>{setMostrarReset(true);setError("");}} style={{width:"100%", background:"transparent", border:"none",
+                color:"rgba(255,255,255,.55)", fontSize:12.5, marginTop:14, cursor:"pointer"}}>
+                ¿Olvidaste tu contraseña?
+              </button>
+            </form>
+          ) : (
+            <div>
+              <h2 style={{color:G.flag, fontSize:19, fontWeight:600, marginBottom:14}}>Recuperar contraseña</h2>
+              {resetEnviado ? (
+                <p style={{color:"#a3e0b8", background:"rgba(46,125,60,.18)", borderRadius:8, padding:"10px 12px", fontSize:13}}>
+                  Te hemos enviado un email con instrucciones para recuperar tu contraseña.
+                </p>
+              ) : (
+                <form onSubmit={recuperar}>
+                  <p style={{color:"rgba(255,255,255,.6)", fontSize:12.5, marginBottom:14}}>Introduce tu email y te enviaremos un enlace para restablecer tu contraseña.</p>
+                  <input type="email" required autoFocus value={email} onChange={e=>setEmail(e.target.value)} style={{...inputCls, marginBottom:14}} placeholder="tu@email.com"/>
+                  {error && <p style={{color:"#f5a3a3", background:"rgba(192,57,43,.15)", borderRadius:8, padding:"8px 12px", fontSize:13, marginBottom:14}}>{error}</p>}
+                  <button type="submit" disabled={cargando} style={{width:"100%", background:G.flag, color:G.ink, border:"none",
+                    borderRadius:10, padding:"11px 0", fontSize:14, fontWeight:700, cursor:"pointer", opacity:cargando?.6:1}}>
+                    {cargando?"Enviando…":"Enviar enlace"}
+                  </button>
+                </form>
+              )}
+              <button type="button" onClick={()=>{setMostrarReset(false);setResetEnviado(false);setError("");}} style={{width:"100%", background:"transparent", border:"none",
+                color:"rgba(255,255,255,.55)", fontSize:12.5, marginTop:14, cursor:"pointer"}}>
+                ← Volver al login
+              </button>
+            </div>
+          )}
+        </div>
+        <button onClick={onQuieroRegistrarme} style={{width:"100%", background:"transparent", border:"none",
+          color:"rgba(255,255,255,.7)", fontSize:13, marginTop:20, cursor:"pointer", textAlign:"center"}}>
+          ¿Alumno nuevo? <span style={{color:G.flag, fontWeight:600, textDecoration:"underline"}}>Solicita tu alta aquí</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
   const [data,setDataRaw]   = useState(loadData);
+  const [vistaAuth,setVistaAuth] = useState("login"); // "login" | "registro" — solo se usa sin sesión
   const [authUser,setAuthUser] = useState(undefined); // undefined=cargando, null=sin sesión
   const [usuarioDoc,setUsuarioDoc] = useState(null);   // doc de usuarios/{uid} con role/alumnoId/profesorId
   const [savedFlash,setSavedFlash] = useState(false);
@@ -15761,9 +16333,9 @@ export default function App(){
 
   // Pantalla de carga
   if(!fbReady) return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#1a5c2a,#0f3518)",
+    <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#3FA05F,#040D08)",
       display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:20}}>
-      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:220,objectFit:"contain",background:"white",borderRadius:12,padding:"10px 20px",marginBottom:8}}/>
+      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:260,objectFit:"contain",background:"#123321",borderRadius:12,padding:"10px 20px",marginBottom:8}}/>
       <div style={{color:"rgba(255,255,255,.7)",fontSize:14}}>Conectando con el servidor...</div>
       <div style={{width:44,height:44,border:"4px solid rgba(255,255,255,.25)",
         borderTop:"4px solid white",borderRadius:"50%",
@@ -15774,39 +16346,29 @@ export default function App(){
 
   // Todavía comprobando si hay sesión de Firebase Auth
   if(authUser===undefined) return (
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#F8FAF9"}}>
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#071710"}}>
       <span style={{color:"#5C6C62"}}>Cargando…</span>
     </div>
   );
 
-  // Sin sesión → redirigir a Golf B Máster
-  if(!authUser) return (
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",
-      background:"#F8FAF9",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
-      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:160,objectFit:"contain"}}/>
-      <span style={{color:"#5C6C62",fontSize:15,maxWidth:320}}>
-        Inicia sesión desde <b>Golf B Máster</b> para acceder a la Academia.
-      </span>
-      <a href="https://jmcaballerofdez.github.io/golf-master-app/"
-        style={{background:"#0C2A1C",color:"#fff",borderRadius:8,padding:"10px 20px",
-          fontSize:14,fontWeight:600,textDecoration:"none"}}>
-        Ir a Golf B Máster
-      </a>
-    </div>
-  );
+  // Sin sesión → login propio de Academia (o pantalla de alta de alumno nuevo)
+  if(!authUser){
+    if(vistaAuth==="registro") return <PantallaRegistro onVolver={()=>setVistaAuth("login")}/>;
+    return <PantallaLoginAcademia onQuieroRegistrarme={()=>setVistaAuth("registro")}/>;
+  }
 
   // Sesión válida pero sin rol asignado todavía (pendiente de activación)
   if(!usuarioDoc || !usuarioDoc.role) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",
-      background:"#F8FAF9",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
-      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:140,objectFit:"contain"}}/>
+      background:"#071710",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
+      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:180,objectFit:"contain"}}/>
       <span style={{fontSize:15,color:"#5C6C62",maxWidth:340,lineHeight:1.5}}>
         No hemos encontrado ningún alumno, tutor o profesor registrado con el email <b>{authUser?.email}</b>.
       </span>
       <span style={{fontSize:13,color:"#8A9A93",maxWidth:340,lineHeight:1.5}}>
         Comprueba que tu profesor te ha dado de alta con ese mismo email exacto, o contacta con él para que lo revise.
       </span>
-      <button onClick={onLogout} style={{background:"#0C2A1C",color:"#fff",border:"none",
+      <button onClick={onLogout} style={{background:"#071710",color:"#fff",border:"none",
         borderRadius:8,padding:"10px 20px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
         Cerrar sesión
       </button>
