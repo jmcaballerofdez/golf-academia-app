@@ -16180,6 +16180,12 @@ export default function App(){
   const [vistaAuth,setVistaAuth] = useState("login"); // "login" | "registro" — solo se usa sin sesión
   const [authUser,setAuthUser] = useState(undefined); // undefined=cargando, null=sin sesión
   const [usuarioDoc,setUsuarioDoc] = useState(null);   // doc de usuarios/{uid} con role/alumnoId/profesorId
+  // IMPORTANTE (fix de seguridad 18-jul-2026): antes, cualquier rol
+  // desconocido (ej. "proshop", "jardinero"...) caía por defecto en
+  // el panel completo de profesor. Ahora solo estos roles pasan; si
+  // el rol no está en esta lista, se trata igual que "sin rol".
+  const ROLES_PERMITIDOS_ACADEMIA = ["alumno","tutor","profesor","admin","superadmin"];
+  const [modulosActivos,setModulosActivos] = useState(null);
   const [savedFlash,setSavedFlash] = useState(false);
   const [fbReady,setFbReady]= useState(false);
   const [notifs,setNotifs]  = useState([]);
@@ -16313,8 +16319,13 @@ export default function App(){
             setUsuarioDoc(vinculado);
           }
         }catch(e){ console.warn("usuarios lookup error:", e); setUsuarioDoc(null); }
+        try{
+          const clubSnap = await getDoc(doc(db,"clubes","ciudad-real"));
+          setModulosActivos(clubSnap.exists() && clubSnap.data().modulosActivos ? clubSnap.data().modulosActivos : null);
+        }catch(e){ console.warn("modulosActivos lookup error:", e); setModulosActivos(null); }
       } else {
         setUsuarioDoc(null);
+        setModulosActivos(null);
       }
     });
     return ()=>unsubAuth();
@@ -16358,7 +16369,7 @@ export default function App(){
   }
 
   // Sesión válida pero sin rol asignado todavía (pendiente de activación)
-  if(!usuarioDoc || !usuarioDoc.role) return (
+  if(!usuarioDoc || !usuarioDoc.role || !ROLES_PERMITIDOS_ACADEMIA.includes(usuarioDoc.role)) return (
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",
       background:"#071710",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
       <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:180,objectFit:"contain"}}/>
@@ -16367,6 +16378,23 @@ export default function App(){
       </span>
       <span style={{fontSize:13,color:"#8A9A93",maxWidth:340,lineHeight:1.5}}>
         Comprueba que tu profesor te ha dado de alta con ese mismo email exacto, o contacta con él para que lo revise.
+      </span>
+      <button onClick={onLogout} style={{background:"#071710",color:"#fff",border:"none",
+        borderRadius:8,padding:"10px 20px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+        Cerrar sesión
+      </button>
+    </div>
+  );
+
+  if(usuarioDoc.role!=="superadmin" && modulosActivos && modulosActivos.academia===false) return (
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",
+      background:"#071710",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
+      <img src={LOGO_GOLFB_ROJO} alt="Golf B" style={{width:180,objectFit:"contain"}}/>
+      <span style={{fontSize:15,color:"#5C6C62",maxWidth:340,lineHeight:1.5}}>
+        Academia no está activa para tu club.
+      </span>
+      <span style={{fontSize:13,color:"#8A9A93",maxWidth:340,lineHeight:1.5}}>
+        La cuenta <b>{authUser?.email}</b> ha entrado correctamente, pero este módulo no está contratado actualmente. Contacta con el administrador del club.
       </span>
       <button onClick={onLogout} style={{background:"#071710",color:"#fff",border:"none",
         borderRadius:8,padding:"10px 20px",fontSize:14,fontWeight:600,cursor:"pointer"}}>
