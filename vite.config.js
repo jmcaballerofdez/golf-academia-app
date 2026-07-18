@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: '/golf-academia-app/',
+  base: '/',
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 3000,
