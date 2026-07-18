@@ -4977,6 +4977,257 @@ function ModAnalisis({data,setData}){
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// ADMIN: IMPORTAR INGRESOS DESDE EXCEL + BORRADO SEGURO DE PRUEBA
+// Acepta el mismo formato que ya usan Finanzas/Proshop:
+// Fecha, Tipo, Categoría, Descripción, Importe — donde Importe es el
+// precio FINAL pagado por el alumno (con IVA incluido). A partir de
+// ahí se calcula la base y la cuota de IVA para que encaje con el
+// resto de ingresos de esta pantalla (que sí llevan desglose fiscal).
+// ═══════════════════════════════════════════════════════════════════
+const normalizarClaveAcademia = (s) =>
+  String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+function normalizarFilaAcademia(filaOriginal, ivaPctDefecto) {
+  const fila = {};
+  Object.entries(filaOriginal).forEach(([k, v]) => { fila[normalizarClaveAcademia(k)] = v; });
+
+  const rawFecha = fila["fecha"] ?? fila["date"] ?? "";
+  let fecha = today();
+  if (rawFecha instanceof Date && !isNaN(rawFecha)) {
+    fecha = rawFecha.toISOString().slice(0, 10);
+  } else if (rawFecha) {
+    const s = String(rawFecha).trim();
+    const mDMY = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if (mDMY) {
+      let [, d, m, y] = mDMY; if (y.length === 2) y = "20" + y;
+      fecha = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    } else if (!isNaN(new Date(s))) {
+      fecha = new Date(s).toISOString().slice(0, 10);
+    }
+  }
+
+  let importeRaw = fila["importe"] ?? fila["amount"] ?? fila["total"] ?? "0";
+  importeRaw = String(importeRaw).replace(/[€\s]/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, "").replace(",", ".");
+  const importeFinal = Math.abs(parseFloat(importeRaw) || 0);
+
+  const ivaPct = ivaPctDefecto;
+  const importeBase = +(importeFinal / (1 + ivaPct / 100)).toFixed(2);
+  const ivaImporte = +(importeFinal - importeBase).toFixed(2);
+
+  const categoria = String(fila["categoria"] ?? fila["category"] ?? "").trim() || "Clases (importado)";
+  const concepto = String(fila["descripcion"] ?? fila["concepto"] ?? fila["description"] ?? "").trim();
+
+  return {
+    incluir: true, fecha, categoria, concepto,
+    importeBase, ivaPct, ivaImporte, retencionPct: 0, retencionImporte: 0,
+    importeTotal: importeFinal,
+  };
+}
+
+function ImportarAjustesIngresos({ data, setData, catI }) {
+  // ── Importar ──────────────────────────────────────────────────────
+  const [filas, setFilas] = useState(null);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [importando, setImportando] = useState(false);
+  const [hecho, setHecho] = useState(false);
+  const IVA_DEFAULT = 21;
+
+  const cargarArchivo = async (file) => {
+    if (!file) return;
+    setError(""); setCargando(true); setFilas(null); setHecho(false);
+    try {
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+      const hoja = wb.Sheets[wb.SheetNames[0]];
+      const filasCrudas = XLSX.utils.sheet_to_json(hoja, { defval: "" });
+      if (filasCrudas.length === 0) {
+        setError("No se han encontrado filas con datos en el archivo.");
+      } else {
+        setFilas(filasCrudas.map((f) => normalizarFilaAcademia(f, IVA_DEFAULT)));
+      }
+    } catch (e) {
+      console.warn("Error leyendo Excel:", e);
+      setError("No se ha podido leer el archivo. Comprueba que sea un .xlsx, .xls o .csv válido.");
+    }
+    setCargando(false);
+  };
+
+  const actualizarFila = (i, campo, valor) => {
+    setFilas(filas.map((f, idx) => {
+      if (idx !== i) return f;
+      const actualizado = { ...f, [campo]: valor };
+      if (campo === "importeTotal") {
+        const total = Math.abs(parseFloat(valor) || 0);
+        actualizado.importeBase = +(total / (1 + f.ivaPct / 100)).toFixed(2);
+        actualizado.ivaImporte = +(total - actualizado.importeBase).toFixed(2);
+      }
+      return actualizado;
+    }));
+  };
+
+  const seleccionadas = (filas || []).filter((f) => f.incluir);
+
+  const importar = () => {
+    setImportando(true);
+    const nuevos = seleccionadas.map((f) => ({
+      id: uid(), fecha: f.fecha, categoria: f.categoria, concepto: f.concepto,
+      importeBase: f.importeBase, ivaPct: f.ivaPct, ivaImporte: f.ivaImporte,
+      retencionPct: 0, retencionImporte: 0, importeTotal: f.importeTotal,
+      metodo: "Importado", origen: "importado",
+    }));
+    setData({ ...data, ingresos: [...(data.ingresos || []), ...nuevos] });
+    setImportando(false);
+    setHecho(true);
+  };
+
+  // ── Borrado seguro ───────────────────────────────────────────────
+  const [seleccionBorrado, setSeleccionBorrado] = useState({ ingresos: true, gastos: true });
+  const [confirmando, setConfirmando] = useState(false);
+  const [textoConfirmacion, setTextoConfirmacion] = useState("");
+  const [borrado, setBorrado] = useState(false);
+  const conteos = { ingresos: (data.ingresos || []).length, gastos: (data.gastos || []).length };
+  const totalSel = Object.entries(seleccionBorrado).reduce((s, [k, v]) => s + (v ? conteos[k] : 0), 0);
+
+  function confirmarBorrado() {
+    const nuevo = { ...data };
+    if (seleccionBorrado.ingresos) nuevo.ingresos = [];
+    if (seleccionBorrado.gastos) nuevo.gastos = [];
+    setData(nuevo);
+    setBorrado(true); setConfirmando(false); setTextoConfirmacion("");
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Card>
+        <div style={{ fontWeight: 700, color: G.fairway, marginBottom: 6 }}>📥 Importar ingresos desde Excel/CSV</div>
+        <div style={{ fontSize: 13, color: G.soft, marginBottom: 14 }}>
+          Columnas: <b>Fecha, Categoría, Descripción, Importe</b> — el Importe se trata como precio final
+          (con IVA {IVA_DEFAULT}% incluido) y se calcula la base automáticamente. Los ingresos importados
+          no llevan alumno ni profesor asociado.
+        </div>
+
+        {!filas && (
+          <>
+            <label style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+              border: "2px dashed #2A4A3A", borderRadius: 12, padding: "30px 16px", cursor: "pointer", textAlign: "center" }}>
+              <span style={{ fontSize: 13, color: G.soft }}>
+                {cargando ? "Leyendo archivo…" : "Haz clic para elegir tu archivo .xlsx, .xls o .csv"}
+              </span>
+              <input type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
+                onChange={(e) => cargarArchivo(e.target.files?.[0])} />
+            </label>
+            {error && <div style={{ fontSize: 13, color: G.danger, marginTop: 10 }}>{error}</div>}
+          </>
+        )}
+
+        {filas && !hecho && (
+          <>
+            <div style={{ fontSize: 13, color: G.soft, marginBottom: 10 }}>
+              Se han encontrado <b>{filas.length}</b> filas. Revisa antes de importar.
+            </div>
+            <div style={{ overflow: "auto", maxHeight: 360, border: "1px solid #2A4A3A", borderRadius: 10, marginBottom: 14 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead style={{ position: "sticky", top: 0, background: "#16241C" }}>
+                  <tr>
+                    {["", "Fecha", "Categoría", "Descripción", "Total (IVA inc.)", "Base"].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "8px 10px", color: G.soft, fontWeight: 700 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filas.map((f, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #2A4A3A", opacity: f.incluir ? 1 : 0.4 }}>
+                      <td style={{ padding: "6px 10px" }}>
+                        <input type="checkbox" checked={f.incluir} onChange={(e) => actualizarFila(i, "incluir", e.target.checked)} />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <input type="date" value={f.fecha} onChange={(e) => actualizarFila(i, "fecha", e.target.value)}
+                          style={{ border: "1px solid #2A4A3A", borderRadius: 6, padding: "4px 6px", fontSize: 12, background: "#0A1810", color: G.ink }} />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <input value={f.categoria} onChange={(e) => actualizarFila(i, "categoria", e.target.value)}
+                          style={{ border: "1px solid #2A4A3A", borderRadius: 6, padding: "4px 6px", fontSize: 12, width: 130, background: "#0A1810", color: G.ink }} />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <input value={f.concepto} onChange={(e) => actualizarFila(i, "concepto", e.target.value)}
+                          style={{ border: "1px solid #2A4A3A", borderRadius: 6, padding: "4px 6px", fontSize: 12, width: 220, background: "#0A1810", color: G.ink }} />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <input type="number" step="0.01" value={f.importeTotal} onChange={(e) => actualizarFila(i, "importeTotal", e.target.value)}
+                          style={{ border: "1px solid #2A4A3A", borderRadius: 6, padding: "4px 6px", fontSize: 12, width: 90, background: "#0A1810", color: G.ink }} />
+                      </td>
+                      <td style={{ padding: "6px 10px", color: G.soft }}>{f.importeBase.toFixed(2)}€</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <Btn onClick={importar} disabled={importando || seleccionadas.length === 0}>
+                {importando ? "Importando…" : `Importar ${seleccionadas.length} ingresos`}
+              </Btn>
+              <Btn color="secondary" onClick={() => { setFilas(null); setError(""); }}>Cancelar</Btn>
+            </div>
+          </>
+        )}
+
+        {hecho && (
+          <div style={{ fontSize: 13, color: G.grass, fontWeight: 600 }}>
+            ✅ Ingresos importados correctamente. Puedes revisarlos en la pestaña "Ingresos".
+          </div>
+        )}
+      </Card>
+
+      <Card style={{ border: `1px solid ${G.danger}55` }}>
+        <div style={{ fontWeight: 700, color: G.danger, marginBottom: 6 }}>⚠️ Borrar datos de prueba</div>
+        <div style={{ fontSize: 13, color: G.soft, marginBottom: 12 }}>
+          Vacía ingresos y/o gastos ficticios de esta pantalla para empezar con datos reales.
+          No afecta a alumnos, clases ni categorías configuradas.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+          {[["ingresos", "Ingresos"], ["gastos", "Gastos"]].map(([clave, label]) => (
+            <label key={clave} style={{ fontSize: 13, color: G.ink, display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={seleccionBorrado[clave]}
+                onChange={(e) => setSeleccionBorrado({ ...seleccionBorrado, [clave]: e.target.checked })} />
+              {label} <span style={{ color: G.soft }}>({conteos[clave]} registros)</span>
+            </label>
+          ))}
+        </div>
+
+        {!confirmando && !borrado && (
+          <Btn color="danger" disabled={totalSel === 0} onClick={() => setConfirmando(true)}>
+            Borrar {totalSel} registros seleccionados
+          </Btn>
+        )}
+
+        {confirmando && !borrado && (
+          <div style={{ background: "#2A1616", border: "1px solid #E2685C33", borderRadius: 10, padding: 14 }}>
+            <div style={{ fontSize: 13, marginBottom: 8 }}>
+              Esta acción <b>no se puede deshacer</b>. Escribe <code>BORRAR</code> para confirmar.
+            </div>
+            <input value={textoConfirmacion} onChange={(e) => setTextoConfirmacion(e.target.value)}
+              style={{ border: "1.5px solid #2A4A3A", borderRadius: 8, padding: "6px 10px", fontSize: 13, maxWidth: 180, marginBottom: 10, background: "#0A1810", color: G.ink }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <Btn color="danger" disabled={textoConfirmacion !== "BORRAR"} onClick={confirmarBorrado}>Confirmar borrado definitivo</Btn>
+              <Btn color="secondary" onClick={() => { setConfirmando(false); setTextoConfirmacion(""); }}>Cancelar</Btn>
+            </div>
+          </div>
+        )}
+
+        {borrado && (
+          <div style={{ fontSize: 13, color: G.grass, fontWeight: 600 }}>
+            ✅ Hecho — ya puedes empezar a registrar datos reales.
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ADMIN: PAGOS
 // ═══════════════════════════════════════════════════════════════════
 function ModPagos({data,setData}){
@@ -5243,6 +5494,7 @@ function ModPagos({data,setData}){
     {id:"gastos",label:"🧾 Gastos"},
     {id:"iva",label:"🏛️ IVA / Retención"},
     {id:"categorias",label:"🏷️ Categorías"},
+    {id:"importar",label:"📥 Importar / Ajustes"},
   ];
 
   const estiloTabBtn=(id)=>({
@@ -5576,7 +5828,8 @@ function ModPagos({data,setData}){
       </div>
     </div>}
 
-    {/* ══ MODAL INGRESO ══════════════════════════════════════════════ */}
+    {/* ══ IMPORTAR / AJUSTES ═════════════════════════════════════════ */}
+    {tab==="importar"&&<ImportarAjustesIngresos data={data} setData={setData} catI={catI}/>}
     {modalI&&<Modal title={modalI==="new"?"Nuevo ingreso":"Editar ingreso"} onClose={()=>setModalI(null)}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Fecha *"><Input type="date" value={fI.fecha||""} onChange={v=>setFI({...fI,fecha:v})}/></Field>
