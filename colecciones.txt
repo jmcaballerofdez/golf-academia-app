@@ -1,0 +1,9 @@
+534:    await addDoc(collection(db, "notificaciones"), {
+1058:      const pendSnap = await getDocs(collection(db,"registros_pendientes"));
+1125:      await addDoc(collection(db,"registros_pendientes"), {
+10710:      query(collection(db,"mensajes"),orderBy("timestamp","desc")),
+10783:    Promise.all(nuevos.map(msg=>addDoc(collection(db,"mensajes"),{...msg,timestamp:serverTimestamp()}))).catch(e=>console.warn("Firebase msg error:",e));
+14382:      query(collection(db,"registros_pendientes"), orderBy("timestamp","desc")),
+15937:                addDoc(collection(db,"mensajes"),{...nuevo,timestamp:serverTimestamp()}).catch(e=>console.warn(e));
+16486:        query(collection(db,"notificaciones"), orderBy("timestamp","desc")),
+16492:        collection(db,"registros_pendientes"),
