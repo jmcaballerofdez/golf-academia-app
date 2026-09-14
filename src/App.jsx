@@ -1759,6 +1759,7 @@ function PanelPdfCalendario({esProfesor}){
     {cargando && <div style={{color:G.soft,fontSize:13}}>Cargando...</div>}
 
     {!cargando && pdfInfo?.url && (
+      <div>
       <div style={{background:"#fff",borderRadius:10,padding:"14px 16px",
         display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
         <div style={{fontSize:32}}>📋</div>
@@ -1779,6 +1780,10 @@ function PanelPdfCalendario({esProfesor}){
             padding:"10px 14px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
           🗑️ Eliminar
         </button>}
+      </div>
+      <div style={{marginTop:14,borderRadius:10,overflow:"hidden",border:"1px solid #ddd"}}>
+        <iframe src={pdfInfo.url} title="Calendario del curso" style={{width:"100%",height:600,border:"none",display:"block"}}/>
+      </div>
       </div>
     )}
 
