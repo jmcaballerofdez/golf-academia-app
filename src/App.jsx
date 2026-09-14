@@ -16095,7 +16095,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       <h2 style={{margin:"0 0 18px",color:G.fairway,fontSize:19,fontWeight:800}}>
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
-      {tab==="calendario"&&<ModCalendario data={dataProffesor} setData={setDataProfesor}/>}
+      {tab==="calendario"&&<PanelPdfCalendario esProfesor={true}/>}
       {tab==="alumnos"&&<ModAlumnos data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
       {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
       {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
