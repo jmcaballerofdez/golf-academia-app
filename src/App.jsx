@@ -16500,6 +16500,28 @@ function PantallaLoginAcademia({ onQuieroRegistrarme }) {
   );
 }
 
+function AlumnoConSelector({data,setData,usuarioDoc,onLogout}){
+  const ids = (usuarioDoc.alumnoIds && usuarioDoc.alumnoIds.length>1) ? usuarioDoc.alumnoIds : null;
+  const [elegido,setElegido] = useState(ids ? null : usuarioDoc.alumnoId);
+  if(ids && !elegido){
+    const hijos = (data.alumnos||[]).filter(a=>ids.includes(a.id));
+    return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",
+      background:"#FFFFFF",flexDirection:"column",gap:14,padding:20,textAlign:"center"}}>
+      <div style={{fontSize:15,color:"#5C6C62",fontWeight:700,marginBottom:6}}>Selecciona el alumno</div>
+      {hijos.map(h=>
+        <button key={h.id} onClick={()=>setElegido(h.id)}
+          style={{background:"#3FA05F",color:"#fff",border:"none",borderRadius:10,
+            padding:"14px 28px",fontSize:16,fontWeight:700,cursor:"pointer",width:260}}>
+          {h.nombre}
+        </button>
+      )}
+      <button onClick={onLogout} style={{background:"#fff",color:"#888",border:"none",
+        borderRadius:8,padding:"10px 20px",fontSize:13,cursor:"pointer"}}>Cerrar sesion</button>
+    </div>;
+  }
+  return <PortalAlumno data={data} setData={setData} alumnoId={elegido} onLogout={onLogout} tutorNombre={usuarioDoc.tutorNombre||null}/>;
+}
+
 export default function App(){
   const [data,setDataRaw]   = useState(loadData);
   const [vistaAuth,setVistaAuth] = useState("login"); // "login" | "registro" — solo se usa sin sesión
@@ -16596,10 +16618,16 @@ export default function App(){
       if(!snap.exists()) return null;
       const d = snap.data();
 
-      // Alumno con ese email
-      const alumno = (d.alumnos||[]).find(a => a.activo && (a.email||"").toLowerCase()===emailLower);
-      if(alumno){
+      // Alumno(s) con ese email
+      const alumnosDirectos = (d.alumnos||[]).filter(a => a.activo && (a.email||"").toLowerCase()===emailLower);
+      if(alumnosDirectos.length===1){
+        const alumno = alumnosDirectos[0];
         const nuevo = { role:"alumno", alumnoId:alumno.id, alumnoNombre:alumno.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        await setDoc(doc(db,"Usuarios",u.uid), nuevo);
+        return nuevo;
+      }
+      if(alumnosDirectos.length>1){
+        const nuevo = { role:"alumno", alumnoId:alumnosDirectos[0].id, alumnoIds:alumnosDirectos.map(a=>a.id), alumnoNombre:alumnosDirectos[0].nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
         await setDoc(doc(db,"Usuarios",u.uid), nuevo);
         return nuevo;
       }
@@ -16612,15 +16640,20 @@ export default function App(){
         return nuevo;
       }
 
-      // Tutor con ese email (dentro de los alumnos)
-      for(const al of (d.alumnos||[])){
-        if(!al.activo) continue;
+      // Tutor(es) con ese email (dentro de los alumnos)
+      const alumnosPorTutor = (d.alumnos||[]).filter(al => al.activo && (al.tutores||[]).some(t => (t.email||"").toLowerCase()===emailLower));
+      if(alumnosPorTutor.length===1){
+        const al = alumnosPorTutor[0];
         const tutor = (al.tutores||[]).find(t => (t.email||"").toLowerCase()===emailLower);
-        if(tutor){
-          const nuevo = { role:"tutor", alumnoId:al.id, tutorNombre:tutor.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
-          await setDoc(doc(db,"Usuarios",u.uid), nuevo);
-          return nuevo;
-        }
+        const nuevo = { role:"tutor", alumnoId:al.id, tutorNombre:tutor.nombre, email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        await setDoc(doc(db,"Usuarios",u.uid), nuevo);
+        return nuevo;
+      }
+      if(alumnosPorTutor.length>1){
+        const primerTutor = (alumnosPorTutor[0].tutores||[]).find(t => (t.email||"").toLowerCase()===emailLower);
+        const nuevo = { role:"tutor", alumnoId:alumnosPorTutor[0].id, alumnoIds:alumnosPorTutor.map(a=>a.id), tutorNombre:(primerTutor&&primerTutor.nombre)||"", email:u.email, vinculadoAuto:true, fecha:new Date().toISOString() };
+        await setDoc(doc(db,"Usuarios",u.uid), nuevo);
+        return nuevo;
       }
 
       return null; // sin coincidencia — se queda pendiente de asignación manual
@@ -16729,7 +16762,7 @@ export default function App(){
   );
 
   if(usuarioDoc.role==="alumno"||usuarioDoc.role==="tutor")
-    return <PortalAlumno data={data} setData={setData} alumnoId={usuarioDoc.alumnoId} onLogout={onLogout} tutorNombre={usuarioDoc.tutorNombre||null}/>;
+    return <AlumnoConSelector data={data} setData={setData} usuarioDoc={usuarioDoc} onLogout={onLogout}/>;
   if(usuarioDoc.role==="superadmin")
     return <SuperAdminShell data={data} setData={setData} onLogout={onLogout} notifs={notifs} pendientesCount={pendientesCount}/>;
   return <AdminShell data={data} setData={setData} onLogout={onLogout}
