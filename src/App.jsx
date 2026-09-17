@@ -20,6 +20,25 @@ const EMAILJS_CONFIG = {
   publicKey: "_ylIbA5NuK_OsByYY",
 };
 
+// -- Envio de emails via script PHP en Raiola (sustituye a EmailJS) --
+const MAIL_API_URL = "https://api.golfb.es/send-email.php";
+const MAIL_API_CLAVE = "ArroyoyMigueltturra2026@@";
+
+async function enviarEmailPHP(to, subject, html){
+  if(!to) return;
+  try{
+    const resp = await fetch(MAIL_API_URL, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ to, subject, html, clave: MAIL_API_CLAVE }),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if(!data.ok) console.warn("Email PHP no enviado:", data);
+  }catch(e){
+    console.warn("Email PHP error:", e);
+  }
+}
+
 // Webhook Make.com para subida de archivos a Google Drive
 const MAKE_WEBHOOK_ARCHIVOS = "PEGA_AQUI_TU_WEBHOOK_DE_MAKE";
 
@@ -309,39 +328,23 @@ async function generarPDFInforme(rpt, alumnoNombre){
 async function notificarClaseAlumnoEmail(clase, alumno){
   if(!alumno?.email) return;
   try {
-    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/`;
-    // 1. Guardar en Firestore para Make.com (webhook)
-    await setDoc(doc(db, "academia_emails", "clase_" + clase.id), {
-      tipo: "clase_nueva",
-      id: clase.id,
-      alumnoNombre: alumno.nombre || "",
-      alumnoEmail: alumno.email || "",
-      fecha: fmtDate(clase.fecha) || clase.fecha || "",
-      horaInicio: clase.horaInicio || clase.hora || "",
-      duracion: clase.duracion || "60",
-      tipoClase: clase.tipo || "",
-      zona: clase.zona || "",
-      contenido: clase.contenido || "",
-      enlace,
-      enviadoAt: serverTimestamp(),
-    });
-    // 2. Envío directo con EmailJS (template_1npsgx8 — nueva clase)
-    try {
-      await cargarEmailJS();
-      if(window.emailjs){
-        await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateAlumno, {
-          nombre_alumno: alumno.nombre || "",
-          email_alumno: alumno.email,
-          mensaje_intro: "Tu profesor ha programado una nueva clase para ti.",
-          fecha_clase: fmtDate(clase.fecha) || clase.fecha || "",
-          hora_clase: clase.horaInicio || clase.hora || "—",
-          duracion_clase: clase.duracion || "60",
-          tipo_clase: clase.tipo || "Individual",
-          zona_clase: clase.zona || "—",
-          enlace_portal: enlace,
-        }).catch(e=>console.warn("Email clase alumno:",e));
-      }
-    } catch(e){ console.warn("EmailJS clase:", e); }
+    const enlace = `https://academia.golfb.es/`;
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#222;max-width:520px">
+        <h2 style="color:#1F3864;">Nueva clase programada</h2>
+        <p>Hola ${alumno.nombre || ""},</p>
+        <p>Tu profesor ha programado una nueva clase para ti:</p>
+        <ul>
+          <li><b>Fecha:</b> ${fmtDate(clase.fecha) || clase.fecha || "-"}</li>
+          <li><b>Hora:</b> ${clase.horaInicio || clase.hora || "-"}</li>
+          <li><b>Duracion:</b> ${clase.duracion || "60"} min</li>
+          <li><b>Tipo:</b> ${clase.tipo || "Individual"}</li>
+          <li><b>Zona:</b> ${clase.zona || "-"}</li>
+        </ul>
+        <p><a href="${enlace}" style="background:#3FA05F;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">Ver mi portal</a></p>
+        <p style="color:#888;font-size:12px;">Golf Ciudad Real C.D. - Escuela de Golf</p>
+      </div>`;
+    await enviarEmailPHP(alumno.email, "Nueva clase programada", html);
   } catch(e){ console.warn("Notify clase email error:", e); }
 }
 
@@ -462,18 +465,19 @@ function cargarEmailJS(){
 // Enviar emails de un nuevo registro
 async function enviarEmailsRegistro(datos){
   try{
-    await cargarEmailJS();
-    if(!window.emailjs) return;
-
-    // Email de bienvenida al ALUMNO (template_2dwd6gs)
-    if(datos.email){
-      await window.emailjs.send(EMAILJS_CONFIG.serviceId, EMAILJS_CONFIG.templateProfesor, {
-        nombre_alumno: datos.nombre||"",
-        email_alumno: datos.email||"",
-        telefono_alumno: datos.telefono||"",
-        tipo_escuela: datos.tipoEscuela||"",
-      }).catch(e=>console.warn("Email bienvenida alumno:",e));
-    }
+    if(!datos.email) return;
+    const html = `
+      <div style="font-family:Arial,sans-serif;color:#222;max-width:520px">
+        <h2 style="color:#1F3864;">Registro recibido</h2>
+        <p>Hola ${datos.nombre || ""},</p>
+        <p>Hemos recibido tu solicitud de alta en la Escuela de Golf de Golf Ciudad Real C.D. Tu profesor la revisara en breve y, en cuanto la active, recibiras otro correo con tu acceso a la app.</p>
+        <ul>
+          <li><b>Telefono:</b> ${datos.telefono || "-"}</li>
+          <li><b>Tipo de escuela:</b> ${datos.tipoEscuela || "-"}</li>
+        </ul>
+        <p style="color:#888;font-size:12px;">Golf Ciudad Real C.D. - Escuela de Golf</p>
+      </div>`;
+    await enviarEmailPHP(datos.email, "Hemos recibido tu registro", html);
   }catch(e){ console.warn("Error enviando emails registro:", e); }
 }
 
@@ -573,9 +577,10 @@ async function eliminarClaseFirestore(claseId) {
 }
 
 // u2500u2500u2500 Sincronizar informe publicado en subcoleccion (para Make/Gmail) u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500u2500
+// Sincronizar informe publicado en subcoleccion, y enviar email al alumno
 async function publicarInformeFirestore(informe, alumno) {
   try {
-    const enlace = `https://jmcaballerofdez.github.io/golf-academia-app/?informe=${informe.id}`;
+    const enlace = `https://academia.golfb.es/`;
     await setDoc(doc(db, "academia_emails", "informe_" + informe.id), {
       tipo: "informe",
       id: informe.id,
@@ -589,6 +594,17 @@ async function publicarInformeFirestore(informe, alumno) {
       enlace,
       publicadoAt: serverTimestamp(),
     });
+    if(alumno?.email){
+      const html = `
+        <div style="font-family:Arial,sans-serif;color:#222;max-width:520px">
+          <h2 style="color:#1F3864;">Nuevo informe disponible</h2>
+          <p>Hola ${alumno.nombre || ""},</p>
+          <p>Tu profesor ha publicado un nuevo informe: <b>${informe.titulo || "Informe"}</b></p>
+          <p><a href="${enlace}" style="background:#3FA05F;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">Ver mi portal</a></p>
+          <p style="color:#888;font-size:12px;">Golf Ciudad Real C.D. - Escuela de Golf</p>
+        </div>`;
+      await enviarEmailPHP(alumno.email, "Nuevo informe disponible", html);
+    }
   } catch(e) { console.warn("Publish informe error:", e); }
 }
 
