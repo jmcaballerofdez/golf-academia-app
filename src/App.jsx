@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
-         addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs
+         addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs, where
 } from "firebase/firestore";
 import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from "firebase/auth";
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
@@ -493,7 +493,7 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db      = getFirestore(firebaseApp);
 const auth    = getAuth(firebaseApp);
-const storage = getStorage(firebaseApp);
+const storage = getStorage(firebaseApp, "gs://golf-ciudad-real-50819.firebasestorage.app");
 
 // Crea una cuenta de email/contraseña para un alumno/tutor usando una
 // instancia de Firebase SECUNDARIA — así el profesor/admin que está
@@ -6034,9 +6034,9 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ setError("Introduce un email válido."); return; }
     if(password.length<6){ setError("La contraseña debe tener al menos 6 caracteres."); return; }
     setCargando(true);
+    const rol = opcionActiva?.role || "alumno";
     try{
       const uid = await crearCuentaSinDesconectar(email, password);
-      const rol = opcionActiva?.role || "alumno";
       const usuarioDoc = rol==="tutor"
         ? { role:"tutor", alumnoId:alumno.id, tutorNombre:opcionActiva.tutorNombre, email, fecha:new Date().toISOString() }
         : { role:"alumno", alumnoId:alumno.id, email, fecha:new Date().toISOString() };
@@ -6044,7 +6044,33 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
       setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
       setHecho(true);
     }catch(err){
-      if(err?.code==="auth/email-already-in-use") setError("Ya existe una cuenta con ese email.");
+      if(err?.code==="auth/email-already-in-use"){
+        try{
+          const q = query(collection(db,"Usuarios"), where("email","==",email));
+          const snap = await getDocs(q);
+          if(!snap.empty){
+            const existente = snap.docs[0];
+            const dEx = existente.data();
+            const idsPrevios = dEx.alumnoIds || [dEx.alumnoId].filter(Boolean);
+            const nuevosIds = idsPrevios.includes(alumno.id) ? idsPrevios : [...idsPrevios, alumno.id];
+            const actualizado = {
+              ...dEx,
+              role: rol,
+              alumnoId: nuevosIds[0],
+              alumnoIds: nuevosIds,
+              ...(rol==="tutor" ? { tutorNombre: opcionActiva.tutorNombre } : {}),
+            };
+            await setDoc(doc(db,"Usuarios",existente.id), actualizado);
+            setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
+            setHecho(true);
+          } else {
+            setError("Ya existe una cuenta con ese email, pero no se ha podido vincular automáticamente. Contacta con soporte.");
+          }
+        }catch(e2){
+          console.warn("Error vinculando alumno a cuenta existente:", e2);
+          setError("Ya existe una cuenta con ese email.");
+        }
+      }
       else setError("No se pudo crear el acceso. Inténtalo de nuevo.");
     }
     setCargando(false);

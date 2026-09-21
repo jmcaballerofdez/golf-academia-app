@@ -10,6 +10,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 3000,
   },
   optimizeDeps: {
-    exclude: ['firebase/app', 'firebase/firestore', 'firebase/auth']
+    exclude: ['firebase/app', 'firebase/firestore', 'firebase/auth', 'firebase/storage']
   }
 })
