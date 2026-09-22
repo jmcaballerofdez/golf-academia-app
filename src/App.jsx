@@ -856,7 +856,7 @@ const FIRMA_JOSE = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAsIC
 
 
 // ═══════════════════════════════════════════════════════════════════
-// CONFIRM MODAL — Reemplaza golfConfirm() que no funciona en artifact
+// CONFIRM MODAL — Reemplaza confirm() que no funciona en artifact
 // ═══════════════════════════════════════════════════════════════════
 function ConfirmModal({msg, onOk, onCancel}){
   return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,
@@ -6544,7 +6544,7 @@ function ModAjustes({data,setData,onLogout}){
                 <div style={{fontWeight:700,color:G.ink,fontSize:14}}>{label}</div>
                 <div style={{fontSize:12,color:G.soft}}>{desc} · {(data[key]||[]).length} registros</div>
               </div>
-              <Btn small color="danger" onClick={()=>{if(golfConfirm("¿Borrar todos los registros de "+label+"?\n\nNo se puede deshacer."))setData({...data,[key]:[]});}}>Borrar todo</Btn>
+              <Btn small color="danger" onClick={()=>{if(confirm("¿Borrar todos los registros de "+label+"?\n\nNo se puede deshacer."))setData({...data,[key]:[]});}}>Borrar todo</Btn>
             </div>
           ))}
         </div>
@@ -6553,7 +6553,7 @@ function ModAjustes({data,setData,onLogout}){
       <Card style={{borderLeft:"4px solid #E2685C"}}>
         <h3 style={{margin:"0 0 8px",color:"#E2685C"}}>⚠️ Borrar TODOS los datos</h3>
         <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>Borra absolutamente todo: alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas. La app vuelve al estado inicial.</p>
-        <Btn color="danger" onClick={()=>{if(golfConfirm("¿BORRAR TODOS LOS DATOS DE LA APLICACIÓN?\n\nEsta acción eliminará alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas.\n\nEsta acción NO se puede deshacer.\n\nEscribe OK para confirmar:"))if(window.prompt("Escribe OK para confirmar el borrado total:")?.trim().toUpperCase()==="OK"){setData({...data,alumnos:[],clases:[],estadisticas:[],analisis:[],bonos:[],pagos:[],mensajes:[],tareas:[],reservas:[],asignaciones:[],resultadosTest:[],slots:[]});alert("✅ Todos los datos han sido eliminados.");}}}>🗑 BORRAR TODOS LOS DATOS</Btn>
+        <Btn color="danger" onClick={()=>{if(confirm("¿BORRAR TODOS LOS DATOS DE LA APLICACIÓN?\n\nEsta acción eliminará alumnos, clases, estadísticas, análisis, pagos, mensajes, tareas y reservas.\n\nEsta acción NO se puede deshacer.\n\nEscribe OK para confirmar:"))if(window.prompt("Escribe OK para confirmar el borrado total:")?.trim().toUpperCase()==="OK"){setData({...data,alumnos:[],clases:[],estadisticas:[],analisis:[],bonos:[],pagos:[],mensajes:[],tareas:[],reservas:[],asignaciones:[],resultadosTest:[],slots:[]});alert("✅ Todos los datos han sido eliminados.");}}}>🗑 BORRAR TODOS LOS DATOS</Btn>
       </Card>
     </div>}
 
@@ -12752,7 +12752,7 @@ function SesionRow({sesion, alumnos, onUpdate, onDelete}){
           padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
           + Añadir ejercicio
         </button>
-        <button onClick={()=>{if(golfConfirm("¿Eliminar esta sesión?"))onDelete();}}
+        <button onClick={()=>{if(confirm("¿Eliminar esta sesión?"))onDelete();}}
           style={{background:"#F5F8FA",color:G.danger,border:"none",borderRadius:8,
             padding:"6px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
           🗑 Eliminar sesión
@@ -14501,7 +14501,7 @@ function ModRegistrosPendientes({data, setData, notifs}){
   }
 
   async function rechazar(reg){
-    if(!golfConfirm("¿Rechazar y eliminar el registro de "+reg.nombre+"?")) return;
+    if(!confirm("¿Rechazar y eliminar el registro de "+reg.nombre+"?")) return;
     try { await deleteDoc(doc(db,"registros_pendientes",reg._docId)); } catch(e){}
   }
 
