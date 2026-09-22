@@ -22,7 +22,7 @@ const EMAILJS_CONFIG = {
 
 // -- Envio de emails via script PHP en Raiola (sustituye a EmailJS) --
 const MAIL_API_URL = "https://api.golfb.es/send-email.php";
-const MAIL_API_CLAVE = "ArroyoyMigueltturra2026@@";
+const MAIL_API_CLAVE = "ArroyoMigueltturra2026@@";
 
 async function enviarEmailPHP(to, subject, html){
   if(!to) return;
