@@ -7020,7 +7020,6 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
   const ATABS_ALL=[
     {id:"inicio",label:"Inicio",icon:"🏠"},
-    {id:"calendario",label:"Calendario Escolar ",icon:"🗓️"},
     {id:"reservas",label:"Clases",icon:"📅"},
     {id:"analisis",label:"Análisis",icon:"🎬"},
     {id:"stats",label:"Estadísticas",icon:"📊"},
