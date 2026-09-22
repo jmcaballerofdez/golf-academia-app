@@ -6042,6 +6042,7 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
         : { role:"alumno", alumnoId:alumno.id, email, fecha:new Date().toISOString() };
       await setDoc(doc(db,"Usuarios",uid), usuarioDoc);
       setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
+      try{ await enviarEmailPHP(email, "Tu acceso a la Academia ya esta listo", "<p>Hola,</p><p>Ya tienes acceso a la Academia de Golf Ciudad Real C.D.</p><p><b>Email:</b> "+email+"<br><b>Contrasena:</b> "+password+"</p><p>Entra en <a href='https://academia.golfb.es'>academia.golfb.es</a></p>"); }catch(e){ console.warn("Error enviando email de acceso:", e); }
       setHecho(true);
     }catch(err){
       if(err?.code==="auth/email-already-in-use"){
@@ -6062,6 +6063,7 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
             };
             await setDoc(doc(db,"Usuarios",existente.id), actualizado);
             setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
+      try{ await enviarEmailPHP(email, "Tu acceso a la Academia ya esta listo", "<p>Hola,</p><p>Ya tienes acceso a la Academia de Golf Ciudad Real C.D.</p><p><b>Email:</b> "+email+"<br><b>Contrasena:</b> "+password+"</p><p>Entra en <a href='https://academia.golfb.es'>academia.golfb.es</a></p>"); }catch(e){ console.warn("Error enviando email de acceso:", e); }
             setHecho(true);
           } else {
             setError("Ya existe una cuenta con ese email, pero no se ha podido vincular automáticamente. Contacta con soporte.");
