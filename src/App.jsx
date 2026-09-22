@@ -3,7 +3,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs, where
 } from "firebase/firestore";
-import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword } from "firebase/auth";
+import { getAuth, onAuthStateChanged, signOut, signInWithEmailAndPassword, sendPasswordResetEmail, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
 import { getStorage, ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ─── Firebase Config ──────────────────────────────────────────────
@@ -6438,7 +6438,7 @@ function ModAjustes({data,setData,onLogout}){
             {id:"informes",   label:"📋 Informes",          desc:"Informes de seguimiento generados por el profesor"},
             {id:"ejercicios", label:"🏋️ Ejercicios",        desc:"Ejercicios y tests asignados por el profesor"},
             {id:"mensajes",   label:"✉️ Mensajes",          desc:"Sistema de mensajería con el profesor"},
-            {id:"miperfil",   label:"🔐 Mi PIN",            desc:"Cambio de PIN de acceso del alumno"},
+            {id:"miperfil",   label:"🔐 Mi Cuenta",          desc:"Cambio de contraseña de acceso del alumno/tutor"},
           ].map(tab=>{
             const permisos = data.permisosPortal || {};
             const visible = permisos[tab.id] !== false; // true por defecto
@@ -6660,6 +6660,77 @@ function CambiarPinAlumno({data,setData,alumnoId}){
     {msg==="error_confirm"&&<div style={{background:"#F5F8FA",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Los PINs nuevos no coinciden.</div>}
     {msg==="ok"&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>✅ PIN cambiado correctamente.</div>}
     <Btn onClick={guardar} disabled={pinActual.length<4||pinNuevo.length<4||pinConfirm.length<4}>Cambiar PIN</Btn>
+  </div>;
+}
+
+// ── Cambio de contraseña real (Firebase Auth) para alumno/tutor ──
+// Se usa cuando el usuario ha entrado con email+contraseña (login de
+// academia.golfb.es). Requiere reautenticación con la contraseña
+// actual antes de poder establecer una nueva (regla de seguridad de
+// Firebase Auth).
+function CambiarContrasenaAlumno(){
+  const [passActual,setPassActual]=useState("");
+  const [passNueva,setPassNueva]=useState("");
+  const [passConfirm,setPassConfirm]=useState("");
+  const [msg,setMsg]=useState("");
+  const [cargando,setCargando]=useState(false);
+  const [verActual,setVerActual]=useState(false);
+  const [verNueva,setVerNueva]=useState(false);
+  const [verConfirm,setVerConfirm]=useState(false);
+
+  async function guardar(){
+    setMsg("");
+    if(passNueva.length<6){setMsg("error_corto");return;}
+    if(passNueva!==passConfirm){setMsg("error_confirm");return;}
+    setCargando(true);
+    try{
+      const user=auth.currentUser;
+      const cred=EmailAuthProvider.credential(user.email,passActual);
+      await reauthenticateWithCredential(user,cred);
+      await updatePassword(user,passNueva);
+      setMsg("ok");
+      setPassActual(""); setPassNueva(""); setPassConfirm("");
+    }catch(e){
+      if(e&&(e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")){setMsg("error_actual");}
+      else{setMsg("error_generico");}
+    }
+    setCargando(false);
+  }
+
+  const CampoPass=({label,value,onChange,ver,setVer,placeholder,autoComplete})=>(
+    <Field label={label}>
+      <div style={{position:"relative"}}>
+        <input type={ver?"text":"password"} value={value}
+          onChange={e=>onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #C7D2DC",
+            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit"}}/>
+        <button onClick={()=>setVer(v=>!v)}
+          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
+          {ver?"🙈":"👁️"}
+        </button>
+      </div>
+    </Field>
+  );
+
+  return <div>
+    <p style={{fontSize:13,color:G.soft,marginBottom:14}}>✉️ {auth.currentUser?.email}</p>
+    <CampoPass label="Contraseña actual" value={passActual} onChange={setPassActual}
+      ver={verActual} setVer={setVerActual} placeholder="Tu contraseña actual" autoComplete="current-password"/>
+    <CampoPass label="Contraseña nueva (mínimo 6 caracteres)" value={passNueva} onChange={setPassNueva}
+      ver={verNueva} setVer={setVerNueva} placeholder="Nueva contraseña" autoComplete="new-password"/>
+    <CampoPass label="Confirmar contraseña nueva" value={passConfirm} onChange={setPassConfirm}
+      ver={verConfirm} setVer={setVerConfirm} placeholder="Repite la nueva contraseña" autoComplete="new-password"/>
+    {msg==="error_actual"&&<div style={{background:"#F5F8FA",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ La contraseña actual no es correcta.</div>}
+    {msg==="error_corto"&&<div style={{background:"#F5F8FA",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ La contraseña nueva debe tener al menos 6 caracteres.</div>}
+    {msg==="error_confirm"&&<div style={{background:"#F5F8FA",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ Las contraseñas nuevas no coinciden.</div>}
+    {msg==="error_generico"&&<div style={{background:"#F5F8FA",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>❌ No se pudo cambiar la contraseña. Vuelve a intentarlo.</div>}
+    {msg==="ok"&&<div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>✅ Contraseña cambiada correctamente.</div>}
+    <Btn onClick={guardar} disabled={cargando||passActual.length<1||passNueva.length<6||passConfirm.length<6}>
+      {cargando?"Guardando…":"Cambiar contraseña"}
+    </Btn>
   </div>;
 }
 
@@ -7026,7 +7097,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
     {id:"informes",label:"Informes",icon:"📋"},
     {id:"ejercicios",label:"Ejercicios",icon:"🏋️"},
     {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
-    {id:"miperfil",label:"Mi PIN",icon:"🔐"},
+    {id:"miperfil",label:"Mi Cuenta",icon:"🔐"},
   ];
   const permisos = data.permisosPortal || {};
   // Si un permiso no está definido explícitamente como false, se muestra
@@ -7204,9 +7275,11 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
       {/* CAMBIAR PIN ALUMNO */}
       {tab==="miperfil"&&<div>
-        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 Cambiar mi PIN</h3>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🔐 Mi cuenta</h3>
         <Card style={{maxWidth:400}}>
-          <CambiarPinAlumno data={data} setData={setData} alumnoId={alumnoId}/>
+          {auth.currentUser
+            ? <CambiarContrasenaAlumno/>
+            : <CambiarPinAlumno data={data} setData={setData} alumnoId={alumnoId}/>}
         </Card>
       </div>}
 
