@@ -650,6 +650,7 @@ function makeDefaultData() {
   return {
     adminPin: DEFAULT_ADMIN_PIN,
     alumnos: [],
+    cursos: [],
     clases: [],
     estadisticas: [],
     bonos: [],
@@ -763,7 +764,7 @@ function Input({value,onChange,type="text",placeholder,maxLength}){
 function Sel({value,onChange,options}){
   return <select value={value} onChange={e=>onChange(e.target.value)}
     style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,background:"#F5F8FA",fontFamily:"inherit"}}>
-    {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+    {options.map(o=><option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
   </select>;
 }
 function Textarea({value,onChange,placeholder,rows=3}){
@@ -1011,7 +1012,7 @@ function exportarExcel(data){
 // ═══════════════════════════════════════════════════════════════════
 // PANTALLA DE AUTO-REGISTRO DE ALUMNOS
 // ═══════════════════════════════════════════════════════════════════
-function PantallaRegistro({onVolver}){
+function PantallaRegistro({onVolver, tipoInicial="infantil"}){
   const [step,   setStep]  = useState(1); // 1=datos, 2=legal, 3=ok
   const [form,   setForm]  = useState({
     nombre:"", fechaNacimiento:"", telefono:"", email:"", dniAlumno:"",
@@ -1019,10 +1020,38 @@ function PantallaRegistro({onVolver}){
     diasPreferencia:[], horarioPreferencia:"",
     tutorNombre:"", tutorDni:"", tutorTelefono:"", tutorEmail:"", tutorRelacion:"",
     rgpdAceptado:false, imagenAutorizada:false, aceptaCondiciones:false,
-    pinElegido:"",
+    pinElegido:"", cursoId:"",
   });
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
+  const [cursosDisponibles, setCursosDisponibles] = useState(null); // null=cargando, [] cuando ya está listo
+
+  // Acceso independiente: infantil o adultos se elige ANTES de entrar aquí
+  // (dos botones en el login), no se deduce de la fecha de nacimiento.
+  const esMenor = tipoInicial!=="adultos";
+
+  // Para el acceso de adultos, cargamos los cursos abiertos con plazas
+  // libres (activos, contando alumnos activos + solicitudes pendientes).
+  useEffect(()=>{
+    if(esMenor) return;
+    (async()=>{
+      try{
+        const [dataSnap, pendSnap] = await Promise.all([
+          getDoc(doc(db,"academia","datos")),
+          getDocs(collection(db,"registros_pendientes")),
+        ]);
+        const cursos = dataSnap.exists() ? (dataSnap.data()?.cursos||[]) : [];
+        const alumnosActivos = dataSnap.exists() ? (dataSnap.data()?.alumnos||[]) : [];
+        const conteoPend = {};
+        pendSnap.forEach(d=>{ const c=d.data()?.cursoId; if(c) conteoPend[c]=(conteoPend[c]||0)+1; });
+        const disponibles = cursos.filter(c=>c.activo!==false).map(c=>{
+          const ocup = alumnosActivos.filter(a=>a.cursoId===c.id && a.activo!==false).length + (conteoPend[c.id]||0);
+          return {...c, libres: Math.max(0, (Number(c.plazas)||0)-ocup)};
+        });
+        setCursosDisponibles(disponibles);
+      }catch(e){ console.warn("Error cargando cursos disponibles:", e); setCursosDisponibles([]); }
+    })();
+  },[esMenor]);
 
   function calcularEdad(fn){
     if(!fn) return null;
@@ -1033,7 +1062,6 @@ function PantallaRegistro({onVolver}){
   }
 
   const edad = calcularEdad(form.fechaNacimiento);
-  const esMenor = edad!==null && edad<18;
 
   function autoNivelReg(fn){
     const e=calcularEdad(fn);
@@ -1064,6 +1092,7 @@ function PantallaRegistro({onVolver}){
       if(!form.aceptaCondiciones){setError("El tutor legal debe aceptar las condiciones.");return;}
     }
     if(!esMenor&&(!form.dniAlumno||!form.dniAlumno.trim())){setError("El DNI/NIE es obligatorio.");return;}
+    if(!esMenor&&cursosDisponibles&&cursosDisponibles.length>0&&!form.cursoId){setError("Selecciona el curso al que quieres apuntarte.");return;}
 
     setLoading(true);
     setError("");
@@ -1113,6 +1142,7 @@ function PantallaRegistro({onVolver}){
         intolerancias: form.intolerancias,
         lesiones: form.lesiones,
         tipoEscuela: esMenor ? "infantil" : "adultos",
+        cursoId: esMenor ? "" : (form.cursoId||""),
         activo: false, // pendiente de activación por el profesor
         rgpdAceptado: form.rgpdAceptado,
         rgpdFirmante: esMenor ? form.tutorNombre : form.nombre,
@@ -1232,6 +1262,22 @@ function PantallaRegistro({onVolver}){
             </div>}
             {!esMenor&&<Field label="DNI / NIE">
               <Input value={form.dniAlumno} onChange={v=>setForm(f=>({...f,dniAlumno:v}))} placeholder="DNI o NIE del alumno"/>
+            </Field>}
+            {!esMenor&&<Field label={cursosDisponibles&&cursosDisponibles.length>0?"Curso *":"Curso"}>
+              {cursosDisponibles===null ? (
+                <div style={{fontSize:13,color:G.soft,padding:"8px 0"}}>Cargando cursos disponibles…</div>
+              ) : cursosDisponibles.length===0 ? (
+                <div style={{background:"#F5F8FA",borderRadius:8,padding:"8px 12px",fontSize:13,color:G.soft}}>
+                  Ahora mismo no hay cursos abiertos. Envía tu solicitud igualmente y el club te contactará con las opciones disponibles.
+                </div>
+              ) : (
+                <Sel value={form.cursoId} onChange={v=>setForm(f=>({...f,cursoId:v}))}
+                  options={[{value:"",label:"— Selecciona un curso —"},...cursosDisponibles.map(c=>({
+                    value:c.id,
+                    label:`${c.nombre} · ${c.libres>0?c.libres+" plazas libres":"completo"} · ${fmt(c.precio)}`,
+                    disabled: c.libres<=0,
+                  }))]}/>
+              )}
             </Field>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
               <Field label="Teléfono">
@@ -6440,6 +6486,7 @@ function ModAjustes({data,setData,onLogout}){
             {id:"inicio",     label:"🏠 Inicio",           desc:"Pantalla de bienvenida con resumen de próximas clases"},
             {id:"calendario", label:"🗓️ Calendario Escolar ",        desc:"Calendario de la academia y descarga de PDF"},
             {id:"reservas",   label:"📅 Clases",            desc:"Historial de clases y reservas del alumno"},
+            {id:"cursos",     label:"🎓 Mis cursos",        desc:"Curso matriculado, visible solo para alumnos de la Escuela de Adultos"},
             {id:"analisis",   label:"🎬 Vídeo Análisis",    desc:"Vídeos de análisis de swing compartidos por el profesor"},
             {id:"stats",      label:"📊 Estadísticas",      desc:"Rondas, hándicap y evolución del juego"},
             {id:"informes",   label:"📋 Informes",          desc:"Informes de seguimiento generados por el profesor"},
@@ -7099,6 +7146,7 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
   const ATABS_ALL=[
     {id:"inicio",label:"Inicio",icon:"🏠"},
     {id:"reservas",label:"Clases",icon:"📅"},
+    {id:"cursos",label:"Mis cursos",icon:"🎓",soloAdultos:true},
     {id:"analisis",label:"Análisis",icon:"🎬"},
     {id:"stats",label:"Estadísticas",icon:"📊"},
     {id:"informes",label:"Informes",icon:"📋"},
@@ -7107,8 +7155,9 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
     {id:"miperfil",label:"Mi Cuenta",icon:"🔐"},
   ];
   const permisos = data.permisosPortal || {};
-  // Si un permiso no está definido explícitamente como false, se muestra
-  const ATABS = ATABS_ALL.filter(t => permisos[t.id] !== false);
+  // Si un permiso no está definido explícitamente como false, se muestra.
+  // La pestaña "Mis cursos" solo se muestra a alumnos de la Escuela de Adultos.
+  const ATABS = ATABS_ALL.filter(t => permisos[t.id] !== false && (!t.soloAdultos || alumno?.tipoEscuela==="adultos"));
   // Si la pestaña activa queda oculta, ir a la primera visible
   useEffect(()=>{
     if(ATABS.length>0 && !ATABS.find(t=>t.id===tab)){
@@ -7256,6 +7305,29 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
 
       {/* MENSAJERÍA ALUMNO */}
       {tab==="mensajes"&&<ModMensajeriaAlumno data={data} setData={setData} alumnoId={alumnoId}/>}
+
+      {/* MIS CURSOS (solo Escuela de Adultos) */}
+      {tab==="cursos"&&<div>
+        <h3 style={{margin:"0 0 14px",color:G.fairway}}>🎓 Mis cursos</h3>
+        {(()=>{
+          const miCurso = alumno?.cursoId ? (data.cursos||[]).find(c=>c.id===alumno.cursoId) : null;
+          if(!miCurso) return <div style={{color:G.soft,textAlign:"center",padding:30,background:G.mist,borderRadius:12}}>
+            <div style={{fontSize:28,marginBottom:8}}>🎓</div>
+            <div>Todavía no estás matriculado en ningún curso.</div>
+            <div style={{fontSize:12,marginTop:6}}>Contacta con el club para apuntarte a uno.</div>
+          </div>;
+          const mod = GRUPOS_EDAD.find(g=>g.id===miCurso.modalidadId);
+          return <Card style={{borderLeft:`4px solid ${mod?.color||G.grass}`}}>
+            <div style={{fontWeight:800,fontSize:16,color:G.ink}}>{mod?.emoji||"⛳"} {miCurso.nombre}</div>
+            <div style={{fontSize:13,color:G.soft,marginTop:4}}>{mod?.nombre||"Adultos"}</div>
+            <div style={{fontSize:13,color:G.soft,marginTop:8}}>
+              📅 {miCurso.fechaInicio||"?"} → {miCurso.fechaFin||"?"}
+              {miCurso.horario&&<><br/>🕒 {miCurso.horario}</>}
+            </div>
+            <div style={{fontSize:14,fontWeight:700,color:G.fairway,marginTop:10}}>💶 {fmt(miCurso.precio)}</div>
+          </Card>;
+        })()}
+      </div>}
 
       {/* INFORMES DEL ALUMNO */}
       {tab==="informes"&&<div>
@@ -14321,6 +14393,7 @@ const ADMIN_TABS=[
   {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
   {id:"tareas",label:"Tareas",icon:"📋"},
   {id:"bonos",label:"Bonos",icon:"🎫"},
+  {id:"cursosadultos",label:"Cursos Adultos",icon:"🎓"},
   {id:"pagos",label:"Pagos",icon:"💶"},
   {id:"ajustes",label:"Ajustes",icon:"⚙️"},
 // ── POLLITOS ampliación (p051-p075) ──────────────────────────────
@@ -14630,6 +14703,9 @@ function ModRegistrosPendientes({data, setData, notifs}){
                     </span>
                     {reg.nivel&&<span style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
                       {GRUPOS_EDAD.find(g=>g.id===reg.nivel)?.emoji} {reg.nivel}
+                    </span>}
+                    {reg.cursoId&&<span style={{background:"#EAF7EE",color:G.fairway,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
+                      🎓 {(data.cursos||[]).find(c=>c.id===reg.cursoId)?.nombre || "Curso eliminado"}
                     </span>}
                     <span style={{background:"#F5F8FA",color:G.grass,borderRadius:8,padding:"2px 8px",fontSize:12,fontWeight:600}}>
                       ✓ RGPD aceptado
@@ -15418,6 +15494,159 @@ function ModBonos({data, setData}){
       <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
         <Btn color="secondary" onClick={()=>setModalBono(null)}>Cancelar</Btn>
         <Btn onClick={guardar} disabled={!form.alumnoId||!form.clases}>🎫 Crear bono</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: CURSOS DE ADULTOS
+// Cursos con fecha, horario, plazas y precio fijo. Los alumnos adultos
+// se matriculan ellos mismos desde el alta pública (campo cursoId en
+// el propio registro de alumno). Aquí se crean/editan los cursos y se
+// ve cuántas plazas quedan libres (cuenta alumnos activos + solicitudes
+// pendientes de aprobación con ese mismo curso).
+// ═══════════════════════════════════════════════════════════════════
+const MODALIDADES_ADULTO = GRUPOS_EDAD.filter(g=>g.rango==="Adultos");
+
+function ModCursosAdultos({data,setData}){
+  const [modal,setModal]=useState(null); // null | {} (nuevo) | curso (editar)
+  const [form,setForm]=useState({});
+  const [pendientesCount,setPendientesCount]=useState({});
+  const cursos=data.cursos||[];
+  const alumnos=data.alumnos||[];
+
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const snap=await getDocs(collection(db,"registros_pendientes"));
+        const conteo={};
+        snap.forEach(d=>{
+          const c=d.data()?.cursoId;
+          if(c) conteo[c]=(conteo[c]||0)+1;
+        });
+        setPendientesCount(conteo);
+      }catch(e){ console.warn("Error contando pendientes por curso:", e); }
+    })();
+  },[cursos.length]);
+
+  function ocupadas(cursoId){
+    const activos=alumnos.filter(a=>a.cursoId===cursoId && a.activo!==false).length;
+    return activos + (pendientesCount[cursoId]||0);
+  }
+
+  function abrirNuevo(){
+    setForm({modalidadId:"adulto_iniciacion",plazas:8,precio:"",horario:"",fechaInicio:"",fechaFin:"",nombre:"",activo:true,notas:""});
+    setModal({});
+  }
+  function abrirEditar(c){
+    setForm({...c});
+    setModal(c);
+  }
+  function guardar(){
+    if(!form.nombre?.trim()) return;
+    const reg={
+      id: modal?.id || uid(),
+      nombre: form.nombre.trim(),
+      modalidadId: form.modalidadId||"adulto_iniciacion",
+      fechaInicio: form.fechaInicio||"",
+      fechaFin: form.fechaFin||"",
+      horario: form.horario||"",
+      plazas: Number(form.plazas)||0,
+      precio: Number(form.precio)||0,
+      activo: form.activo!==false,
+      notas: form.notas||"",
+    };
+    const existe = (data.cursos||[]).some(c=>c.id===reg.id);
+    const nuevos = existe ? (data.cursos||[]).map(c=>c.id===reg.id?reg:c) : [...(data.cursos||[]),reg];
+    setData({...data, cursos:nuevos});
+    setModal(null);
+  }
+  function eliminar(c){
+    if(!window.confirm(`¿Eliminar el curso "${c.nombre}"? Los alumnos ya matriculados no se verán afectados.`)) return;
+    setData({...data, cursos:(data.cursos||[]).filter(x=>x.id!==c.id)});
+  }
+
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+      <p style={{fontSize:13,color:G.soft,margin:0}}>Cursos abiertos para la Escuela de Adultos. Los alumnos eligen uno al darse de alta desde el enlace público.</p>
+      <Btn onClick={abrirNuevo}>+ Nuevo curso</Btn>
+    </div>
+
+    {cursos.length===0 && <Card style={{textAlign:"center",padding:30,color:G.soft}}>
+      Todavía no has creado ningún curso. Los alumnos adultos no podrán elegir curso al inscribirse hasta que crees al menos uno.
+    </Card>}
+
+    <div style={{display:"grid",gap:10}}>
+      {cursos.map(c=>{
+        const mod=GRUPOS_EDAD.find(g=>g.id===c.modalidadId);
+        const ocup=ocupadas(c.id);
+        const libres=Math.max(0,c.plazas-ocup);
+        return <Card key={c.id} style={{borderLeft:`4px solid ${mod?.color||G.grass}`,opacity:c.activo?1:0.55}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontWeight:800,color:G.ink,fontSize:15}}>
+                {mod?.emoji||"⛳"} {c.nombre} {!c.activo&&<span style={{fontSize:11,color:G.danger,fontWeight:700}}>(cerrado)</span>}
+              </div>
+              <div style={{fontSize:12,color:G.soft,marginTop:3}}>{mod?.nombre||"Adultos"}</div>
+              <div style={{fontSize:12,color:G.soft,marginTop:3}}>
+                📅 {c.fechaInicio||"?"} → {c.fechaFin||"?"} {c.horario&&<>· 🕒 {c.horario}</>}
+              </div>
+              <div style={{fontSize:13,fontWeight:700,color:G.fairway,marginTop:5}}>💶 {fmt(c.precio)}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontSize:13,fontWeight:800,color:libres>0?G.fairway:G.danger}}>
+                {ocup}/{c.plazas} plazas
+              </div>
+              <div style={{fontSize:11,color:G.soft,marginTop:2}}>{libres>0?`${libres} libres`:"Completo"}</div>
+              <div style={{display:"flex",gap:6,marginTop:8}}>
+                <Btn small color="secondary" onClick={()=>abrirEditar(c)}>Editar</Btn>
+                <Btn small color="danger" onClick={()=>eliminar(c)}>Eliminar</Btn>
+              </div>
+            </div>
+          </div>
+          {c.notas&&<div style={{fontSize:12,color:G.soft,marginTop:8,fontStyle:"italic"}}>{c.notas}</div>}
+        </Card>;
+      })}
+    </div>
+
+    {modal&&<Modal title={modal.id?"Editar curso":"Nuevo curso"} onClose={()=>setModal(null)}>
+      <Field label="Nombre del curso *">
+        <Input value={form.nombre||""} onChange={v=>setForm(f=>({...f,nombre:v}))} placeholder="Ej: Curso Hándicap — Octubre 2026"/>
+      </Field>
+      <Field label="Modalidad">
+        <Sel value={form.modalidadId||"adulto_iniciacion"} onChange={v=>setForm(f=>({...f,modalidadId:v}))}
+          options={MODALIDADES_ADULTO.map(m=>({value:m.id,label:`${m.emoji} ${m.nombre}`}))}/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Fecha inicio">
+          <Input type="date" value={form.fechaInicio||""} onChange={v=>setForm(f=>({...f,fechaInicio:v}))}/>
+        </Field>
+        <Field label="Fecha fin">
+          <Input type="date" value={form.fechaFin||""} onChange={v=>setForm(f=>({...f,fechaFin:v}))}/>
+        </Field>
+      </div>
+      <Field label="Horario">
+        <Input value={form.horario||""} onChange={v=>setForm(f=>({...f,horario:v}))} placeholder="Ej: Martes y jueves 18:00-19:00"/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <Field label="Plazas">
+          <Input type="number" min="1" value={form.plazas??""} onChange={v=>setForm(f=>({...f,plazas:v}))}/>
+        </Field>
+        <Field label="Precio total (€)">
+          <Input type="number" min="0" step="0.01" value={form.precio??""} onChange={v=>setForm(f=>({...f,precio:v}))}/>
+        </Field>
+      </div>
+      <Field label="Notas (opcional)">
+        <Input value={form.notas||""} onChange={v=>setForm(f=>({...f,notas:v}))} placeholder="Visibles solo para ti en este panel"/>
+      </Field>
+      <div style={{display:"flex",alignItems:"center",gap:8,margin:"6px 0 14px"}}>
+        <input type="checkbox" id="cursoActivo" checked={form.activo!==false} onChange={e=>setForm(f=>({...f,activo:e.target.checked}))}/>
+        <label htmlFor="cursoActivo" style={{fontSize:13,color:G.ink,cursor:"pointer"}}>Abierto a inscripción (visible en el alta pública)</label>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+        <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+        <Btn onClick={guardar} disabled={!form.nombre?.trim()}>Guardar curso</Btn>
       </div>
     </Modal>}
   </div>;
@@ -16238,6 +16467,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
       {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
+      {tab==="cursosadultos"&&<ModCursosAdultos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
     <ToastNuevaInscripcion
@@ -16598,10 +16828,21 @@ function PantallaLoginAcademia({ onQuieroRegistrarme }) {
             </div>
           )}
         </div>
-        <button onClick={onQuieroRegistrarme} style={{width:"100%", background:"transparent", border:"none",
-          color:"rgba(255,255,255,.7)", fontSize:13, marginTop:20, cursor:"pointer", textAlign:"center"}}>
-          ¿Alumno nuevo? <span style={{color:G.flag, fontWeight:600, textDecoration:"underline"}}>Solicita tu alta aquí</span>
-        </button>
+        <div style={{marginTop:20,textAlign:"center"}}>
+          <div style={{color:"rgba(255,255,255,.7)", fontSize:13, marginBottom:10}}>¿Alumno nuevo? Solicita tu alta aquí:</div>
+          <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+            <button onClick={()=>onQuieroRegistrarme("infantil")} style={{background:"rgba(255,255,255,.12)",
+              border:"1px solid rgba(255,255,255,.3)", color:"#fff", borderRadius:10,
+              padding:"8px 14px", fontSize:12.5, fontWeight:600, cursor:"pointer"}}>
+              🧒 Escuela Infantil
+            </button>
+            <button onClick={()=>onQuieroRegistrarme("adultos")} style={{background:"rgba(255,255,255,.12)",
+              border:"1px solid rgba(255,255,255,.3)", color:"#fff", borderRadius:10,
+              padding:"8px 14px", fontSize:12.5, fontWeight:600, cursor:"pointer"}}>
+              🏌️ Escuela de Adultos
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -16632,6 +16873,7 @@ function AlumnoConSelector({data,setData,usuarioDoc,onLogout}){
 export default function App(){
   const [data,setDataRaw]   = useState(loadData);
   const [vistaAuth,setVistaAuth] = useState("login"); // "login" | "registro" — solo se usa sin sesión
+  const [tipoRegistro,setTipoRegistro] = useState("infantil"); // "infantil" | "adultos" — qué acceso de alta se eligió
   const [authUser,setAuthUser] = useState(undefined); // undefined=cargando, null=sin sesión
   const [usuarioDoc,setUsuarioDoc] = useState(null);   // doc de usuarios/{uid} con role/alumnoId/profesorId
   // IMPORTANTE (fix de seguridad 18-jul-2026): antes, cualquier rol
@@ -16829,8 +17071,8 @@ export default function App(){
 
   // Sin sesión → login propio de Academia (o pantalla de alta de alumno nuevo)
   if(!authUser){
-    if(vistaAuth==="registro") return <PantallaRegistro onVolver={()=>setVistaAuth("login")}/>;
-    return <PantallaLoginAcademia onQuieroRegistrarme={()=>setVistaAuth("registro")}/>;
+    if(vistaAuth==="registro") return <PantallaRegistro tipoInicial={tipoRegistro} onVolver={()=>setVistaAuth("login")}/>;
+    return <PantallaLoginAcademia onQuieroRegistrarme={(tipo)=>{setTipoRegistro(tipo||"infantil");setVistaAuth("registro");}}/>;
   }
 
   // Sesión válida pero sin rol asignado todavía (pendiente de activación)
