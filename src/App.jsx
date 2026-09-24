@@ -6063,7 +6063,14 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
             };
             await setDoc(doc(db,"Usuarios",existente.id), actualizado);
             setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
-      try{ await enviarEmailPHP(email, "Tu acceso a la Academia ya esta listo", "<p>Hola,</p><p>Ya tienes acceso a la Academia de Golf Ciudad Real C.D.</p><p><b>Email:</b> "+email+"<br><b>Contrasena:</b> "+password+"</p><p>Entra en <a href='https://academia.golfb.es'>academia.golfb.es</a></p>"); }catch(e){ console.warn("Error enviando email de acceso:", e); }
+            // Este email ya tenía cuenta creada (p.ej. otro hermano con el
+            // mismo tutor): la contraseña real es la que se puso al crear
+            // esa cuenta la primera vez, NO la que se acaba de escribir en
+            // este formulario. Para no decirle al tutor una contraseña
+            // que no funciona, le mandamos un enlace real para que
+            // establezca su propia contraseña.
+            try{ await sendPasswordResetEmail(auth, email); }catch(e){ console.warn("Error enviando reset:", e); }
+      try{ await enviarEmailPHP(email, "Ya tienes acceso a la Academia (nuevo alumno vinculado)", "<p>Hola,</p><p><b>"+alumno.nombre+"</b> ya está vinculado/a a tu cuenta de la Academia de Golf Ciudad Real C.D.</p><p>Como ya tenías una cuenta creada con este email, te hemos enviado un correo aparte con un enlace para establecer tu contraseña de acceso (o puedes usar la que ya tuvieras).</p><p><b>Email:</b> "+email+"</p><p>Entra en <a href='https://academia.golfb.es'>academia.golfb.es</a></p>"); }catch(e){ console.warn("Error enviando email de acceso:", e); }
             setHecho(true);
           } else {
             setError("Ya existe una cuenta con ese email, pero no se ha podido vincular automáticamente. Contacta con soporte.");
