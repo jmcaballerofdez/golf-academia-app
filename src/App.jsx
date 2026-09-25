@@ -529,6 +529,35 @@ async function guardarDatosFirebase(data) {
       alumnos: (data.alumnos||[]).map(a => ({...a, foto:""})),
       _ts: Date.now()
     };
+    // SALVAGUARDA 25-sep-2026 (tras incidente de pérdida de ~25 alumnos):
+    // guardarDatosFirebase() hace un setDoc() que reemplaza TODO el
+    // documento. Antes de escribir, comprobamos cuántos alumnos hay
+    // ahora mismo en el documento real; si lo que vamos a guardar tiene
+    // muchos menos (indicio de estado local desactualizado, p.ej. dos
+    // pestañas/dispositivos a la vez, o localStorage viejo), abortamos
+    // en vez de arriesgarnos a borrar alumnos por encima. No debería
+    // dispararse casi nunca (setData ya bloquea el caso más frecuente
+    // con datosVerificados), pero es la última red de seguridad.
+    try {
+      const actual = await getDoc(doc(db, "academia", "datos"));
+      if (actual.exists()) {
+        const nActual = (actual.data().alumnos || []).length;
+        const nNuevo = dataToSave.alumnos.length;
+        if (nActual >= 5 && nNuevo < nActual * 0.6) {
+          console.error(
+            `guardarDatosFirebase ABORTADO: se iba a guardar con solo ${nNuevo} alumnos ` +
+            `cuando el documento real tiene ${nActual}. Esto parece un estado local ` +
+            `desactualizado; para evitar repetir el incidente de pérdida de datos, no se guarda.`
+          );
+          alert(
+            "AVISO: se ha cancelado un guardado porque parecía que iba a borrar alumnos " +
+            "(tenías menos alumnos cargados de los que hay en el servidor). Recarga la página " +
+            "e inténtalo de nuevo. Si el problema persiste, avisa antes de seguir usando la app."
+          );
+          return;
+        }
+      }
+    } catch(e) { console.warn("Comprobación de salvaguarda falló, se continúa con el guardado:", e); }
     await setDoc(doc(db, "academia", "datos"), dataToSave);
   } catch(e) { console.warn("Firebase save error:", e); }
 }
@@ -16886,6 +16915,18 @@ export default function App(){
   const [fbReady,setFbReady]= useState(false);
   const [notifs,setNotifs]  = useState([]);
   const [pendientesCount,setPendientesCount] = useState(0);
+  // FIX 25-sep-2026 (incidente de pérdida de datos): la app se muestra
+  // interactiva de inmediato usando como estado inicial lo que hubiera
+  // en localStorage (posiblemente desactualizado desde hace días), y
+  // guardarDatosFirebase() hace un setDoc() que REEMPLAZA el documento
+  // entero. Si el usuario guardaba algo (p.ej. aprobar un registro
+  // pendiente) antes de que llegasen los datos reales de Firestore,
+  // esa foto vieja y reducida de "alumnos" se escribía por encima de
+  // la real, borrando todo lo añadido desde entonces. datosVerificados
+  // se pone a true solo cuando ya ha llegado una copia real de
+  // Firestore (por getDoc o por onSnapshot); hasta entonces, setData()
+  // no debe guardar nada.
+  const [datosVerificados,setDatosVerificados] = useState(false);
 
   // ── Conectar Firebase al arrancar ──
   useEffect(()=>{
@@ -16908,6 +16949,7 @@ export default function App(){
         // Si onSnapshot ya entregó datos, no sobrescribir con la lectura inicial
         if(cancelled || snapshotRecibido || !fbData) return;
         setDataRaw(fbData); saveData(fbData);
+        setDatosVerificados(true);
       });
       // Escuchar cambios en tiempo real
       unsub = onSnapshot(doc(db,"academia","datos"), snap=>{
@@ -16922,6 +16964,7 @@ export default function App(){
             });
             return {...fbData, alumnos};
           });
+          setDatosVerificados(true);
         }
       }, err=>{ console.warn("Snapshot error:", err); setFbReady(true); });
       // Escuchar notificaciones
@@ -17039,6 +17082,18 @@ export default function App(){
   },[]);
 
   function setData(d){
+    // FIX 25-sep-2026: si todavía no hemos recibido una copia real de
+    // Firestore (ver datosVerificados más arriba), NO guardamos. Guardar
+    // aquí escribiría por encima del documento real con datos locales
+    // desactualizados (localStorage viejo) y podría borrar alumnos u
+    // otros datos añadidos por otras personas/dispositivos mientras
+    // tanto. Es preferible bloquear brevemente la acción a arriesgarse
+    // a repetir el incidente de pérdida de datos del 25-sep-2026.
+    if(!datosVerificados){
+      console.warn("setData() bloqueado: aún no se han recibido los datos reales de Firestore.");
+      alert("Todavía se están cargando los datos del servidor. Espera un par de segundos y vuelve a intentarlo para no arriesgarte a perder cambios de otras personas.");
+      return;
+    }
     setDataRaw(d);
     saveData(d);
     setSavedFlash(true);
