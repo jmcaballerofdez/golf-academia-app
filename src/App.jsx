@@ -7262,6 +7262,23 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           <div style={{fontSize:12,color:G.soft,marginTop:4}}>{Number(bonoActivo.clases)-bonoActivo.usadas} clases restantes de {bonoActivo.clases}</div>
         </Card>}
 
+        {/* Grupo del curso (Escuela Infantil) */}
+        {(()=>{
+          const misGrupos=(data.gruposCurso||[]).filter(g=>(g.alumnoIds||[]).includes(alumnoId)&&g.dia&&g.horaIni);
+          if(misGrupos.length===0) return null;
+          return <Card style={{marginBottom:14,borderLeft:`4px solid ${G.sky}`}}>
+            <div style={{fontWeight:700,color:G.ink,marginBottom:6}}>👥 {misGrupos.length>1?"Grupos del curso":"Grupo del curso"}</div>
+            {misGrupos.map(g=>(
+              <div key={g.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"6px 0",borderTop:misGrupos[0]===g?"none":"1px solid #EDF1F5"}}>
+                <div style={{fontSize:16,fontWeight:800,color:G.fairway}}>{g.nombre}</div>
+                <div style={{fontSize:14,color:G.ink,textAlign:"right"}}>
+                  {/s$/.test(g.dia)?g.dia:g.dia+"s"} · {g.horaIni}{g.horaFin?` – ${g.horaFin}`:""} h
+                </div>
+              </div>
+            ))}
+          </Card>;
+        })()}
+
         {/* Banner huecos disponibles */}
         {slotsDisponibles.length>0&&<div
           onClick={()=>setTab("reservas")}
