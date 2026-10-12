@@ -21,16 +21,21 @@ const EMAILJS_CONFIG = {
 };
 
 // -- Envio de emails via script PHP en Raiola (sustituye a EmailJS) --
-const MAIL_API_URL = "https://api.golfb.es/send-email.php";
-const MAIL_API_CLAVE = "ArroyoMigueltturra2026@@";
+// Ya no hay ninguna clave en la web: el servidor comprueba el inicio de
+// sesion de Firebase (correo libre, solo administrador) o usa una plantilla
+// fija con limite de envios (correo de registro).
+const MAIL_API_URL = "https://api.golfb.es/send-email-v2.php";
 
 async function enviarEmailPHP(to, subject, html){
   if(!to) return;
   try{
+    const user = auth.currentUser;
+    if(!user){ console.warn("Email no enviado: no hay sesion iniciada"); return; }
+    const token = await user.getIdToken();
     const resp = await fetch(MAIL_API_URL, {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ to, subject, html, clave: MAIL_API_CLAVE }),
+      headers: {"Content-Type": "application/json", "Authorization": "Bearer " + token},
+      body: JSON.stringify({ to, subject, html }),
     });
     const data = await resp.json().catch(()=>({}));
     if(!data.ok) console.warn("Email PHP no enviado:", data);
@@ -462,22 +467,23 @@ function cargarEmailJS(){
   });
 }
 
-// Enviar emails de un nuevo registro
+// Enviar emails de un nuevo registro (el texto lo construye el servidor)
 async function enviarEmailsRegistro(datos){
   try{
     if(!datos.email) return;
-    const html = `
-      <div style="font-family:Arial,sans-serif;color:#222;max-width:520px">
-        <h2 style="color:#1F3864;">Registro recibido</h2>
-        <p>Hola ${datos.nombre || ""},</p>
-        <p>Hemos recibido tu solicitud de alta en la Escuela de Golf de Golf Ciudad Real C.D. Tu profesor la revisara en breve y, en cuanto la active, recibiras otro correo con tu acceso a la app.</p>
-        <ul>
-          <li><b>Telefono:</b> ${datos.telefono || "-"}</li>
-          <li><b>Tipo de escuela:</b> ${datos.tipoEscuela || "-"}</li>
-        </ul>
-        <p style="color:#888;font-size:12px;">Golf Ciudad Real C.D. - Escuela de Golf</p>
-      </div>`;
-    await enviarEmailPHP(datos.email, "Hemos recibido tu registro", html);
+    const resp = await fetch(MAIL_API_URL, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        tipo: "registro",
+        to: datos.email,
+        nombre: datos.nombre || "",
+        telefono: datos.telefono || "",
+        tipoEscuela: datos.tipoEscuela || "",
+      }),
+    });
+    const data = await resp.json().catch(()=>({}));
+    if(!data.ok) console.warn("Email de registro no enviado:", data);
   }catch(e){ console.warn("Error enviando emails registro:", e); }
 }
 
