@@ -6687,6 +6687,27 @@ function ModAjustes({data,setData,onLogout}){
   </div>;
 }
 
+// Campo de PIN (fuera del componente para que no pierda el foco al escribir)
+function CampoPin({label,value,onChange,ver,setVer,placeholder}){
+  return (
+    <Field label={label}>
+      <div style={{position:"relative"}}>
+        <input type={ver?"text":"password"} value={value}
+          onChange={e=>onChange(e.target.value.replace(/\D/g,"").slice(0,6))}
+          placeholder={placeholder}
+          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #C7D2DC",
+            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit",
+            letterSpacing:ver?1:3}}/>
+        <button type="button" onClick={()=>setVer(v=>!v)}
+          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
+          {ver?"🙈":"👁️"}
+        </button>
+      </div>
+    </Field>
+  );
+}
+
 function CambiarPinAlumno({data,setData,alumnoId}){
   const [pinActual,setPinActual]=useState("");
   const [pinNuevo,setPinNuevo]=useState("");
@@ -6712,24 +6733,6 @@ function CambiarPinAlumno({data,setData,alumnoId}){
     {[0,1,2,3,4,5].map(i=><div key={i} style={{width:12,height:12,borderRadius:"50%",background:i<val.length?G.fairway:"#C7D2DC"}}/>)}
   </div>;
 
-  const CampoPin=({label,value,onChange,ver,setVer,placeholder})=>(
-    <Field label={label}>
-      <div style={{position:"relative"}}>
-        <input type={ver?"text":"password"} value={value}
-          onChange={e=>onChange(e.target.value.replace(/\D/g,"").slice(0,6))}
-          placeholder={placeholder}
-          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #C7D2DC",
-            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit",
-            letterSpacing:ver?1:3}}/>
-        <button onClick={()=>setVer(v=>!v)}
-          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
-            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
-          {ver?"🙈":"👁️"}
-        </button>
-      </div>
-    </Field>
-  );
-
   return <div>
     <CampoPin label="PIN actual" value={pinActual} onChange={setPinActual}
       ver={verActual} setVer={setVerActual} placeholder="Tu PIN actual"/>
@@ -6751,6 +6754,27 @@ function CambiarPinAlumno({data,setData,alumnoId}){
 // academia.golfb.es). Requiere reautenticación con la contraseña
 // actual antes de poder establecer una nueva (regla de seguridad de
 // Firebase Auth).
+// Campo de contraseña (fuera del componente para que no pierda el foco al escribir)
+function CampoPass({label,value,onChange,ver,setVer,placeholder,autoComplete}){
+  return (
+    <Field label={label}>
+      <div style={{position:"relative"}}>
+        <input type={ver?"text":"password"} value={value}
+          onChange={e=>onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #C7D2DC",
+            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit"}}/>
+        <button type="button" onClick={()=>setVer(v=>!v)}
+          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
+          {ver?"🙈":"👁️"}
+        </button>
+      </div>
+    </Field>
+  );
+}
+
 function CambiarContrasenaAlumno(){
   const [passActual,setPassActual]=useState("");
   const [passNueva,setPassNueva]=useState("");
@@ -6779,24 +6803,6 @@ function CambiarContrasenaAlumno(){
     }
     setCargando(false);
   }
-
-  const CampoPass=({label,value,onChange,ver,setVer,placeholder,autoComplete})=>(
-    <Field label={label}>
-      <div style={{position:"relative"}}>
-        <input type={ver?"text":"password"} value={value}
-          onChange={e=>onChange(e.target.value)}
-          placeholder={placeholder}
-          autoComplete={autoComplete}
-          style={{width:"100%",boxSizing:"border-box",border:"1.5px solid #C7D2DC",
-            borderRadius:8,padding:"10px 44px 10px 12px",fontSize:15,fontFamily:"inherit"}}/>
-        <button onClick={()=>setVer(v=>!v)}
-          style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
-            background:"none",border:"none",cursor:"pointer",fontSize:18,color:G.soft,padding:2}}>
-          {ver?"🙈":"👁️"}
-        </button>
-      </div>
-    </Field>
-  );
 
   return <div>
     <p style={{fontSize:13,color:G.soft,marginBottom:14}}>✉️ {auth.currentUser?.email}</p>
