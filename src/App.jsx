@@ -501,6 +501,14 @@ const db      = getFirestore(firebaseApp);
 const auth    = getAuth(firebaseApp);
 const storage = getStorage(firebaseApp, "gs://golf-ciudad-real-50819.firebasestorage.app");
 
+// Contraseña aleatoria de un solo uso: nadie la ve ni se envía por correo.
+// El tutor/alumno elige la suya con el enlace de "restablecer contraseña".
+function generarClaveAleatoria(){
+  const a = new Uint8Array(24);
+  crypto.getRandomValues(a);
+  return Array.from(a, b=>b.toString(16).padStart(2,"0")).join("")+"Aa1!";
+}
+
 // Crea una cuenta de email/contraseña para un alumno/tutor usando una
 // instancia de Firebase SECUNDARIA — así el profesor/admin que está
 // creando el acceso no se queda desconectado de su propia sesión.
@@ -6100,7 +6108,6 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
   const [seleccion,setSeleccion] = useState(opciones[0]?.key || "manual");
   const opcionActiva = opciones.find(o=>o.key===seleccion);
   const [email,setEmail] = useState(opcionActiva?.email || "");
-  const [password,setPassword] = useState("");
   const [error,setError] = useState("");
   const [cargando,setCargando] = useState(false);
   const [hecho,setHecho] = useState(false);
@@ -6113,17 +6120,21 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
   async function crear(){
     setError("");
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ setError("Introduce un email válido."); return; }
-    if(password.length<6){ setError("La contraseña debe tener al menos 6 caracteres."); return; }
     setCargando(true);
     const rol = opcionActiva?.role || "alumno";
     try{
-      const uid = await crearCuentaSinDesconectar(email, password);
+      const uid = await crearCuentaSinDesconectar(email, generarClaveAleatoria());
       const usuarioDoc = rol==="tutor"
         ? { role:"tutor", alumnoId:alumno.id, tutorNombre:opcionActiva.tutorNombre, email, fecha:new Date().toISOString() }
         : { role:"alumno", alumnoId:alumno.id, email, fecha:new Date().toISOString() };
       await setDoc(doc(db,"Usuarios",uid), usuarioDoc);
       setData({...data, alumnos:(data.alumnos||[]).map(a=>a.id===alumno.id?{...a, accesoCreado:true, accesoEmail:email}:a)});
-      try{ await enviarEmailPHP(email, "Tu acceso a la Academia ya esta listo", "<p>Hola,</p><p>Ya tienes acceso a la Academia de Golf Ciudad Real C.D.</p><p><b>Email:</b> "+email+"<br><b>Contrasena:</b> "+password+"</p><p>Entra en <a href='https://academia.golfb.es'>academia.golfb.es</a></p>"); }catch(e){ console.warn("Error enviando email de acceso:", e); }
+      // 1) Enlace seguro para que la persona elija su propia contraseña
+      let enlaceEnviado=true;
+      try{ await sendPasswordResetEmail(auth, email); }catch(e){ enlaceEnviado=false; console.warn("Error enviando enlace de contraseña:", e); }
+      // 2) Aviso de bienvenida (sin ninguna contraseña)
+      try{ await enviarEmailPHP(email, "Tu acceso a la Academia ya esta listo", "<p>Hola,</p><p>Ya tienes acceso a la Academia de Golf Ciudad Real C.D.</p><p>Te hemos enviado <b>otro correo con un enlace para elegir tu contraseña</b> (revisa también la carpeta de spam). Cuando la tengas, entra en <a href='https://academia.golfb.es'>academia.golfb.es</a> con este email: <b>"+email+"</b></p>"); }catch(e){ console.warn("Error enviando email de acceso:", e); }
+      if(!enlaceEnviado){ setError("Se creó el acceso, pero no se pudo enviar el enlace de contraseña. Pulsa 'Enviarle enlace para restablecer contraseña'."); }
       setHecho(true);
     }catch(err){
       if(err?.code==="auth/email-already-in-use"){
@@ -6204,9 +6215,9 @@ function ModalAccesoAlumno({ alumno, data, setData, onClose }) {
           <Field label="Email de acceso">
             <Input value={email} onChange={setEmail} placeholder="email@ejemplo.com"/>
           </Field>
-          <Field label="Contraseña temporal (mín. 6 caracteres)">
-            <Input value={password} onChange={setPassword} placeholder="Podrá cambiarla después"/>
-          </Field>
+          <div style={{background:G.mist,color:G.fairway,borderRadius:8,padding:"8px 12px",fontSize:12.5,marginBottom:12}}>
+            🔑 No hace falta poner contraseña: se le enviará un correo con un enlace para que elija la suya.
+          </div>
           {error && <div style={{background:"#F5F8FA",color:G.danger,borderRadius:8,padding:"8px 12px",fontSize:13,marginBottom:10}}>{error}</div>}
           <Btn onClick={crear} disabled={cargando} full>{cargando?"Creando…":"Crear acceso"}</Btn>
         </div>
