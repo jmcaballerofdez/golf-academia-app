@@ -14462,6 +14462,7 @@ const ADMIN_TABS=[
   {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
   {id:"tareas",label:"Tareas",icon:"📋"},
   {id:"bonos",label:"Bonos",icon:"🎫"},
+  {id:"agendaadultos",label:"Agenda Adultos",icon:"🗓️"},
   {id:"cursosadultos",label:"Cursos Adultos",icon:"🎓"},
   {id:"pagos",label:"Pagos",icon:"💶"},
   {id:"ajustes",label:"Ajustes",icon:"⚙️"},
@@ -15569,6 +15570,242 @@ function ModBonos({data, setData}){
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MÓDULO: AGENDA DE CLASES (Escuela de Adultos)
+// Calendario semanal en bloques de 30 min, como el organigrama en Excel.
+// Datos en data.agendaAdultos: [{id,fecha,hora,dur,tipo,titulo,alumnoIds,nClase,hecha,nota}]
+// ═══════════════════════════════════════════════════════════════════
+const AGENDA_TIPOS = {
+  individual:{label:"Clase individual", color:"#2A5FD9", bg:"#E3ECFC"},
+  grupo:     {label:"Clase en grupo",   color:"#6B4FBB", bg:"#ECE6F8"},
+  curso:     {label:"Curso / Plan",     color:"#B0651A", bg:"#FBEBD8"},
+  escuela:   {label:"Escuela infantil", color:"#2E8B57", bg:"#DDF2E6"},
+  personal:  {label:"Reunión / personal", color:"#5C7284", bg:"#E6EBF0"},
+};
+const AGENDA_IMPORT = [["2026-10-14","16:30",2,"DAVID NAVAS",5],["2026-10-15","10:30",2,"Pedro y Prado",6],["2026-10-15","17:00",2,"Desc.4",3],["2026-10-15","18:00",2,"Desc.5",3],["2026-10-15","19:00",2,"Desc.6",3],["2026-10-16","17:00",2,"Desc.7",4],["2026-10-17","09:00",2,"Desc.8",3],["2026-10-17","10:00",2,"Desc.11",1],["2026-10-18","09:00",2,"Desc.9",3],["2026-10-18","10:00",2,"ESC. 10",1],["2026-10-18","11:00",2,"ESC. 11",1],["2026-10-18","12:00",2,"ESC. 12",1],["2026-10-19","17:00",2,"Desc.10",1],["2026-10-20","17:30",2,"PLAN PROF.",2],["2026-10-21","11:30",2,"Reunion Delegada Gobierno JCCM",null],["2026-10-21","17:00",2,"Desc.4",4],["2026-10-22","10:00",1,"rueda prensa Ayto",null],["2026-10-22","11:00",2,"Pedro y Prado",7],["2026-10-22","17:30",2,"Desc.5",4],["2026-10-22","18:30",2,"Desc.6",4],["2026-10-23","11:00",2,"Reunion Pau Beltrán",null],["2026-10-25","09:00",2,"Desc.9",4],["2026-10-25","10:00",2,"ESC. 10",1],["2026-10-25","11:00",2,"ESC. 11",1],["2026-10-25","12:00",2,"ESC. 12",1],["2026-10-26","13:00",1,"Desc.11",2],["2026-10-26","17:00",2,"Desc.10",2],["2026-10-27","10:00",2,"JAVIER NUÑEZ",3],["2026-10-27","16:30",2,"CURSO HCP A",1],["2026-10-27","17:30",2,"PLAN PROF.",3],["2026-10-28","16:30",2,"DAVID NAVAS",7],["2026-10-28","17:30",2,"DAVID NAVAS",8],["2026-10-29","10:00",2,"Reunion Pte. Diputación CR",null],["2026-10-29","12:00",2,"Pedro y Prado",8],["2026-10-29","17:00",2,"CURSO HCP B",1],["2026-11-02","17:00",2,"Desc.10",3],["2026-11-03","16:30",2,"CURSO HCP A",2],["2026-11-03","17:30",2,"PLAN PROF.",4],["2026-11-04","10:00",2,"Pedro y Prado",9],["2026-11-04","11:00",2,"Pedro y Prado",10],["2026-11-04","16:00",2,"DAVID NAVAS",9],["2026-11-04","17:00",2,"DENTISTA LOLA",null],["2026-11-05","17:00",2,"CURSO HCP B",2],["2026-11-07","10:00",2,"Desc.11",3],["2026-11-08","09:00",2,"CURSO HCP C",1],["2026-11-08","10:00",2,"ESC. 10",1],["2026-11-08","11:00",2,"ESC. 11",1],["2026-11-08","12:00",2,"ESC. 12",1],["2026-11-10","16:30",2,"CURSO HCP A",3],["2026-11-10","17:30",2,"PLAN PROF.",5],["2026-11-11","16:00",2,"DAVID NAVAS",10],["2026-11-11","17:00",2,"CURSO HCP D",1],["2026-11-12","17:00",2,"CURSO HCP B",3],["2026-11-15","09:00",2,"CURSO HCP C",2],["2026-11-17","16:30",2,"CURSO HCP A",4],["2026-11-17","17:30",2,"PLAN PROF.",6],["2026-11-18","16:00",2,"DAVID NAVAS",11],["2026-11-18","17:00",2,"CURSO HCP D",2],["2026-11-19","17:00",2,"CURSO HCP B",4],["2026-11-22","09:00",2,"CURSO HCP C",3],["2026-11-24","16:30",2,"CURSO HCP A",5],["2026-11-24","17:30",2,"PLAN PROF.",7],["2026-11-25","16:00",2,"DAVID NAVAS",12],["2026-11-25","17:00",2,"CURSO HCP D",3],["2026-11-26","17:00",2,"CURSO HCP B",5],["2026-11-29","09:00",2,"CURSO HCP C",4],["2026-12-01","16:30",2,"CURSO HCP A",6],["2026-12-01","17:30",2,"PLAN PROF.",8],["2026-12-02","16:00",2,"DAVID NAVAS",13],["2026-12-02","17:00",2,"CURSO HCP D",4],["2026-12-03","17:00",2,"CURSO HCP B",6],["2026-12-09","16:00",2,"DAVID NAVAS",14],["2026-12-09","17:00",2,"CURSO HCP D",5],["2026-12-10","16:00",2,"CURSO HCP B",7],["2026-12-10","17:00",2,"CURSO HCP B",8],["2026-12-13","09:00",2,"CURSO HCP C",4],["2026-12-15","16:00",2,"CURSO HCP A",7],["2026-12-15","17:00",2,"CURSO HCP A",8],["2026-12-16","16:00",2,"DAVID NAVAS",15],["2026-12-16","17:00",2,"CURSO HCP D",6],["2026-12-17","16:00",2,"CURSO HCP B",9],["2026-12-17","17:00",2,"CURSO HCP B",10],["2026-12-22","16:00",2,"CURSO HCP A",9],["2026-12-22","17:00",2,"CURSO HCP A",10]];
+function agendaTipoDe(t){
+  const s=(t||"").toUpperCase();
+  if(s.startsWith("ESC")) return "escuela";
+  if(s.startsWith("CURSO")||s.startsWith("PLAN")) return "curso";
+  if(s.startsWith("REUNION")||s.startsWith("RUEDA")||s.startsWith("DENTISTA")) return "personal";
+  if(s.includes(" Y ")) return "grupo";
+  return "individual";
+}
+function agendaSumaDias(iso,n){const d=new Date(iso+"T12:00:00");d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
+function agendaLunes(iso){const d=new Date(iso+"T12:00:00");const w=(d.getDay()+6)%7;return agendaSumaDias(iso,-w);}
+function agendaMin(h){const [a,b]=(h||"0:0").split(":").map(Number);return a*60+b;}
+function agendaHora(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");}
+const AGENDA_DIAS=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
+const AGENDA_MESES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+const AGENDA_H=30; // alto en px de cada bloque de 30 min
+
+function ModAgendaAdultos({data,setData}){
+  const lista=data.agendaAdultos||[];
+  const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
+  const [lunes,setLunes]=useState(()=>agendaLunes(today()));
+  const [todoDia,setTodoDia]=useState(false);
+  const [modal,setModal]=useState(null); // null | "new" | id
+  const [form,setForm]=useState({});
+
+  const diasSemana=[0,1,2,3,4,5,6].map(i=>agendaSumaDias(lunes,i));
+  const domingo=diasSemana[6];
+  const deSemana=lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo);
+  // Si hay algo fuera del horario habitual (p.ej. a las 14:00) se muestra todo el día
+  const verTodo=todoDia||deSemana.some(e=>agendaMin(e.hora)>=14*60&&agendaMin(e.hora)<16*60);
+  const slots=[];
+  for(let m=9*60;m<20*60;m+=30){ if(!verTodo&&m>=13*60+30&&m<16*60) continue; slots.push(m); }
+  const idxSlot=m=>{let i=slots.indexOf(m);if(i>=0)return i;return slots.findIndex(s=>s>=m);};
+
+  const hoy=today();
+  const nombresDe=e=>(e.alumnoIds||[]).map(id=>alumnos.find(a=>a.id===id)?.nombre||"").filter(Boolean);
+  const tituloDe=e=>e.titulo||nombresDe(e).join(", ")||AGENDA_TIPOS[e.tipo]?.label||"Clase";
+
+  function abrirNueva(fecha,hora){
+    setForm({fecha,hora,dur:2,tipo:"individual",titulo:"",alumnoIds:[],nClase:"",hecha:false,nota:"",repetir:0});
+    setModal("new");
+  }
+  function abrirEditar(e){
+    setForm({...e,alumnoIds:e.alumnoIds||[],nClase:e.nClase??"",nota:e.nota||"",repetir:0});
+    setModal(e.id);
+  }
+  function siguienteN(titulo,excluirId){
+    const t=(titulo||"").trim().toLowerCase(); if(!t) return "";
+    const ns=lista.filter(e=>e.id!==excluirId&&(e.titulo||"").trim().toLowerCase()===t&&e.nClase!==""&&e.nClase!=null).map(e=>Number(e.nClase));
+    return ns.length?Math.max(...ns)+1:"";
+  }
+  function guardar(){
+    if(!form.fecha||!form.hora) return;
+    const base={
+      fecha:form.fecha,hora:form.hora,dur:Number(form.dur)||2,tipo:form.tipo,
+      titulo:(form.titulo||"").trim(),alumnoIds:form.alumnoIds||[],
+      nClase:form.nClase===""||form.nClase==null?"":Number(form.nClase),
+      hecha:!!form.hecha,nota:(form.nota||"").trim()
+    };
+    if(modal==="new"){
+      const nuevos=[];
+      const veces=Math.min(Math.max(Number(form.repetir)||0,0),30);
+      for(let k=0;k<=veces;k++){
+        nuevos.push({...base,id:uid(),fecha:agendaSumaDias(base.fecha,7*k),
+          nClase:base.nClase===""?"":base.nClase+k,hecha:k===0?base.hecha:false});
+      }
+      setData({...data,agendaAdultos:[...lista,...nuevos]});
+    } else {
+      setData({...data,agendaAdultos:lista.map(e=>e.id===modal?{...base,id:modal}:e)});
+    }
+    setModal(null);
+  }
+  function borrar(){
+    if(modal==="new") return;
+    if(!confirm("¿Eliminar esta clase de la agenda?")) return;
+    setData({...data,agendaAdultos:lista.filter(e=>e.id!==modal)});
+    setModal(null);
+  }
+  function importar(){
+    if(!confirm("Se van a cargar en la agenda las "+AGENDA_IMPORT.length+" entradas de tu organigrama (octubre-diciembre 2026). ¿Continuar?")) return;
+    const nuevos=AGENDA_IMPORT.map(([fecha,hora,dur,titulo,n])=>({
+      id:uid(),fecha,hora,dur,tipo:agendaTipoDe(titulo),titulo,alumnoIds:[],
+      nClase:n==null?"":n,hecha:fecha<hoy,nota:""
+    }));
+    setData({...data,agendaAdultos:[...lista,...nuevos]});
+  }
+
+  // Solapes en el formulario (aviso, no bloquea)
+  const solapes=(()=>{
+    if(!modal||!form.fecha||!form.hora) return [];
+    const ini=agendaMin(form.hora), fin=ini+30*(Number(form.dur)||2);
+    return lista.filter(e=>e.id!==modal&&e.fecha===form.fecha&&agendaMin(e.hora)<fin&&agendaMin(e.hora)+30*(e.dur||2)>ini);
+  })();
+
+  const horasSemana=deSemana.filter(e=>e.tipo!=="personal").reduce((s,e)=>s+(e.dur||2)*0.5,0);
+  const nClases=deSemana.filter(e=>e.tipo!=="personal").length;
+  const fmt=iso=>{const d=new Date(iso+"T12:00:00");return d.getDate()+" "+AGENDA_MESES[d.getMonth()];};
+  const sugeridos=[...new Set(lista.map(e=>e.titulo).filter(Boolean))].sort();
+
+  return <div>
+    {/* Barra de navegación */}
+    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+      <Btn small color="secondary" onClick={()=>setLunes(agendaSumaDias(lunes,-7))}>◀</Btn>
+      <Btn small color="secondary" onClick={()=>setLunes(agendaLunes(today()))}>Hoy</Btn>
+      <Btn small color="secondary" onClick={()=>setLunes(agendaSumaDias(lunes,7))}>▶</Btn>
+      <div style={{fontWeight:800,color:G.fairway,fontSize:15}}>{fmt(lunes)} – {fmt(domingo)} {new Date(domingo+"T12:00:00").getFullYear()}</div>
+      <div style={{flex:1}}/>
+      <div style={{fontSize:12,color:G.soft}}>{nClases} clases · {horasSemana} h esta semana</div>
+      <label style={{fontSize:12,color:G.soft,display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}>
+        <input type="checkbox" checked={verTodo} disabled={deSemana.some(e=>agendaMin(e.hora)>=14*60&&agendaMin(e.hora)<16*60)} onChange={e=>setTodoDia(e.target.checked)}/> Ver mediodía
+      </label>
+      <Btn small onClick={()=>abrirNueva(hoy>=lunes&&hoy<=domingo?hoy:lunes,"17:00")}>+ Nueva clase</Btn>
+    </div>
+
+    {lista.length===0&&<Card style={{marginBottom:14,textAlign:"center"}}>
+      <div style={{fontWeight:700,marginBottom:6}}>Tu agenda está vacía</div>
+      <div style={{fontSize:13,color:G.soft,marginBottom:12}}>Puedes cargar de golpe todo tu organigrama de octubre a diciembre de 2026, o ir añadiendo clases pulsando en la hora que quieras.</div>
+      <Btn onClick={importar}>📥 Cargar mi organigrama Oct–Dic 2026</Btn>
+    </Card>}
+
+    {/* Leyenda */}
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10,fontSize:11}}>
+      {Object.entries(AGENDA_TIPOS).map(([k,t])=><span key={k} style={{display:"flex",alignItems:"center",gap:4,color:G.soft}}>
+        <span style={{width:10,height:10,borderRadius:3,background:t.color,display:"inline-block"}}/>{t.label}</span>)}
+    </div>
+
+    {/* Rejilla semanal */}
+    <div style={{overflowX:"auto",border:"1px solid #DCE4EB",borderRadius:12,background:"#fff"}}>
+      <div style={{minWidth:760,display:"grid",gridTemplateColumns:"52px repeat(7,1fr)"}}>
+        <div style={{borderBottom:"1px solid #DCE4EB",background:"#F5F8FA"}}/>
+        {diasSemana.map((f,i)=>{
+          const esHoy=f===hoy;
+          return <div key={f} style={{padding:"6px 4px",textAlign:"center",borderBottom:"1px solid #DCE4EB",borderLeft:"1px solid #EEF2F5",
+            background:esHoy?G.fairway:(i>=5?"#EAF0F6":"#F5F8FA"),color:esHoy?"#fff":G.ink,fontSize:12,fontWeight:700}}>
+            {AGENDA_DIAS[i]} <span style={{fontWeight:800}}>{new Date(f+"T12:00:00").getDate()}</span>
+          </div>;
+        })}
+        {/* columna de horas */}
+        <div style={{position:"relative",height:slots.length*AGENDA_H}}>
+          {slots.map((m,i)=><div key={m} style={{position:"absolute",top:i*AGENDA_H,height:AGENDA_H,width:"100%",boxSizing:"border-box",
+            fontSize:10,color:G.soft,textAlign:"right",paddingRight:6,paddingTop:2,borderTop:m%60===0?"1px solid #DCE4EB":"1px dotted #E8EEF3"}}>
+            {m%60===0?agendaHora(m):""}</div>)}
+        </div>
+        {diasSemana.map((f,di)=>{
+          const delDia=deSemana.filter(e=>e.fecha===f);
+          return <div key={f} style={{position:"relative",height:slots.length*AGENDA_H,borderLeft:"1px solid #EEF2F5",background:di>=5?"#FAFCFD":"#fff"}}>
+            {slots.map((m,i)=><div key={m} onClick={()=>abrirNueva(f,agendaHora(m))}
+              title={"Añadir clase "+agendaHora(m)}
+              style={{position:"absolute",top:i*AGENDA_H,height:AGENDA_H,width:"100%",boxSizing:"border-box",cursor:"pointer",
+                borderTop:m%60===0?"1px solid #DCE4EB":"1px dotted #E8EEF3"}}/>)}
+            {delDia.map(e=>{
+              const i=idxSlot(agendaMin(e.hora)); if(i<0) return null;
+              const t=AGENDA_TIPOS[e.tipo]||AGENDA_TIPOS.individual;
+              const h=Math.max(1,e.dur||2)*AGENDA_H-2;
+              return <div key={e.id} onClick={ev=>{ev.stopPropagation();abrirEditar(e);}}
+                style={{position:"absolute",top:i*AGENDA_H+1,left:2,right:2,height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
+                  background:t.bg,borderLeft:"4px solid "+t.color,borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
+                  color:G.ink,opacity:e.hecha?0.6:1,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
+                <div style={{fontWeight:700,color:t.color}}>{e.hecha?"✓ ":""}{tituloDe(e)}</div>
+                <div style={{color:G.soft,fontSize:10}}>{e.hora}{e.nClase!==""&&e.nClase!=null?" · Nº "+e.nClase:""}</div>
+              </div>;
+            })}
+          </div>;
+        })}
+      </div>
+    </div>
+    <div style={{fontSize:11,color:G.soft,marginTop:8}}>Pulsa en una hora vacía para añadir una clase, o en una clase para editarla, marcarla como hecha o borrarla.</div>
+
+    {modal&&<Modal title={modal==="new"?"Nueva clase":"Editar clase"} onClose={()=>setModal(null)}>
+      <Field label="Tipo">
+        <Sel value={form.tipo} onChange={v=>setForm(f=>({...f,tipo:v}))}
+          options={Object.entries(AGENDA_TIPOS).map(([k,t])=>({value:k,label:t.label}))}/>
+      </Field>
+      <Field label="Nombre (grupo, curso, alumno o asunto)">
+        <input list="agenda-titulos" value={form.titulo||""}
+          onChange={e=>{const v=e.target.value;setForm(f=>({...f,titulo:v,nClase:(f.nClase===""||f.nClase==null)&&modal==="new"?siguienteN(v,null):f.nClase}));}}
+          placeholder="Ej: CURSO HCP A, David Navas, Reunión…"
+          style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>
+        <datalist id="agenda-titulos">{sugeridos.map(s=><option key={s} value={s}/>)}</datalist>
+      </Field>
+      {form.tipo!=="personal"&&<Field label="Alumnos (opcional)">
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
+          {(form.alumnoIds||[]).map(id=><span key={id} style={{background:"#E3ECFC",color:G.fairway,borderRadius:12,padding:"3px 10px",fontSize:12,fontWeight:600}}>
+            {alumnos.find(a=>a.id===id)?.nombre||"—"} <span style={{cursor:"pointer"}} onClick={()=>setForm(f=>({...f,alumnoIds:f.alumnoIds.filter(x=>x!==id)}))}>✕</span></span>)}
+        </div>
+        <Sel value="" onChange={v=>{if(v)setForm(f=>({...f,alumnoIds:[...(f.alumnoIds||[]),v]}));}}
+          options={[{value:"",label:"+ Añadir alumno…"},...alumnos.filter(a=>!(form.alumnoIds||[]).includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
+      </Field>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Field label="Fecha"><Input type="date" value={form.fecha||""} onChange={v=>setForm(f=>({...f,fecha:v}))}/></Field>
+        <Field label="Hora">
+          <Sel value={form.hora} onChange={v=>setForm(f=>({...f,hora:v}))}
+            options={Array.from({length:24},(_,i)=>agendaHora(9*60+30*i)).map(h=>({value:h,label:h}))}/>
+        </Field>
+        <Field label="Duración">
+          <Sel value={String(form.dur)} onChange={v=>setForm(f=>({...f,dur:Number(v)}))}
+            options={[1,2,3,4,6].map(n=>({value:String(n),label:(n*30)+" min"}))}/>
+        </Field>
+        <Field label="Nº de clase">
+          <Input type="number" value={form.nClase===""||form.nClase==null?"":String(form.nClase)} onChange={v=>setForm(f=>({...f,nClase:v}))} placeholder="1, 2, 3…"/>
+        </Field>
+      </div>
+      {solapes.length>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"8px 10px",fontSize:12,marginBottom:12}}>
+        ⚠️ A esa hora ya tienes: {solapes.map(tituloDe).join(" · ")}
+      </div>}
+      <Field label="Nota (opcional)"><Textarea value={form.nota||""} onChange={v=>setForm(f=>({...f,nota:v}))} rows={2}/></Field>
+      <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,marginBottom:14,cursor:"pointer"}}>
+        <input type="checkbox" checked={!!form.hecha} onChange={e=>setForm(f=>({...f,hecha:e.target.checked}))}/> ✓ Clase ya realizada
+      </label>
+      {modal==="new"&&<Field label="Repetir cada semana (veces más)">
+        <Sel value={String(form.repetir||0)} onChange={v=>setForm(f=>({...f,repetir:Number(v)}))}
+          options={[0,1,2,3,4,5,6,7,8,9,10,12,15,20].map(n=>({value:String(n),label:n===0?"No repetir":n+" semanas más (el Nº de clase sube solo)"}))}/>
+      </Field>}
+      <div style={{display:"flex",gap:8,justifyContent:"space-between",marginTop:6}}>
+        <div>{modal!=="new"&&<Btn color="danger" onClick={borrar}>Eliminar</Btn>}</div>
+        <div style={{display:"flex",gap:8}}>
+          <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
+          <Btn onClick={guardar}>Guardar</Btn>
+        </div>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MÓDULO: CURSOS DE ADULTOS
 // Cursos con fecha, horario, plazas y precio fijo. Los alumnos adultos
 // se matriculan ellos mismos desde el alta pública (campo cursoId en
@@ -16536,6 +16773,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
       {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
+      {tab==="agendaadultos"&&<ModAgendaAdultos data={data} setData={setData}/>}
       {tab==="cursosadultos"&&<ModCursosAdultos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
