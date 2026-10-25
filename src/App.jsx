@@ -15616,7 +15616,11 @@ function ModAgendaAdultos({data,setData}){
   const idxSlot=m=>{let i=slots.indexOf(m);if(i>=0)return i;return slots.findIndex(s=>s>=m);};
 
   const hoy=today();
-  const nombresDe=e=>(e.alumnoIds||[]).map(id=>alumnos.find(a=>a.id===id)?.nombre||"").filter(Boolean);
+  // Los alumnos pertenecen al NOMBRE de la clase (todas las sesiones de "CURSO HCP A" comparten miembros)
+  const grupos=data.agendaGrupos||{};
+  const gKey=t=>(t||"").trim().toLowerCase();
+  const alumnosDe=e=>{const k=gKey(e.titulo);return (k&&grupos[k])?grupos[k]:(e.alumnoIds||[]);};
+  const nombresDe=e=>alumnosDe(e).map(id=>alumnos.find(a=>a.id===id)?.nombre||"").filter(Boolean);
   const tituloDe=e=>e.titulo||nombresDe(e).join(", ")||AGENDA_TIPOS[e.tipo]?.label||"Clase";
 
   function abrirNueva(fecha,hora){
@@ -15624,7 +15628,7 @@ function ModAgendaAdultos({data,setData}){
     setModal("new");
   }
   function abrirEditar(e){
-    setForm({...e,alumnoIds:e.alumnoIds||[],nClase:e.nClase??"",nota:e.nota||"",repetir:0});
+    setForm({...e,alumnoIds:alumnosDe(e),nClase:e.nClase??"",nota:e.nota||"",repetir:0});
     setModal(e.id);
   }
   function siguienteN(titulo,excluirId){
@@ -15636,10 +15640,13 @@ function ModAgendaAdultos({data,setData}){
     if(!form.fecha||!form.hora) return;
     const base={
       fecha:form.fecha,hora:form.hora,dur:Number(form.dur)||2,tipo:form.tipo,
-      titulo:(form.titulo||"").trim(),alumnoIds:form.alumnoIds||[],
+      titulo:(form.titulo||"").trim(),alumnoIds:(form.titulo||"").trim()?[]:(form.alumnoIds||[]),
       nClase:form.nClase===""||form.nClase==null?"":Number(form.nClase),
       hecha:!!form.hecha,nota:(form.nota||"").trim()
     };
+    // Con nombre de clase, los alumnos se guardan una sola vez para todo el grupo
+    const nuevosGrupos={...grupos};
+    if(base.titulo) nuevosGrupos[gKey(base.titulo)]=form.alumnoIds||[];
     if(modal==="new"){
       const nuevos=[];
       const veces=Math.min(Math.max(Number(form.repetir)||0,0),30);
@@ -15647,9 +15654,9 @@ function ModAgendaAdultos({data,setData}){
         nuevos.push({...base,id:uid(),fecha:agendaSumaDias(base.fecha,7*k),
           nClase:base.nClase===""?"":base.nClase+k,hecha:k===0?base.hecha:false});
       }
-      setData({...data,agendaAdultos:[...lista,...nuevos]});
+      setData({...data,agendaAdultos:[...lista,...nuevos],agendaGrupos:nuevosGrupos});
     } else {
-      setData({...data,agendaAdultos:lista.map(e=>e.id===modal?{...base,id:modal}:e)});
+      setData({...data,agendaAdultos:lista.map(e=>e.id===modal?{...base,id:modal}:e),agendaGrupos:nuevosGrupos});
     }
     setModal(null);
   }
@@ -15740,7 +15747,7 @@ function ModAgendaAdultos({data,setData}){
                   background:t.bg,borderLeft:"4px solid "+t.color,borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
                   color:G.ink,opacity:e.hecha?0.6:1,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
                 <div style={{fontWeight:700,color:t.color}}>{e.hecha?"✓ ":""}{tituloDe(e)}</div>
-                <div style={{color:G.soft,fontSize:10}}>{e.hora}{e.nClase!==""&&e.nClase!=null?" · Nº "+e.nClase:""}</div>
+                <div style={{color:G.soft,fontSize:10}}>{e.hora}{e.nClase!==""&&e.nClase!=null?" · Nº "+e.nClase:""}{alumnosDe(e).length>1?" · 👥"+alumnosDe(e).length:""}</div>
               </div>;
             })}
           </div>;
@@ -15756,12 +15763,13 @@ function ModAgendaAdultos({data,setData}){
       </Field>
       <Field label="Nombre (grupo, curso, alumno o asunto)">
         <input list="agenda-titulos" value={form.titulo||""}
-          onChange={e=>{const v=e.target.value;setForm(f=>({...f,titulo:v,nClase:(f.nClase===""||f.nClase==null)&&modal==="new"?siguienteN(v,null):f.nClase}));}}
+          onChange={e=>{const v=e.target.value;setForm(f=>({...f,titulo:v,nClase:(f.nClase===""||f.nClase==null)&&modal==="new"?siguienteN(v,null):f.nClase,
+            alumnoIds:(modal==="new"&&!(f.alumnoIds||[]).length&&grupos[gKey(v)])?grupos[gKey(v)]:f.alumnoIds}));}}
           placeholder="Ej: CURSO HCP A, David Navas, Reunión…"
           style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>
         <datalist id="agenda-titulos">{sugeridos.map(s=><option key={s} value={s}/>)}</datalist>
       </Field>
-      {form.tipo!=="personal"&&<Field label="Alumnos (opcional)">
+      {form.tipo!=="personal"&&<Field label={(form.titulo||"").trim()?"Alumnos de «"+form.titulo.trim()+"» (valen para todas sus clases)":"Alumnos (opcional)"}>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
           {(form.alumnoIds||[]).map(id=><span key={id} style={{background:"#E3ECFC",color:G.fairway,borderRadius:12,padding:"3px 10px",fontSize:12,fontWeight:600}}>
             {alumnos.find(a=>a.id===id)?.nombre||"—"} <span style={{cursor:"pointer"}} onClick={()=>setForm(f=>({...f,alumnoIds:f.alumnoIds.filter(x=>x!==id)}))}>✕</span></span>)}
