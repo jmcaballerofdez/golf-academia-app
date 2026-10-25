@@ -2632,10 +2632,10 @@ function EstructuraInfantil({data, setData, alumnos}){
 }
 
 
-function ModAlumnos({data,setData,profesorId=null,modoAdmin=false}){
+function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="infantil"}){
   const [modal,         setModal]         = useState(null);
   const [form,          setForm]          = useState({});
-  const [tabTipo,       setTabTipo]       = useState("infantil");
+  const [tabTipo,       setTabTipo]       = useState(tipoInicial);
   const [buscar,        setBuscar]        = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null); // alumno a eliminar
   const [vistaEstructura, setVistaEstructura] = useState(false); // ver estructura/grupos
@@ -14448,24 +14448,35 @@ function ModTareas({data,setData}){
 // ADMIN SHELL
 // ═══════════════════════════════════════════════════════════════════
 const ADMIN_TABS=[
-  {id:"calendario",label:"Calendario Escolar ",icon:"🗓️"},
-  {id:"alumnos",label:"Alumnos",icon:"👤"},
-  {id:"pendientes",label:"Pendientes",icon:"🔔"},
-  {id:"programas",label:"Programas",icon:"📚"},
-  {id:"clases",label:"Clases",icon:"📅"},
-  {id:"estadisticas",label:"Estadísticas",icon:"📊"},
-  {id:"analisis",label:"Vídeo Análisis",icon:"🎬"},
-  {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️"},
-  {id:"informes",label:"Informes",icon:"📑"},
-  {id:"negocio",label:"Informe Profesor",icon:"📈"},
-  {id:"archivos",label:"Archivos",icon:"📁"},
-  {id:"mensajes",label:"Mensajes",icon:"✉️",badge:true},
-  {id:"tareas",label:"Tareas",icon:"📋"},
-  {id:"bonos",label:"Bonos",icon:"🎫"},
-  {id:"agendaadultos",label:"Agenda Adultos",icon:"🗓️"},
-  {id:"cursosadultos",label:"Cursos Adultos",icon:"🎓"},
-  {id:"pagos",label:"Pagos",icon:"💶"},
-  {id:"ajustes",label:"Ajustes",icon:"⚙️"},
+  {id:"agendaadultos",label:"Agenda Adultos",icon:"🗓️",zonas:["adultos"]},
+  {id:"calendario",label:"Calendario Escolar",icon:"🗓️",zonas:["infantil"]},
+  {id:"alumnos",label:"Alumnos",icon:"👤",zonas:["adultos","infantil"]},
+  {id:"clases",label:"Clases",icon:"📅",zonas:["adultos","infantil"]},
+  {id:"cursosadultos",label:"Cursos Adultos",icon:"🎓",zonas:["adultos"]},
+  {id:"bonos",label:"Bonos",icon:"🎫",zonas:["adultos"]},
+  {id:"programas",label:"Programas",icon:"📚",zonas:["infantil"]},
+  {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️",zonas:["adultos","infantil"]},
+  {id:"pagos",label:"Pagos",icon:"💶",zonas:["adultos","infantil"]},
+  {id:"pendientes",label:"Pendientes",icon:"🔔",zonas:["general"]},
+  {id:"mensajes",label:"Mensajes",icon:"✉️",zonas:["general"],badge:true},
+  {id:"tareas",label:"Tareas",icon:"📋",zonas:["general"]},
+  {id:"archivos",label:"Archivos",icon:"📁",zonas:["general"]},
+  {id:"informes",label:"Informes",icon:"📑",zonas:["general"]},
+  {id:"estadisticas",label:"Estadísticas",icon:"📊",zonas:["general"]},
+  {id:"analisis",label:"Vídeo Análisis",icon:"🎬",zonas:["general"]},
+  {id:"negocio",label:"Informe Profesor",icon:"📈",zonas:["general"]},
+  {id:"ajustes",label:"Ajustes",icon:"⚙️",zonas:["general"]},
+];
+const ZONAS_ADMIN=[
+  {id:"adultos",label:"🏌️ Adultos"},
+  {id:"infantil",label:"🧒 Infantil"},
+  {id:"general",label:"⚙️ General"},
+];
+
+// NOTA: estas 125 filas de ejercicios (p051-b075) estaban pegadas por error DENTRO de ADMIN_TABS,
+// con lo que se pintaban como pestañas vacías y nunca llegaban a la biblioteca de ejercicios.
+// Se separan aquí SIN activarlas, para no cambiar lo que ven las familias. Ver con el profesor si se añaden.
+const EJERCICIOS_AMPLIACION_SIN_ACTIVAR=[
 // ── POLLITOS ampliación (p051-p075) ──────────────────────────────
 {id:"p051",grupo:"pollitos",trimestre:1,semana:2,categoria:"Coordinación",nombre:"El Semáforo de Golf",objetivo:"Aprender señales de inicio y parada con el palo.",descripcion:"El instructor actúa de semáforo: verde = golpear, rojo = parar. Los niños practican comenzar y detener el swing según la señal. Trabaja la concentración y el autocontrol.",duracion:"12 min",material:"Palos esponja, tarjetas de colores",variantes:["Con pito en lugar de colores","Varios semáforos simultáneos","El niño hace de semáforo"],tags:["coordinación","autocontrol","señales","lúdico"]},
 {id:"p052",grupo:"pollitos",trimestre:1,semana:4,categoria:"Putting",nombre:"La Rampa Mágica",objetivo:"Entender la gravedad y la velocidad de la bola.",descripcion:"Con una tabla inclinada como rampa, los niños lanzan la bola por ella y la reciben con el putter intentando dirigirla al hoyo. Aprenden cómo la pendiente afecta la velocidad.",duracion:"15 min",material:"Tabla inclinada, putter junior, bolas foam",variantes:["Rampa más empinada","Varios hoyos al pie de la rampa","Contar los rebotes"],tags:["putt","gravedad","pendiente","lúdico"]},
@@ -16480,7 +16491,13 @@ function ModInformeNegocio({data,setData,profesorId=null,esSuperAdmin=false}){
 }
 
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false,authEmail=null}){
-  const [tab,setTab]=useState("calendario");
+  // Navegación en dos niveles: zona (Adultos / Infantil / General) y pestaña dentro de la zona
+  const navIni=(()=>{try{const j=JSON.parse(localStorage.getItem("gcr_admin_nav")||"null");if(j&&ADMIN_TABS.some(t=>t.id===j.tab&&t.zonas.includes(j.zona)))return j;}catch(e){}return {zona:"infantil",tab:"calendario"};})();
+  const [tab,setTabRaw]=useState(navIni.tab);
+  const [zona,setZona]=useState(navIni.zona);
+  const guardarNav=(z,t)=>{try{localStorage.setItem("gcr_admin_nav",JSON.stringify({zona:z,tab:t}));}catch(e){}};
+  const setTab=(id)=>{const t=ADMIN_TABS.find(x=>x.id===id);const z=t&&!t.zonas.includes(zona)?t.zonas[0]:zona;setTabRaw(id);setZona(z);guardarNav(z,id);};
+  const irZona=(z)=>{const t=ADMIN_TABS.find(x=>x.id===tab);const nuevo=(t&&t.zonas.includes(z))?tab:ADMIN_TABS.find(x=>x.zonas.includes(z)).id;setZona(z);setTabRaw(nuevo);guardarNav(z,nuevo);};
   const [verSinClase,setVerSinClase]=useState(false);
   const [msgAbierto,setMsgAbierto]=useState(null);
   const [msgTexto,setMsgTexto]=useState("");
@@ -16579,8 +16596,20 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
           <AppSwitcher actual="academia" />
           <button onClick={onLogout} style={{background:"#fff",border:"none",color:G.fairway,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.15)"}}>🚪 Salir</button>
         </div>
-        <div style={{display:"flex",gap:2,marginTop:12,overflowX:"auto",paddingBottom:0}}>
-          {ADMIN_TABS.map(t=>{
+        <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+          {ZONAS_ADMIN.map(z=>{
+            const act=zona===z.id;
+            const nAviso = z.id==="general" ? (pendientesCount||0)+(data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length
+              : z.id==="adultos" ? (data.bonos||[]).filter(b=>{const r=Number(b.clases)-b.usadas;return r>0&&r<=2;}).length : 0;
+            return <button key={z.id} onClick={()=>irZona(z.id)}
+              style={{background:act?G.white:"rgba(255,255,255,.18)",color:act?G.fairway:"#FFFFFF",border:"none",borderRadius:20,padding:"7px 18px",fontSize:13,fontWeight:800,cursor:"pointer",position:"relative"}}>
+              {z.label}
+              {nAviso>0&&<span style={{marginLeft:6,background:"#E2685C",color:"white",borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:800}}>{nAviso}</span>}
+            </button>;
+          })}
+        </div>
+        <div style={{display:"flex",gap:2,marginTop:10,overflowX:"auto",paddingBottom:0}}>
+          {ADMIN_TABS.filter(t=>t.zonas.includes(zona)).map(t=>{
             const mensajesNoLeidos = t.id==="mensajes" ? (data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length : 0;
             const bonosAgotando = t.id==="bonos" ? (data.bonos||[]).filter(b=>{const r=Number(b.clases)-b.usadas;return r>0&&r<=2;}).length : 0;
             return <button key={t.id} onClick={()=>setTab(t.id)}
@@ -16767,7 +16796,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
       {tab==="calendario"&&<PanelPdfCalendario esProfesor={true}/>}
-      {tab==="alumnos"&&<ModAlumnos data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
+      {tab==="alumnos"&&<ModAlumnos key={zona} tipoInicial={zona==="adultos"?"adultos":"infantil"} data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
       {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
       {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
       {tab==="clases"&&<ModClases data={data} setData={setData}/>}
