@@ -14448,7 +14448,7 @@ function ModTareas({data,setData}){
 // ADMIN SHELL
 // ═══════════════════════════════════════════════════════════════════
 const ADMIN_TABS=[
-  {id:"agendaadultos",label:"Agenda Adultos",icon:"🗓️",zonas:["adultos"]},
+  {id:"agenda",label:"Agenda de clases",icon:"🗓️",zonas:["agenda"]},
   {id:"calendario",label:"Calendario Escolar",icon:"🗓️",zonas:["infantil"]},
   {id:"alumnos",label:"Alumnos",icon:"👤",zonas:["adultos","infantil"]},
   {id:"clases",label:"Clases",icon:"📅",zonas:["adultos","infantil"]},
@@ -14468,6 +14468,7 @@ const ADMIN_TABS=[
   {id:"ajustes",label:"Ajustes",icon:"⚙️",zonas:["general"]},
 ];
 const ZONAS_ADMIN=[
+  {id:"agenda",label:"🗓️ Agenda"},
   {id:"adultos",label:"🏌️ Adultos"},
   {id:"infantil",label:"🧒 Infantil"},
   {id:"general",label:"⚙️ General"},
@@ -15581,9 +15582,10 @@ function ModBonos({data, setData}){
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// MÓDULO: AGENDA DE CLASES (Escuela de Adultos)
+// MÓDULO: AGENDA DE CLASES (adultos + infantil, todo junto)
 // Calendario semanal en bloques de 30 min, como el organigrama en Excel.
-// Datos en data.agendaAdultos: [{id,fecha,hora,dur,tipo,titulo,alumnoIds,nClase,hecha,nota}]
+// Las clases de los grupos infantiles (data.gruposCurso) aparecen solas cada semana.
+// Datos en data.agendaAdultos (nombre histórico; guarda TODAS las clases de la agenda): [{id,fecha,hora,dur,tipo,titulo,alumnoIds,nClase,hecha,nota}]
 // ═══════════════════════════════════════════════════════════════════
 const AGENDA_TIPOS = {
   individual:{label:"Clase individual", color:"#2A5FD9", bg:"#E3ECFC"},
@@ -15608,18 +15610,52 @@ function agendaHora(m){return String(Math.floor(m/60)).padStart(2,"0")+":"+Strin
 const AGENDA_DIAS=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 const AGENDA_MESES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
 const AGENDA_H=30; // alto en px de cada bloque de 30 min
+const AGENDA_INFANTIL_DESDE="2026-10-18"; // primer domingo de la escuela infantil: antes no se generan clases
+// Reparte en columnas las clases que coinciden en el tiempo, para que no se tapen entre sí
+function agendaCarriles(evs){
+  const o=[...evs].sort((a,b)=>agendaMin(a.hora)-agendaMin(b.hora)||(b.dur||2)-(a.dur||2));
+  const fines=[]; const res={};
+  o.forEach(e=>{
+    const ini=agendaMin(e.hora), fin=ini+30*(e.dur||2);
+    let l=fines.findIndex(f=>f<=ini); if(l<0){l=fines.length;fines.push(0);}
+    fines[l]=fin; res[e.id]={lane:l,n:1,ini,fin};
+  });
+  o.forEach(e=>{
+    const r=res[e.id]; let mx=r.lane;
+    o.forEach(x=>{const q=res[x.id]; if(q.ini<r.fin&&q.fin>r.ini) mx=Math.max(mx,q.lane);});
+    r.n=mx+1;
+  });
+  return res;
+}
+function agendaDiaIdx(d){
+  const s=(d||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  return ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"].findIndex(x=>s.startsWith(x));
+}
 
-function ModAgendaAdultos({data,setData}){
+function ModAgenda({data,setData}){
   const lista=data.agendaAdultos||[];
   const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
   const [lunes,setLunes]=useState(()=>agendaLunes(today()));
   const [todoDia,setTodoDia]=useState(false);
   const [modal,setModal]=useState(null); // null | "new" | id
   const [form,setForm]=useState({});
+  const [info,setInfo]=useState(null); // clase automática de infantil (solo lectura)
 
   const diasSemana=[0,1,2,3,4,5,6].map(i=>agendaSumaDias(lunes,i));
   const domingo=diasSemana[6];
-  const deSemana=lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo);
+  // Clases de los grupos de infantil: se generan solas cada semana (si no hay ya una escrita a mano a esa hora)
+  const autos=[];
+  (data.gruposCurso||[]).forEach(g=>{
+    const di=agendaDiaIdx(g.dia); if(di<0||!g.horaIni) return;
+    const f=diasSemana[di]; if(f<AGENDA_INFANTIL_DESDE) return;
+    const ini=Math.floor(agendaMin(g.horaIni)/30)*30;
+    const fin=g.horaFin?agendaMin(g.horaFin):ini+60;
+    const hora=agendaHora(ini);
+    if(lista.some(e=>e.fecha===f&&e.tipo==="escuela"&&e.hora===hora)) return;
+    autos.push({id:"auto-"+g.id+"-"+f,fecha:f,hora,dur:Math.max(1,Math.ceil((fin-ini)/30)),tipo:"escuela",titulo:g.nombre||"Grupo infantil",
+      alumnoIds:g.alumnoIds||[],nClase:"",hecha:f<today(),auto:true,horario:g.horaIni+(g.horaFin?"–"+g.horaFin:"")});
+  });
+  const deSemana=[...lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo),...autos];
   // Si hay algo fuera del horario habitual (p.ej. a las 14:00) se muestra todo el día
   const verTodo=todoDia||deSemana.some(e=>agendaMin(e.hora)>=14*60&&agendaMin(e.hora)<16*60);
   const slots=[];
@@ -15630,7 +15666,7 @@ function ModAgendaAdultos({data,setData}){
   // Los alumnos pertenecen al NOMBRE de la clase (todas las sesiones de "CURSO HCP A" comparten miembros)
   const grupos=data.agendaGrupos||{};
   const gKey=t=>(t||"").trim().toLowerCase();
-  const alumnosDe=e=>{const k=gKey(e.titulo);return (k&&grupos[k])?grupos[k]:(e.alumnoIds||[]);};
+  const alumnosDe=e=>{if(e.auto) return e.alumnoIds||[];const k=gKey(e.titulo);return (k&&grupos[k])?grupos[k]:(e.alumnoIds||[]);};
   const nombresDe=e=>alumnosDe(e).map(id=>alumnos.find(a=>a.id===id)?.nombre||"").filter(Boolean);
   const tituloDe=e=>e.titulo||nombresDe(e).join(", ")||AGENDA_TIPOS[e.tipo]?.label||"Clase";
 
@@ -15749,23 +15785,34 @@ function ModAgendaAdultos({data,setData}){
               title={"Añadir clase "+agendaHora(m)}
               style={{position:"absolute",top:i*AGENDA_H,height:AGENDA_H,width:"100%",boxSizing:"border-box",cursor:"pointer",
                 borderTop:m%60===0?"1px solid #DCE4EB":"1px dotted #E8EEF3"}}/>)}
-            {delDia.map(e=>{
+            {(()=>{const car=agendaCarriles(delDia);return delDia.map(e=>{
               const i=idxSlot(agendaMin(e.hora)); if(i<0) return null;
+              const cr=car[e.id]||{lane:0,n:1};
               const t=AGENDA_TIPOS[e.tipo]||AGENDA_TIPOS.individual;
               const h=Math.max(1,e.dur||2)*AGENDA_H-2;
-              return <div key={e.id} onClick={ev=>{ev.stopPropagation();abrirEditar(e);}}
-                style={{position:"absolute",top:i*AGENDA_H+1,left:2,right:2,height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
-                  background:t.bg,borderLeft:"4px solid "+t.color,borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
+              return <div key={e.id} onClick={ev=>{ev.stopPropagation();e.auto?setInfo(e):abrirEditar(e);}}
+                style={{position:"absolute",top:i*AGENDA_H+1,left:"calc("+(cr.lane*100/cr.n)+"% + 2px)",width:"calc("+(100/cr.n)+"% - 4px)",height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
+                  background:t.bg,borderLeft:"4px solid "+t.color,outline:e.auto?"1px dashed "+t.color:"none",borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
                   color:G.ink,opacity:e.hecha?0.6:1,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
                 <div style={{fontWeight:700,color:t.color}}>{e.hecha?"✓ ":""}{tituloDe(e)}</div>
                 <div style={{color:G.soft,fontSize:10}}>{e.hora}{e.nClase!==""&&e.nClase!=null?" · Nº "+e.nClase:""}{alumnosDe(e).length>1?" · 👥"+alumnosDe(e).length:""}</div>
               </div>;
-            })}
+            });})()}
           </div>;
         })}
       </div>
     </div>
     <div style={{fontSize:11,color:G.soft,marginTop:8}}>Pulsa en una hora vacía para añadir una clase, o en una clase para editarla, marcarla como hecha o borrarla.</div>
+
+    {info&&<Modal title={"🧒 "+info.titulo} onClose={()=>setInfo(null)}>
+      <div style={{fontSize:14,marginBottom:10}}><b>{new Date(info.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"})}</b> · {info.horario}</div>
+      <div style={{fontSize:13,color:G.soft,marginBottom:6}}>Alumnos del grupo ({info.alumnoIds.length}):</div>
+      <div style={{fontSize:13,marginBottom:14}}>{nombresDe(info).join(" · ")||"Sin alumnos asignados"}</div>
+      <div style={{background:"#E6EBF0",borderRadius:8,padding:"8px 10px",fontSize:12,color:G.soft,marginBottom:14}}>
+        Esta clase sale sola cada semana del grupo infantil. Para cambiar el horario o los alumnos, entra en <b>🧒 Infantil → Alumnos</b>.
+      </div>
+      <div style={{textAlign:"right"}}><Btn color="secondary" onClick={()=>setInfo(null)}>Cerrar</Btn></div>
+    </Modal>}
 
     {modal&&<Modal title={modal==="new"?"Nueva clase":"Editar clase"} onClose={()=>setModal(null)}>
       <Field label="Tipo">
@@ -16492,7 +16539,7 @@ function ModInformeNegocio({data,setData,profesorId=null,esSuperAdmin=false}){
 
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false,authEmail=null}){
   // Navegación en dos niveles: zona (Adultos / Infantil / General) y pestaña dentro de la zona
-  const navIni=(()=>{try{const j=JSON.parse(localStorage.getItem("gcr_admin_nav")||"null");if(j&&ADMIN_TABS.some(t=>t.id===j.tab&&t.zonas.includes(j.zona)))return j;}catch(e){}return {zona:"infantil",tab:"calendario"};})();
+  const navIni=(()=>{try{const j=JSON.parse(localStorage.getItem("gcr_admin_nav")||"null");if(j&&ADMIN_TABS.some(t=>t.id===j.tab&&t.zonas.includes(j.zona)))return j;}catch(e){}return {zona:"agenda",tab:"agenda"};})();
   const [tab,setTabRaw]=useState(navIni.tab);
   const [zona,setZona]=useState(navIni.zona);
   const guardarNav=(z,t)=>{try{localStorage.setItem("gcr_admin_nav",JSON.stringify({zona:z,tab:t}));}catch(e){}};
@@ -16608,7 +16655,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
             </button>;
           })}
         </div>
-        <div style={{display:"flex",gap:2,marginTop:10,overflowX:"auto",paddingBottom:0}}>
+        <div style={{display:zona==="agenda"?"none":"flex",gap:2,marginTop:10,overflowX:"auto",paddingBottom:0}}>
           {ADMIN_TABS.filter(t=>t.zonas.includes(zona)).map(t=>{
             const mensajesNoLeidos = t.id==="mensajes" ? (data.mensajes||[]).filter(m=>m.destinatario==="profesor"&&!m.leido).length : 0;
             const bonosAgotando = t.id==="bonos" ? (data.bonos||[]).filter(b=>{const r=Number(b.clases)-b.usadas;return r>0&&r<=2;}).length : 0;
@@ -16810,7 +16857,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
       {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
-      {tab==="agendaadultos"&&<ModAgendaAdultos data={data} setData={setData}/>}
+      {tab==="agenda"&&<ModAgenda data={data} setData={setData}/>}
       {tab==="cursosadultos"&&<ModCursosAdultos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
