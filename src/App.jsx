@@ -27,10 +27,10 @@ const EMAILJS_CONFIG = {
 const MAIL_API_URL = "https://api.golfb.es/send-email-v2.php";
 
 async function enviarEmailPHP(to, subject, html){
-  if(!to) return;
+  if(!to) return false;
   try{
     const user = auth.currentUser;
-    if(!user){ console.warn("Email no enviado: no hay sesion iniciada"); return; }
+    if(!user){ console.warn("Email no enviado: no hay sesion iniciada"); return false; }
     const token = await user.getIdToken();
     const resp = await fetch(MAIL_API_URL, {
       method: "POST",
@@ -38,9 +38,11 @@ async function enviarEmailPHP(to, subject, html){
       body: JSON.stringify({ to, subject, html }),
     });
     const data = await resp.json().catch(()=>({}));
-    if(!data.ok) console.warn("Email PHP no enviado:", data);
+    if(!data.ok){ console.warn("Email PHP no enviado:", data); return false; }
+    return true;
   }catch(e){
     console.warn("Email PHP error:", e);
+    return false;
   }
 }
 
@@ -2391,6 +2393,7 @@ const GRUPOS_EDAD = [
 
 
 function EstructuraInfantil({data, setData, alumnos}){
+  const [avisoG, setAvisoG] = useState(null);
   const [vista, setVista] = useState("categorias");
   const [modalGrupo, setModalGrupo] = useState(null);
   const [formGrupo, setFormGrupo] = useState({});
@@ -2543,6 +2546,7 @@ function EstructuraInfantil({data, setData, alumnos}){
               }
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:5,marginLeft:10,flexShrink:0}}>
+              {(g.alumnoIds||[]).length>0&&<Btn small color="secondary" onClick={()=>setAvisoG({tipo:"infantil",key:g.id,nombre:g.nombre,alumnoIds:g.alumnoIds||[]})}>📣 Avisar</Btn>}
               <Btn small color="secondary" onClick={()=>editarGrupo(g)}>Editar</Btn>
               <Btn small color="danger" onClick={()=>borrarGrupo(g.id)}>🗑</Btn>
             </div>
@@ -2550,6 +2554,8 @@ function EstructuraInfantil({data, setData, alumnos}){
         </div>;
       })}
     </div>}
+
+    {avisoG&&<AvisoGrupoModal data={data} setData={setData} grupo={avisoG} onClose={()=>setAvisoG(null)}/>}
 
     {/* ── MODAL EDITAR GRUPO ── */}
     {modalGrupo&&<Modal title={`✏️ ${formGrupo.nombre}`} onClose={()=>setModalGrupo(null)} wide>
@@ -5392,10 +5398,218 @@ function ImportarAjustesIngresos({ data, setData, catI }) {
 // ADMIN: PAGOS
 // ═══════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════
+// GRUPOS: avisos del profesor al grupo + tarjeta "Mi grupo" del alumno
+// - Un aviso llega por: mensaje en la app + email (al tutor si es menor) + WhatsApp (enlaces).
+// - Si dos hermanos están en el mismo grupo, la familia recibe UN solo email.
+// - Los alumnos NO ven nada de cobros.
+// ═══════════════════════════════════════════════════════════════════
+function grupoEdadDe(f){
+  if(!f) return null; const n=new Date(f); if(isNaN(n)) return null;
+  const h=new Date(); let e=h.getFullYear()-n.getFullYear();
+  const m=h.getMonth()-n.getMonth(); if(m<0||(m===0&&h.getDate()<n.getDate())) e--; return e;
+}
+function grupoEsMenor(a){ const e=grupoEdadDe(a.fechaNacimiento); return e!==null?e<18:a.tipoEscuela==="infantil"; }
+// A dónde va el aviso: al tutor si es menor, al propio alumno si es adulto
+function grupoDestino(a){
+  const menor=grupoEsMenor(a);
+  return {
+    email:((menor?(a.tutorEmail||a.email):(a.email||a.tutorEmail))||"").trim(),
+    tel:((menor?(a.tutorTelefono||a.telefono):(a.telefono||a.tutorTelefono))||"").trim(),
+  };
+}
+function gHorarioHabitual(ents){
+  const c={};
+  ents.forEach(e=>{const d=new Date(e.fecha+"T12:00:00").getDay();const k=d+" "+e.hora;c[k]=(c[k]||0)+1;});
+  const top=Object.entries(c).sort((a,b)=>b[1]-a[1])[0];
+  if(!top) return {texto:"",dia:-1,hora:""};
+  const [d,h]=top[0].split(" ");
+  const dias=["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  return {texto:dias[Number(d)]+" "+h,dia:(Number(d)+6)%7,hora:h};
+}
+function grupoEsc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function AvisoGrupoModal({data,setData,grupo,onClose}){
+  const alumnos=data.alumnos||[];
+  const miembros=(grupo.alumnoIds||[]).map(id=>alumnos.find(a=>a.id===id)).filter(Boolean);
+  const [asunto,setAsunto]=useState("");
+  const [cuerpo,setCuerpo]=useState("");
+  const [cApp,setCApp]=useState(true);
+  const [cMail,setCMail]=useState(true);
+  const [enviando,setEnviando]=useState(false);
+  const [res,setRes]=useState(null);
+
+  // Direcciones distintas (hermanos = una sola dirección)
+  const porMail={}; const sinMail=[];
+  miembros.forEach(a=>{
+    const d=grupoDestino(a);
+    if(!/^\S+@\S+\.\S+$/.test(d.email)){ sinMail.push(a.nombre); return; }
+    const k=d.email.toLowerCase();
+    (porMail[k]=porMail[k]||{email:d.email,nombres:[]}).nombres.push(a.nombre);
+  });
+  const porTel={};
+  miembros.forEach(a=>{
+    const d=grupoDestino(a); const l=waLink(d.tel,"x"); if(!l) return;
+    const k=d.tel.replace(/\D/g,"");
+    (porTel[k]=porTel[k]||{tel:d.tel,nombres:[]}).nombres.push(a.nombre);
+  });
+
+  async function enviar(){
+    if(!asunto.trim()||!cuerpo.trim()){ alert("Escribe el asunto y el mensaje."); return; }
+    if(!cApp&&!cMail){ alert("Marca al menos app o email (WhatsApp se abre aparte)."); }
+    if(!confirm("Se enviará el aviso a "+miembros.length+" alumno"+(miembros.length!==1?"s":"")+" del grupo «"+grupo.nombre+"»"+(cMail?" ("+Object.keys(porMail).length+" correos distintos)":"")+". ¿Enviar?")) return;
+    setEnviando(true);
+    const fecha=new Date().toISOString();
+    const asu=asunto.trim(), cue=cuerpo.trim();
+    let nApp=0;
+    let nuevosMsgs=[]; let registro=null;
+    if(cApp){
+      nuevosMsgs=miembros.map(a=>({id:uid(),de:"profesor",para:a.id,asunto:"["+grupo.nombre+"] "+asu,cuerpo:cue,tipo:"mensaje",adjunto:null,adjuntoNombre:null,fecha,leido:false,grupoKey:grupo.key}));
+      Promise.all(nuevosMsgs.map(m=>addDoc(collection(db,"mensajes"),{...m,timestamp:serverTimestamp()}))).catch(e=>console.warn("Firebase aviso grupo:",e));
+      registro={id:uid(),fecha,grupoTipo:grupo.tipo,grupoKey:grupo.key,grupoNombre:grupo.nombre,asunto:asu,cuerpo:cue,alumnoIds:miembros.map(a=>a.id)};
+      nApp=miembros.length;
+      setData({...data,mensajes:[...(data.mensajes||[]),...nuevosMsgs],avisosGrupo:[...(data.avisosGrupo||[]),registro]});
+    }
+    let ok=0, fallo=0;
+    if(cMail){
+      for(const k of Object.keys(porMail)){
+        const d=porMail[k];
+        const html='<div style="font-family:Arial,sans-serif;color:#222;max-width:520px">'
+          +'<h2 style="color:#1F3864;">'+grupoEsc(asu)+'</h2>'
+          +'<p style="color:#555;font-size:13px">Grupo <b>'+grupoEsc(grupo.nombre)+'</b> · '+grupoEsc(d.nombres.join(" y "))+'</p>'
+          +'<div style="font-size:15px;line-height:1.5">'+grupoEsc(cue).replace(/\n/g,"<br>")+'</div>'
+          +'<p style="color:#888;font-size:12px;margin-top:22px">Golf Ciudad Real C.D. - Escuela de Golf · También puedes verlo en tu zona privada: https://academia.golfb.es</p></div>';
+        const r=await enviarEmailPHP(d.email,"["+grupo.nombre+"] "+asu,html);
+        if(r) ok++; else fallo++;
+      }
+    }
+    const texto="["+grupo.nombre+"] "+asu+"\n\n"+cue+"\n\nGolf Ciudad Real - Escuela de Golf";
+    setRes({nApp,ok,fallo,sinMail,wa:Object.values(porTel).map(t=>({nombres:t.nombres.join(" y "),link:waLink(t.tel,texto)}))});
+    setEnviando(false);
+  }
+
+  return <Modal title={"📣 Avisar al grupo · "+grupo.nombre} onClose={onClose}>
+    {!res&&<div>
+      <div style={{fontSize:13,color:G.soft,marginBottom:12}}>
+        Para {miembros.length} alumno{miembros.length!==1?"s":""}: {miembros.map(a=>a.nombre).join(", ")||"—"}
+      </div>
+      <Field label="Asunto"><Input value={asunto} onChange={setAsunto} placeholder="Ej: Mañana se suspende la clase por lluvia"/></Field>
+      <Field label="Mensaje"><Textarea value={cuerpo} onChange={setCuerpo} rows={5}/></Field>
+      <div style={{display:"grid",gap:8,marginBottom:14,fontSize:13}}>
+        <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={cApp} onChange={e=>setCApp(e.target.checked)}/> 📱 En la app (mensaje y aviso en la tarjeta «Mi grupo»)</label>
+        <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={cMail} onChange={e=>setCMail(e.target.checked)}/> ✉️ Por email ({Object.keys(porMail).length} correos{miembros.some(grupoEsMenor)?", al tutor en los menores":""})</label>
+        <div style={{color:G.soft}}>💬 WhatsApp: al enviar te salen los enlaces para abrir cada chat ({Object.keys(porTel).length} teléfonos).</div>
+      </div>
+      {sinMail.length>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"8px 10px",fontSize:12,marginBottom:12}}>
+        ⚠️ Sin email válido (no recibirán el correo): {sinMail.join(", ")}
+      </div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <Btn color="secondary" onClick={onClose}>Cancelar</Btn>
+        <Btn onClick={enviar} disabled={enviando||!miembros.length}>{enviando?"Enviando…":"Enviar aviso"}</Btn>
+      </div>
+    </div>}
+    {res&&<div>
+      <div style={{fontSize:14,lineHeight:1.7,marginBottom:12}}>
+        {res.nApp>0&&<div>✅ En la app: {res.nApp} alumno{res.nApp!==1?"s":""}</div>}
+        {(res.ok>0||res.fallo>0)&&<div>{res.fallo?"⚠️":"✅"} Email: {res.ok} enviado{res.ok!==1?"s":""}{res.fallo?`, ${res.fallo} con error`:""}</div>}
+        {res.sinMail.length>0&&<div style={{color:G.soft,fontSize:12}}>Sin email: {res.sinMail.join(", ")}</div>}
+      </div>
+      {res.wa.length>0&&<div>
+        <div style={{fontSize:12,fontWeight:700,color:G.soft,marginBottom:6}}>💬 WhatsApp (pulsa cada uno y envía el mensaje)</div>
+        {res.wa.map((w,i)=><a key={i} href={w.link} target="_blank" rel="noopener noreferrer"
+          style={{display:"block",background:"#3FA05F",color:"#fff",borderRadius:8,padding:"8px 12px",fontSize:13,fontWeight:700,textDecoration:"none",marginBottom:6}}>
+          💬 {w.nombres}</a>)}
+      </div>}
+      <div style={{textAlign:"right",marginTop:10}}><Btn onClick={onClose}>Cerrar</Btn></div>
+    </div>}
+  </Modal>;
+}
+
+// Tarjeta "Mi grupo" de la zona privada del alumno (adulto o infantil)
+function TarjetaMiGrupo({data,alumnoId}){
+  const hoy=today();
+  const alumnos=data.alumnos||[];
+  const nom=id=>alumnos.find(a=>a.id===id)?.nombre||"";
+  const gk=t=>(t||"").trim().toLowerCase();
+  const omitidas=data.agendaOmitidas||[];
+  const miembrosAg=data.agendaGrupos||{};
+  const mapa={};
+  (data.agendaAdultos||[]).forEach(e=>{
+    if(e.tipo!=="curso"&&e.tipo!=="grupo") return;
+    const k=gk(e.titulo); if(!k) return;
+    (mapa[k]=mapa[k]||{key:k,nombre:e.titulo.trim(),ents:[]}).ents.push(e);
+  });
+  const agGrupos=Object.values(mapa).filter(g=>(miembrosAg[g.key]||[]).includes(alumnoId)).map(g=>({...g,hab:gHorarioHabitual(g.ents)}));
+  const usados=new Set();
+  const grupos=[];
+
+  // Grupos de la escuela infantil (semanales)
+  (data.gruposCurso||[]).forEach(g=>{
+    if(!(g.alumnoIds||[]).includes(alumnoId)||!g.dia||!g.horaIni) return;
+    const di=agendaDiaIdx(g.dia); if(di<0) return;
+    const hIni=agendaHora(Math.floor(agendaMin(g.horaIni)/30)*30);
+    // Si en la agenda es el mismo curso (mismo día y hora), se unen: Plan Profesional = Avanzado A
+    const iguales=agGrupos.filter(x=>x.hab.dia===di&&x.hab.hora===hIni);
+    iguales.forEach(x=>usados.add(x.key));
+    const claves=[g.id,...iguales.map(x=>x.key)];
+    const miembros=new Set(g.alumnoIds||[]); iguales.forEach(x=>(miembrosAg[x.key]||[]).forEach(id=>miembros.add(id)));
+    const prox={};
+    iguales.forEach(x=>x.ents.filter(e=>e.fecha>=hoy).forEach(e=>{prox[e.fecha]={fecha:e.fecha,hora:e.hora,n:e.nClase};}));
+    const d=new Date(hoy+"T12:00:00");
+    for(let i=0;i<70&&Object.keys(prox).length<6;i++,d.setDate(d.getDate()+1)){
+      const f=d.toISOString().slice(0,10);
+      if(((d.getDay()+6)%7)!==di||f<AGENDA_INFANTIL_DESDE||omitidas.includes("auto-"+g.id+"-"+f)) continue;
+      if(!prox[f]) prox[f]={fecha:f,hora:g.horaIni,n:""};
+    }
+    grupos.push({tipo:"infantil",claves,nombre:g.nombre,
+      horario:(/s$/.test(g.dia)?g.dia:g.dia+"s")+" · "+g.horaIni+(g.horaFin?" – "+g.horaFin:"")+" h",
+      proximas:Object.values(prox).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora)).slice(0,4),
+      miembros:[...miembros]});
+  });
+  // Cursos y grupos de adultos
+  agGrupos.filter(g=>!usados.has(g.key)).forEach(g=>{
+    grupos.push({tipo:"adultos",claves:[g.key],nombre:g.nombre,horario:g.hab.texto?g.hab.texto+" h":"",
+      proximas:g.ents.filter(e=>e.fecha>=hoy).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora)).slice(0,4).map(e=>({fecha:e.fecha,hora:e.hora,n:e.nClase})),
+      miembros:miembrosAg[g.key]||[]});
+  });
+  if(!grupos.length) return null;
+  const fechaCorta=f=>new Date(f+"T12:00:00").toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"});
+  return <Card style={{marginBottom:14,borderLeft:"4px solid "+G.sky}}>
+    <div style={{fontWeight:700,color:G.ink,marginBottom:8}}>👥 {grupos.length>1?"Mis grupos":"Mi grupo"}</div>
+    {grupos.map((g,i)=>{
+      const comp=g.miembros.filter(id=>id!==alumnoId).map(nom).filter(Boolean);
+      const avisos=(data.avisosGrupo||[]).filter(a=>(a.alumnoIds||[]).includes(alumnoId)||g.claves.includes(a.grupoKey)).filter(a=>g.claves.includes(a.grupoKey))
+        .sort((a,b)=>b.fecha.localeCompare(a.fecha)).slice(0,3);
+      return <div key={g.claves.join("|")} style={{padding:"8px 0",borderTop:i?"1px solid #EDF1F5":"none"}}>
+        <div style={{fontSize:17,fontWeight:800,color:G.fairway}}>{g.nombre}</div>
+        {g.horario&&<div style={{fontSize:14,color:G.ink,marginBottom:6}}>{g.horario}</div>}
+        {g.proximas.length>0&&<div style={{marginBottom:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:G.soft,marginBottom:3}}>Próximas clases</div>
+          {g.proximas.map(p=><div key={p.fecha+p.hora} style={{fontSize:13,color:G.ink}}>
+            📅 {fechaCorta(p.fecha)} · {p.hora}{p.n!==""&&p.n!=null?" · clase "+p.n:""}</div>)}
+        </div>}
+        {comp.length>0&&<div style={{marginBottom:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:G.soft,marginBottom:3}}>Compañeros ({comp.length})</div>
+          <div style={{fontSize:13,color:G.ink}}>{comp.join(" · ")}</div>
+        </div>}
+        {avisos.length>0&&<div>
+          <div style={{fontSize:12,fontWeight:700,color:G.soft,marginBottom:3}}>📣 Avisos del grupo</div>
+          {avisos.map(a=><div key={a.id} style={{background:"#fff",border:"1px solid #E3E9EE",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
+            <div style={{fontSize:11,color:G.soft}}>{new Date(a.fecha).toLocaleDateString("es-ES",{day:"numeric",month:"short"})}</div>
+            <div style={{fontWeight:700,fontSize:13,color:G.ink}}>{a.asunto}</div>
+            <div style={{fontSize:13,color:G.ink,whiteSpace:"pre-wrap"}}>{a.cuerpo}</div>
+          </div>)}
+        </div>}
+      </div>;
+    })}
+  </Card>;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ESTRUCTURA DE ADULTOS: cursos y grupos de adultos (salen de la Agenda)
 // Es el equivalente a "Estructura" de infantil, pero para los cursos HCP, plan profesional, etc.
 // ═══════════════════════════════════════════════════════════════════
 function EstructuraAdultos({data,setData}){
+  const [avisoG,setAvisoG]=useState(null);
   const lista=data.agendaAdultos||[];
   const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
   const miembrosAll=data.agendaGrupos||{};
@@ -5428,6 +5642,7 @@ function EstructuraAdultos({data,setData}){
     <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
       Cursos y grupos de adultos. Salen de tu Agenda (clases de tipo «Curso / Plan» o «Clase en grupo»). Los grupos de la escuela infantil están en <b>🧒 Infantil</b>.
     </p>
+    {avisoG&&<AvisoGrupoModal data={data} setData={setData} grupo={avisoG} onClose={()=>setAvisoG(null)}/>}
     {grupos.length===0&&<Card style={{textAlign:"center",padding:28,color:G.soft}}>
       Todavía no hay cursos de adultos. Aparecen al crear en la Agenda clases de tipo «Curso / Plan» o «Clase en grupo».
     </Card>}
@@ -5443,7 +5658,10 @@ function EstructuraAdultos({data,setData}){
               <div style={{fontSize:12,color:G.soft,marginTop:2}}>{horario(g.ents)} · {g.ents.length} clases ({hechas} dadas)</div>
               {prox&&<div style={{fontSize:12,color:G.soft}}>Próxima: {new Date(prox.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"})} · {prox.hora}</div>}
             </div>
-            <div style={{fontSize:13,fontWeight:700,color:G.fairway}}>{miembros.length} alumnos</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
+              <div style={{fontSize:13,fontWeight:700,color:G.fairway}}>{miembros.length} alumnos</div>
+              {miembros.length>0&&<Btn small color="secondary" onClick={()=>setAvisoG({tipo:"adultos",key:g.key,nombre:g.nombre,alumnoIds:miembros})}>📣 Avisar al grupo</Btn>}
+            </div>
           </div>
           <div style={{marginTop:10}}>
             {miembros.length===0&&<div style={{fontSize:13,color:G.soft,marginBottom:6}}>Sin alumnos todavía.</div>}
@@ -5493,11 +5711,36 @@ function ModGruposCobros({data,setData}){
 
   const mapa={};
   lista.forEach(e=>{
-    if(e.tipo!=="curso"&&e.tipo!=="grupo") return;
     const k=gk(e.titulo); if(!k) return;
+    // Entran los cursos y grupos, y también cualquier clase individual que tú marques para cobrar (p. ej. David Navas)
+    if(e.tipo!=="curso"&&e.tipo!=="grupo"&&!(cfg[k]&&cfg[k].incluir)) return;
     (mapa[k]=mapa[k]||{key:k,nombre:e.titulo.trim(),ents:[]}).ents.push(e);
   });
-  const grupos=Object.values(mapa).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es",{numeric:true}));
+  const omitidas=data.agendaOmitidas||[];
+  const fusionadas=new Set();
+  const gruposInf=(data.gruposCurso||[]).filter(g=>cfg["inf:"+g.id]&&cfg["inf:"+g.id].incluir&&g.dia&&g.horaIni).map(g=>{
+    const di=agendaDiaIdx(g.dia); const hIni=agendaHora(Math.floor(agendaMin(g.horaIni)/30)*30);
+    const iguales=Object.values(mapa).filter(x=>{const h=gHorarioHabitual(x.ents);return h.dia===di&&h.hora===hIni;});
+    iguales.forEach(x=>fusionadas.add(x.key));
+    const ents=iguales.flatMap(x=>x.ents);
+    const fechas=new Set(ents.map(e=>e.fecha));
+    const d=new Date(AGENDA_INFANTIL_DESDE+"T12:00:00"); const fin=new Date(hoy+"T12:00:00"); fin.setDate(fin.getDate()+56);
+    for(;d<=fin;d.setDate(d.getDate()+1)){
+      const f=d.toISOString().slice(0,10);
+      if(((d.getDay()+6)%7)!==di||fechas.has(f)||omitidas.includes("auto-"+g.id+"-"+f)) continue;
+      ents.push({id:"auto-"+g.id+"-"+f,fecha:f,hora:g.horaIni,tipo:"escuela",titulo:g.nombre,hecha:false});
+    }
+    return {key:"inf:"+g.id,nombre:g.nombre,ents,infId:g.id,fusion:iguales.map(x=>x.key)};
+  });
+  const grupos=[...Object.values(mapa).filter(x=>!fusionadas.has(x.key)),...gruposInf].sort((a,b)=>a.nombre.localeCompare(b.nombre,"es",{numeric:true}));
+  const opcionesInf=(data.gruposCurso||[]).filter(g=>g.dia&&g.horaIni&&!(cfg["inf:"+g.id]&&cfg["inf:"+g.id].incluir)).map(g=>["inf:"+g.id,"🧒 "+g.nombre+" (grupo infantil)"]);
+  // Nombres de la agenda que todavía no están en cobros (individuales, etc.)
+  const candidatos={};
+  lista.forEach(e=>{
+    const k=gk(e.titulo); if(!k||mapa[k]||e.tipo==="personal"||e.tipo==="escuela") return;
+    candidatos[k]=e.titulo.trim();
+  });
+  const opcionesAnadir=[...opcionesInf,...Object.entries(candidatos).sort((a,b)=>a[1].localeCompare(b[1],"es",{numeric:true}))];
 
   function horario(ents){
     const c={};
@@ -5509,12 +5752,25 @@ function ModGruposCobros({data,setData}){
   }
 
   function setCfg(key,patch){ setData({...data,cobrosGrupos:{...cfg,[key]:{...(cfg[key]||{}),...patch}}}); }
-  function setMiembros(key,ids){ setData({...data,agendaGrupos:{...miembrosAll,[key]:ids}}); }
+  const miembrosDe=g=>{
+    if(g.infId){
+      const gi=(data.gruposCurso||[]).find(x=>x.id===g.infId); const u=new Set(gi?(gi.alumnoIds||[]):[]);
+      g.fusion.forEach(k=>(miembrosAll[k]||[]).forEach(id=>u.add(id)));
+      return [...u];
+    }
+    return miembrosAll[g.key]||[];
+  };
+  function setMiembros(g,ids){
+    if(g.infId){
+      const ag={...miembrosAll}; g.fusion.forEach(k=>{ag[k]=ids;});
+      setData({...data,gruposCurso:(data.gruposCurso||[]).map(x=>x.id===g.infId?{...x,alumnoIds:ids}:x),agendaGrupos:ag});
+    } else setData({...data,agendaGrupos:{...miembrosAll,[g.key]:ids}});
+  }
 
   function generar(g){
     const c=cfg[g.key]||{}; const imp=Number(c.importe)||0;
     if(!imp){ alert("Primero pon el importe por alumno (IVA incluido) y pulsa fuera de la casilla."); return; }
-    const miembros=miembrosAll[g.key]||[];
+    const miembros=miembrosDe(g);
     if(!miembros.length){ alert("Este grupo todavía no tiene alumnos. Añádelos primero."); return; }
     const modo=c.modo||"unico";
     const nuevos=[];
@@ -5568,28 +5824,33 @@ function ModGruposCobros({data,setData}){
 
   return <div>
     <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
-      Los grupos salen de tu Agenda (clases de tipo «Curso / Plan» o «Clase en grupo»). Pon el importe de cada grupo, genera los cobros y márcalos como pagados: pasan solos a <b>Ingresos</b>.
+      Los cursos y grupos salen de tu Agenda, y puedes añadir alumnos individuales con plan (como David Navas). Pon el importe, genera los cobros y márcalos como pagados: pasan solos a <b>Ingresos</b>.
     </p>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:16}}>
       <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,fontWeight:800,color:"#E2685C"}}>{cobroEur(totalPend)}</div><div style={{fontSize:12,color:G.soft}}>Pendiente de cobrar</div></Card>
       <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,fontWeight:800,color:G.grass}}>{cobroEur(totalCob)}</div><div style={{fontSize:12,color:G.soft}}>Cobrado en grupos</div></Card>
     </div>
 
+    <div style={{marginBottom:14,maxWidth:420}}>
+      <Sel value="" onChange={v=>{if(v) setCfg(v,{incluir:true});}}
+        options={[{value:"",label:"+ Añadir a cobros un alumno o plan individual (ej. David Navas)…"},...opcionesAnadir.map(([k,n])=>({value:k,label:n}))]}/>
+    </div>
+
     {grupos.length===0&&<Card style={{textAlign:"center",padding:28,color:G.soft}}>
-      Todavía no hay grupos. Aparecen cuando tengas en la Agenda clases de tipo «Curso / Plan» (por ejemplo CURSO HCP A) o «Clase en grupo».
+      Todavía no hay grupos. Aparecen cuando tengas en la Agenda clases de tipo «Curso / Plan» (por ejemplo CURSO HCP A) o «Clase en grupo». También puedes añadir un alumno individual con el desplegable de arriba.
     </Card>}
 
     <div style={{display:"grid",gap:10}}>
       {grupos.map(g=>{
         const c=cfg[g.key]||{};
-        const miembros=miembrosAll[g.key]||[];
-        const cg=cobros.filter(x=>x.grupoKey===g.key);
+        const miembros=miembrosDe(g);
+        const cg=cobros.filter(x=>x.grupoKey===g.key||(g.fusion||[]).includes(x.grupoKey));
         const pend=cg.filter(x=>x.estado!=="pagado").reduce((s,x)=>s+Number(x.importe||0),0);
         const cob=cg.filter(x=>x.estado==="pagado").reduce((s,x)=>s+Number(x.importe||0),0);
         const hechas=g.ents.filter(e=>e.hecha||e.fecha<hoy).length;
         const abierta=abierto===g.key;
         const modo=c.modo||"unico";
-        const infantilesSinUsar=(data.gruposCurso||[]).filter(x=>(x.alumnoIds||[]).length&&!miembros.length);
+        const infantilesSinUsar=g.infId?[]:(data.gruposCurso||[]).filter(x=>(x.alumnoIds||[]).length&&!miembros.length);
         const otrosCobros=cg.filter(x=>!miembros.includes(x.alumnoId));
         return <Card key={g.key} style={{padding:0,overflow:"hidden"}}>
           <div onClick={()=>setAbierto(abierta?null:g.key)} style={{padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
@@ -5612,13 +5873,16 @@ function ModGruposCobros({data,setData}){
               </Field>
               <Field label="Forma de cobro">
                 <Sel value={modo} onChange={v=>setCfg(g.key,{modo:v})}
-                  options={[{value:"unico",label:"Pago único del curso"},{value:"mensual",label:"Cuota mensual"},{value:"clase",label:"Por clase dada"}]}/>
+                  options={[{value:"unico",label:"Pago único (curso, plan anual…)"},{value:"mensual",label:"Cuota mensual"},{value:"clase",label:"Por clase dada"}]}/>
               </Field>
               {modo!=="unico"&&<Field label="Mes">
                 <Input type="month" value={mesSel} onChange={setMesSel}/>
               </Field>}
             </div>
-            <div style={{marginBottom:12}}><Btn small onClick={()=>generar(g)}>🧾 Generar cobros{modo!=="unico"?" del mes":""}</Btn></div>
+            <div style={{marginBottom:12,display:"flex",gap:8,flexWrap:"wrap"}}>
+              <Btn small onClick={()=>generar(g)}>🧾 Generar cobros{modo!=="unico"?" del mes":""}</Btn>
+              {c.incluir&&(g.infId||!g.ents.some(e=>e.tipo==="curso"||e.tipo==="grupo"))&&<Btn small color="secondary" onClick={()=>{ if(confirm("¿Quitar «"+g.nombre+"» de la lista de cobros? Sus cobros ya creados no se borran.")) setCfg(g.key,{incluir:false}); }}>Quitar de cobros</Btn>}
+            </div>
 
             <div style={{fontSize:12,fontWeight:700,color:G.soft,marginBottom:6}}>Alumnos del grupo</div>
             {miembros.length===0&&<div style={{fontSize:13,color:G.soft,marginBottom:8}}>Sin alumnos todavía.</div>}
@@ -5628,7 +5892,7 @@ function ModGruposCobros({data,setData}){
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <b style={{fontSize:13}}>{nomAl(id)}</b>
                   <span style={{cursor:"pointer",color:G.soft,fontSize:12}} title="Quitar del grupo"
-                    onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"? Sus cobros no se borran.")) setMiembros(g.key,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
+                    onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"? Sus cobros no se borran.")) setMiembros(g,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
                 </div>
                 {suyos.length===0&&<div style={{fontSize:12,color:G.soft,marginTop:3}}>Sin cobros generados</div>}
                 {suyos.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginTop:5,fontSize:12,flexWrap:"wrap"}}>
@@ -5647,10 +5911,10 @@ function ModGruposCobros({data,setData}){
 
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
               <div style={{flex:"1 1 220px"}}>
-                <Sel value="" onChange={v=>{if(v) setMiembros(g.key,[...miembros,v]);}}
+                <Sel value="" onChange={v=>{if(v) setMiembros(g,[...miembros,v]);}}
                   options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>a.activo!==false&&!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
               </div>
-              {infantilesSinUsar.map(x=><Btn key={x.id} small color="secondary" onClick={()=>setMiembros(g.key,[...(x.alumnoIds||[])])}>
+              {infantilesSinUsar.map(x=><Btn key={x.id} small color="secondary" onClick={()=>setMiembros(g,[...(x.alumnoIds||[])])}>
                 Copiar alumnos de «{x.nombre}»</Btn>)}
             </div>
           </div>}
@@ -7576,22 +7840,8 @@ function PortalAlumno({data,setData,alumnoId,onLogout,tutorNombre=null}){
           <div style={{fontSize:12,color:G.soft,marginTop:4}}>{Number(bonoActivo.clases)-bonoActivo.usadas} clases restantes de {bonoActivo.clases}</div>
         </Card>}
 
-        {/* Grupo del curso (Escuela Infantil) */}
-        {(()=>{
-          const misGrupos=(data.gruposCurso||[]).filter(g=>(g.alumnoIds||[]).includes(alumnoId)&&g.dia&&g.horaIni);
-          if(misGrupos.length===0) return null;
-          return <Card style={{marginBottom:14,borderLeft:`4px solid ${G.sky}`}}>
-            <div style={{fontWeight:700,color:G.ink,marginBottom:6}}>👥 {misGrupos.length>1?"Grupos del curso":"Grupo del curso"}</div>
-            {misGrupos.map(g=>(
-              <div key={g.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"6px 0",borderTop:misGrupos[0]===g?"none":"1px solid #EDF1F5"}}>
-                <div style={{fontSize:16,fontWeight:800,color:G.fairway}}>{g.nombre}</div>
-                <div style={{fontSize:14,color:G.ink,textAlign:"right"}}>
-                  {/s$/.test(g.dia)?g.dia:g.dia+"s"} · {g.horaIni}{g.horaFin?` – ${g.horaFin}`:""} h
-                </div>
-              </div>
-            ))}
-          </Card>;
-        })()}
+        {/* Mi grupo (adultos e infantil): horario, próximas clases, compañeros y avisos */}
+        <TarjetaMiGrupo data={data} alumnoId={alumnoId}/>
 
         {/* Banner huecos disponibles */}
         {slotsDisponibles.length>0&&<div
