@@ -2798,8 +2798,9 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
     </div>
 
     {/* Vista de estructura de grupos */}
-    {vistaEstructura&&<EstructuraInfantil
-      data={data} setData={setData} alumnos={alumnos.filter(a=>a.activo)}/>}
+    {vistaEstructura&&tabTipo==="infantil"&&<EstructuraInfantil
+      data={data} setData={setData} alumnos={alumnosInfantil.filter(a=>a.activo)}/>}
+    {vistaEstructura&&tabTipo==="adultos"&&<EstructuraAdultos data={data} setData={setData}/>}
 
     {/* Info de la escuela seleccionada */}
     {!vistaEstructura&&<div style={{background:tabTipo==="infantil"?"#EDF1F5":"#F5F8FA",borderRadius:10,
@@ -5390,6 +5391,79 @@ function ImportarAjustesIngresos({ data, setData, catI }) {
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN: PAGOS
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// ESTRUCTURA DE ADULTOS: cursos y grupos de adultos (salen de la Agenda)
+// Es el equivalente a "Estructura" de infantil, pero para los cursos HCP, plan profesional, etc.
+// ═══════════════════════════════════════════════════════════════════
+function EstructuraAdultos({data,setData}){
+  const lista=data.agendaAdultos||[];
+  const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
+  const miembrosAll=data.agendaGrupos||{};
+  const hoy=today();
+  const gk=t=>(t||"").trim().toLowerCase();
+  const nomAl=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+  const mapa={};
+  lista.forEach(e=>{
+    if(e.tipo!=="curso"&&e.tipo!=="grupo") return;
+    const k=gk(e.titulo); if(!k) return;
+    (mapa[k]=mapa[k]||{key:k,nombre:e.titulo.trim(),ents:[]}).ents.push(e);
+  });
+  const grupos=Object.values(mapa).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es",{numeric:true}));
+  function horario(ents){
+    const c={};
+    ents.forEach(e=>{const d=new Date(e.fecha+"T12:00:00").getDay();const k=d+" "+e.hora;c[k]=(c[k]||0)+1;});
+    const top=Object.entries(c).sort((a,b)=>b[1]-a[1])[0];
+    if(!top) return "";
+    const [d,h]=top[0].split(" ");
+    return ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"][Number(d)]+" "+h;
+  }
+  function setMiembros(key,ids){ setData({...data,agendaGrupos:{...miembrosAll,[key]:ids}}); }
+  const edadDe=f=>{if(!f)return null;const n=new Date(f);if(isNaN(n))return null;const h=new Date();let e=h.getFullYear()-n.getFullYear();const m=h.getMonth()-n.getMonth();if(m<0||(m===0&&h.getDate()<n.getDate()))e--;return e;};
+  const sinGrupo=alumnos.filter(a=>{
+    const edad=edadDe(a.fechaNacimiento);
+    const adulto=edad!==null?edad>=18:a.tipoEscuela==="adultos";
+    return adulto&&!grupos.some(g=>(miembrosAll[g.key]||[]).includes(a.id));
+  });
+  return <div>
+    <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
+      Cursos y grupos de adultos. Salen de tu Agenda (clases de tipo «Curso / Plan» o «Clase en grupo»). Los grupos de la escuela infantil están en <b>🧒 Infantil</b>.
+    </p>
+    {grupos.length===0&&<Card style={{textAlign:"center",padding:28,color:G.soft}}>
+      Todavía no hay cursos de adultos. Aparecen al crear en la Agenda clases de tipo «Curso / Plan» o «Clase en grupo».
+    </Card>}
+    <div style={{display:"grid",gap:10}}>
+      {grupos.map(g=>{
+        const miembros=miembrosAll[g.key]||[];
+        const hechas=g.ents.filter(e=>e.hecha||e.fecha<hoy).length;
+        const prox=g.ents.filter(e=>e.fecha>=hoy).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.hora.localeCompare(b.hora))[0];
+        return <Card key={g.key} style={{borderLeft:"4px solid #B0651A"}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+            <div>
+              <div style={{fontWeight:800,color:G.ink,fontSize:15}}>🎓 {g.nombre}</div>
+              <div style={{fontSize:12,color:G.soft,marginTop:2}}>{horario(g.ents)} · {g.ents.length} clases ({hechas} dadas)</div>
+              {prox&&<div style={{fontSize:12,color:G.soft}}>Próxima: {new Date(prox.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"})} · {prox.hora}</div>}
+            </div>
+            <div style={{fontSize:13,fontWeight:700,color:G.fairway}}>{miembros.length} alumnos</div>
+          </div>
+          <div style={{marginTop:10}}>
+            {miembros.length===0&&<div style={{fontSize:13,color:G.soft,marginBottom:6}}>Sin alumnos todavía.</div>}
+            {miembros.map(id=><div key={id} style={{display:"flex",justifyContent:"space-between",background:"#fff",border:"1px solid #E3E9EE",borderRadius:8,padding:"6px 10px",marginBottom:5,fontSize:13}}>
+              <b>{nomAl(id)}</b>
+              <span style={{cursor:"pointer",color:G.soft,fontSize:12}}
+                onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"?")) setMiembros(g.key,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
+            </div>)}
+            <Sel value="" onChange={v=>{if(v) setMiembros(g.key,[...miembros,v]);}}
+              options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
+          </div>
+        </Card>;
+      })}
+    </div>
+    {sinGrupo.length>0&&<div style={{fontSize:12,color:G.soft,marginTop:14}}>
+      <b>Alumnos adultos sin curso/grupo ({sinGrupo.length}):</b> {sinGrupo.map(a=>a.nombre).join(" · ")}
+    </div>}
+  </div>;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // MÓDULO: GRUPOS Y COBROS (dentro de Pagos)
 // Los grupos salen de la Agenda (clases de tipo "Curso / Plan" o "Clase en grupo").
