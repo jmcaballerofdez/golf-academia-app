@@ -5610,6 +5610,7 @@ function TarjetaMiGrupo({data,alumnoId}){
 // ═══════════════════════════════════════════════════════════════════
 function EstructuraAdultos({data,setData}){
   const [avisoG,setAvisoG]=useState(null);
+  const [edit,setEdit]=useState(null); // {key,nombre,nuevo}
   const lista=data.agendaAdultos||[];
   const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
   const miembrosAll=data.agendaGrupos||{};
@@ -5631,6 +5632,25 @@ function EstructuraAdultos({data,setData}){
     const [d,h]=top[0].split(" ");
     return ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"][Number(d)]+" "+h;
   }
+  function renombrar(){
+    const nuevo=(edit.nuevo||"").trim(); if(!nuevo) return;
+    const nk=gk(nuevo); const ok=edit.key;
+    if(nk!==ok&&mapa[nk]&&!confirm("Ya existe un curso llamado «"+mapa[nk].nombre+"». ¿Unir los dos en uno?")) return;
+    const ag={...miembrosAll};
+    if(nk!==ok){ ag[nk]=[...new Set([...(ag[nk]||[]),...(ag[ok]||[])])]; delete ag[ok]; }
+    const cg={...(data.cobrosGrupos||{})};
+    if(nk!==ok&&cg[ok]){ if(!cg[nk]) cg[nk]=cg[ok]; delete cg[ok]; }
+    setData({...data,
+      agendaAdultos:lista.map(e=>gk(e.titulo)===ok?{...e,titulo:nuevo}:e),
+      agendaGrupos:ag, cobrosGrupos:cg,
+      cobros:(data.cobros||[]).map(c=>c.grupoKey===ok?{...c,grupoKey:nk}:c)});
+    setEdit(null);
+  }
+  function eliminarCurso(g){
+    if(!confirm("¿Eliminar el curso «"+g.nombre+"» y sus "+g.ents.length+" clases de la agenda? Los alumnos y los cobros ya hechos no se borran.")) return;
+    const ag={...miembrosAll}; delete ag[g.key];
+    setData({...data,agendaAdultos:lista.filter(e=>gk(e.titulo)!==g.key),agendaGrupos:ag});
+  }
   function setMiembros(key,ids){ setData({...data,agendaGrupos:{...miembrosAll,[key]:ids}}); }
   const edadDe=f=>{if(!f)return null;const n=new Date(f);if(isNaN(n))return null;const h=new Date();let e=h.getFullYear()-n.getFullYear();const m=h.getMonth()-n.getMonth();if(m<0||(m===0&&h.getDate()<n.getDate()))e--;return e;};
   const sinGrupo=alumnos.filter(a=>{
@@ -5642,6 +5662,16 @@ function EstructuraAdultos({data,setData}){
     <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
       Cursos y grupos de adultos. Salen de tu Agenda (clases de tipo «Curso / Plan» o «Clase en grupo»). Los grupos de la escuela infantil están en <b>🧒 Infantil</b>.
     </p>
+    {edit&&<Modal title="Editar curso" onClose={()=>setEdit(null)}>
+      <Field label="Nombre del curso">
+        <Input value={edit.nuevo} onChange={v=>setEdit(e=>({...e,nuevo:v}))}/>
+      </Field>
+      <p style={{fontSize:12,color:G.soft,margin:"0 0 12px"}}>Cambia el nombre en todas sus clases de la agenda. Para cambiar días, horas o fechas de las clases, edítalas en la pestaña 📅 Agenda.</p>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10}}>
+        <Btn color="secondary" onClick={()=>setEdit(null)}>Cancelar</Btn>
+        <Btn onClick={renombrar} disabled={!(edit.nuevo||"").trim()}>Guardar</Btn>
+      </div>
+    </Modal>}
     {avisoG&&<AvisoGrupoModal data={data} setData={setData} grupo={avisoG} onClose={()=>setAvisoG(null)}/>}
     {grupos.length===0&&<Card style={{textAlign:"center",padding:28,color:G.soft}}>
       Todavía no hay cursos de adultos. Aparecen al crear en la Agenda clases de tipo «Curso / Plan» o «Clase en grupo».
@@ -5660,6 +5690,10 @@ function EstructuraAdultos({data,setData}){
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
               <div style={{fontSize:13,fontWeight:700,color:G.fairway}}>{miembros.length} alumnos</div>
+              <div style={{display:"flex",gap:6}}>
+                <Btn small color="secondary" onClick={()=>setEdit({key:g.key,nombre:g.nombre,nuevo:g.nombre})}>✏️ Editar</Btn>
+                <Btn small color="danger" onClick={()=>eliminarCurso(g)}>🗑 Eliminar</Btn>
+              </div>
               {miembros.length>0&&<Btn small color="secondary" onClick={()=>setAvisoG({tipo:"adultos",key:g.key,nombre:g.nombre,alumnoIds:miembros})}>📣 Avisar al grupo</Btn>}
             </div>
           </div>
