@@ -5632,6 +5632,19 @@ function EstructuraAdultos({data,setData}){
     const [d,h]=top[0].split(" ");
     return ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"][Number(d)]+" "+h;
   }
+  // Reorganización única de los cursos HCP según el horario real (B→C, C→E, D→B)
+  const HCP_MAP={"curso hcp b":"CURSO HCP C","curso hcp c":"CURSO HCP E","curso hcp d":"CURSO HCP B"};
+  const hayHcp=lista.some(e=>HCP_MAP[gk(e.titulo)]);
+  function reorganizarHcp(){
+    if(!confirm("Se renombrarán las clases de la agenda así:\n\n• jueves 17:00: CURSO HCP B → CURSO HCP C\n• domingos 9:00: CURSO HCP C → CURSO HCP E\n• miércoles 17:00: CURSO HCP D → CURSO HCP B\n\nLos alumnos, números de clase y cobros van con su curso. CURSO HCP A no cambia y CURSO HCP D (viernes 16:00) queda sin clases. ¿Continuar?")) return;
+    const mk=k=>HCP_MAP[k]?gk(HCP_MAP[k]):k;
+    const ag={}; Object.keys(miembrosAll).forEach(k=>{ const nk=mk(k); ag[nk]=[...new Set([...(ag[nk]||[]),...miembrosAll[k]])]; });
+    const cg={}; Object.entries(data.cobrosGrupos||{}).forEach(([k,v])=>{ cg[mk(k)]=v; });
+    setData({...data,hcpReorganizado:true,
+      agendaAdultos:lista.map(e=>HCP_MAP[gk(e.titulo)]?{...e,titulo:HCP_MAP[gk(e.titulo)]}:e),
+      agendaGrupos:ag,cobrosGrupos:cg,
+      cobros:(data.cobros||[]).map(c=>HCP_MAP[c.grupoKey]?{...c,grupoKey:gk(HCP_MAP[c.grupoKey])}:c)});
+  }
   function renombrar(){
     const nuevo=(edit.nuevo||"").trim(); if(!nuevo) return;
     const nk=gk(nuevo); const ok=edit.key;
@@ -5662,6 +5675,10 @@ function EstructuraAdultos({data,setData}){
     <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
       Cursos y grupos de adultos. Salen de tu Agenda (clases de tipo «Curso / Plan» o «Clase en grupo»). Los grupos de la escuela infantil están en <b>🧒 Infantil</b>.
     </p>
+    {hayHcp&&!data.hcpReorganizado&&<Card style={{marginBottom:12,border:"1.5px solid #B0651A"}}>
+      <div style={{fontSize:13,marginBottom:8}}>Los cursos HCP de la agenda vienen del Excel con nombres desplazados. Pulsa para ajustarlos a tu horario real: A martes 16:30 · B miércoles 17:00 · C jueves 17:00 · D viernes 16:00 · E domingo 9:00.</div>
+      <Btn small onClick={reorganizarHcp}>🔄 Reorganizar cursos HCP (A–E)</Btn>
+    </Card>}
     {edit&&<Modal title="Editar curso" onClose={()=>setEdit(null)}>
       <Field label="Nombre del curso">
         <Input value={edit.nuevo} onChange={v=>setEdit(e=>({...e,nuevo:v}))}/>
