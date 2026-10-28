@@ -5830,7 +5830,7 @@ function ModGruposCobros({data,setData}){
       if(modo==="mensual"){ periodo=mesSel; concepto=g.nombre+" · "+cobroMes(mesSel); }
       if(modo==="clase"){
         periodo=mesSel;
-        const n=g.ents.filter(e=>e.fecha.slice(0,7)===mesSel&&(e.hecha||e.fecha<=hoy)&&!cobros.some(x=>x.claseId===e.id&&x.alumnoId===id)).length;
+        const n=g.ents.filter(e=>e.fecha.slice(0,7)===mesSel&&!e.cancelada&&(e.hecha||e.fecha<=hoy)&&!cobros.some(x=>x.claseId===e.id&&x.alumnoId===id)).length;
         if(!n) return;
         importe=+(imp*n).toFixed(2); concepto=g.nombre+" · "+n+" clases de "+cobroMes(mesSel);
       }
@@ -16292,6 +16292,8 @@ function ModAgenda({data,setData}){
   const [form,setForm]=useState({});
   const [info,setInfo]=useState(null); // clase automática de infantil
   const [alcance,setAlcance]=useState("una"); // al editar: "una" | "siguientes"
+  const [verCanc,setVerCanc]=useState(false); // histórico de clases canceladas
+  const [filtroCanc,setFiltroCanc]=useState("");
   const omitidas=data.agendaOmitidas||[];
 
   const diasSemana=[0,1,2,3,4,5,6].map(i=>agendaSumaDias(lunes,i));
@@ -16345,7 +16347,8 @@ function ModAgenda({data,setData}){
       fecha:form.fecha,hora:form.hora,dur:Number(form.dur)||2,tipo:form.tipo,
       titulo:(form.titulo||"").trim(),alumnoIds:(form.titulo||"").trim()?[]:(form.alumnoIds||[]),
       nClase:form.nClase===""||form.nClase==null?"":Number(form.nClase),
-      hecha:!!form.hecha,nota:(form.nota||"").trim()
+      hecha:!!form.hecha&&!form.cancelada,nota:(form.nota||"").trim(),
+      cancelada:!!form.cancelada,motivoCancel:form.cancelada?(form.motivoCancel||"Otro"):"",notaCancel:form.cancelada?(form.notaCancel||"").trim():""
     };
     // Con nombre de clase, los alumnos se guardan una sola vez para todo el grupo
     const nuevosGrupos={...grupos};
@@ -16384,8 +16387,8 @@ function ModAgenda({data,setData}){
     setData({...data,agendaOmitidas:[...omitidas,a.id]});
     setInfo(null);
   }
-  function editarAuto(a){
-    const nueva={id:uid(),fecha:a.fecha,hora:a.hora,dur:a.dur,tipo:"escuela",titulo:a.titulo,alumnoIds:a.alumnoIds||[],nClase:"",hecha:!!a.hecha,nota:""};
+  function editarAuto(a,cancelar=false){
+    const nueva={id:uid(),fecha:a.fecha,hora:a.hora,dur:a.dur,tipo:"escuela",titulo:a.titulo,alumnoIds:a.alumnoIds||[],nClase:"",hecha:!!a.hecha&&!cancelar,nota:"",cancelada:cancelar,motivoCancel:cancelar?"Otro":"",notaCancel:""};
     setData({...data,agendaAdultos:[...lista,nueva],agendaOmitidas:[...omitidas,a.id]});
     setInfo(null);
     abrirEditar(nueva);
@@ -16411,8 +16414,10 @@ function ModAgenda({data,setData}){
   const diaSem=f=>new Date(f+"T12:00:00").getDay();
   const siguientes=orig?lista.filter(x=>x.id!==orig.id&&gKey(x.titulo)===gKey(orig.titulo)&&x.tipo===orig.tipo&&x.hora===orig.hora&&diaSem(x.fecha)===diaSem(orig.fecha)&&x.fecha>orig.fecha):[];
 
-  const horasSemana=deSemana.filter(e=>e.tipo!=="personal").reduce((s,e)=>s+(e.dur||2)*0.5,0);
-  const nClases=deSemana.filter(e=>e.tipo!=="personal").length;
+  const horasSemana=deSemana.filter(e=>e.tipo!=="personal"&&!e.cancelada).reduce((s,e)=>s+(e.dur||2)*0.5,0);
+  const nClases=deSemana.filter(e=>e.tipo!=="personal"&&!e.cancelada).length;
+  const canceladas=lista.filter(e=>e.cancelada).sort((a,b)=>b.fecha.localeCompare(a.fecha)||b.hora.localeCompare(a.hora));
+  const MOTIVOS_CANC=["Lluvia / mal tiempo","Alumno enfermo","Alumno no asiste","Profesor (yo)","Festivo","Campo cerrado / evento","Otro"];
   const fmt=iso=>{const d=new Date(iso+"T12:00:00");return d.getDate()+" "+AGENDA_MESES[d.getMonth()];};
   const sugeridos=[...new Set(lista.map(e=>e.titulo).filter(Boolean))].sort();
 
@@ -16474,9 +16479,9 @@ function ModAgenda({data,setData}){
               const h=Math.max(1,e.dur||2)*AGENDA_H-2;
               return <div key={e.id} onClick={ev=>{ev.stopPropagation();e.auto?setInfo(e):abrirEditar(e);}}
                 style={{position:"absolute",top:i*AGENDA_H+1,left:"calc("+(cr.lane*100/cr.n)+"% + 2px)",width:"calc("+(100/cr.n)+"% - 4px)",height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
-                  background:t.bg,borderLeft:"4px solid "+t.color,outline:e.auto?"1px dashed "+t.color:"none",borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
-                  color:G.ink,opacity:e.hecha?0.6:1,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
-                <div style={{fontWeight:700,color:t.color}}>{e.hecha?"✓ ":""}{tituloDe(e)}</div>
+                  background:e.cancelada?"#FBE4E1":t.bg,borderLeft:"4px solid "+(e.cancelada?"#E2685C":t.color),outline:e.auto?"1px dashed "+t.color:"none",borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
+                  color:G.ink,opacity:e.cancelada?0.5:(e.hecha?0.6:1),textDecoration:e.cancelada?"line-through":"none",boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
+                <div style={{fontWeight:700,color:e.cancelada?"#C0392B":t.color}}>{e.cancelada?"❌ ":(e.hecha?"✓ ":"")}{tituloDe(e)}</div>
                 <div style={{color:G.soft,fontSize:10}}>{e.hora}{e.nClase!==""&&e.nClase!=null?" · Nº "+e.nClase:""}{alumnosDe(e).length>1?" · 👥"+alumnosDe(e).length:""}</div>
               </div>;
             });})()}
@@ -16484,6 +16489,17 @@ function ModAgenda({data,setData}){
         })}
       </div>
     </div>
+    <div style={{marginTop:8}}><Btn small color="secondary" onClick={()=>setVerCanc(true)}>❌ Histórico de clases canceladas ({canceladas.length})</Btn></div>
+    {verCanc&&<Modal title="❌ Clases canceladas" onClose={()=>setVerCanc(false)}>
+      <Sel value={filtroCanc} onChange={setFiltroCanc} options={[{value:"",label:"Todos los motivos"},...MOTIVOS_CANC.map(m=>({value:m,label:m+" ("+canceladas.filter(c=>(c.motivoCancel||"Otro")===m).length+")"}))]}/>
+      <div style={{marginTop:10,maxHeight:"55vh",overflowY:"auto"}}>
+        {canceladas.filter(c=>!filtroCanc||(c.motivoCancel||"Otro")===filtroCanc).length===0&&<div style={{fontSize:13,color:G.soft}}>No hay clases canceladas.</div>}
+        {canceladas.filter(c=>!filtroCanc||(c.motivoCancel||"Otro")===filtroCanc).map(c=><div key={c.id} onClick={()=>{setVerCanc(false);abrirEditar(c);}} style={{cursor:"pointer",borderBottom:"1px solid #E3E9EE",padding:"7px 0",fontSize:13}}>
+          <b>{new Date(c.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short",year:"numeric"})} · {c.hora}</b> — {tituloDe(c)}
+          <div style={{fontSize:12,color:"#C0392B"}}>{c.motivoCancel||"Otro"}{c.notaCancel?" · "+c.notaCancel:""}</div>
+        </div>)}
+      </div>
+    </Modal>}
     <div style={{fontSize:11,color:G.soft,marginTop:8}}>Pulsa en una hora vacía para añadir una clase, o en una clase para editarla, marcarla como hecha o borrarla.</div>
 
     {info&&<Modal title={"🧒 "+info.titulo} onClose={()=>setInfo(null)}>
@@ -16495,7 +16511,10 @@ function ModAgenda({data,setData}){
         Esta clase sale sola cada semana del grupo infantil. Para cambiar el horario o los alumnos de <b>todas</b> las semanas, entra en <b>🧒 Infantil → Alumnos</b>. Aquí puedes tocar solo esta semana.
       </div>
       <div style={{display:"flex",gap:8,justifyContent:"space-between",flexWrap:"wrap"}}>
-        <Btn color="danger" onClick={()=>quitarAuto(info)}>🗑 Quitar esta semana</Btn>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <Btn color="danger" onClick={()=>quitarAuto(info)}>🗑 Quitar esta semana</Btn>
+          <Btn color="secondary" onClick={()=>editarAuto(info,true)}>❌ Cancelar esta clase</Btn>
+        </div>
         <div style={{display:"flex",gap:8}}>
           <Btn color="secondary" onClick={()=>setInfo(null)}>Cerrar</Btn>
           <Btn onClick={()=>editarAuto(info)}>✏️ Editar solo esta</Btn>
@@ -16545,7 +16564,19 @@ function ModAgenda({data,setData}){
       {solapes.length>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"8px 10px",fontSize:12,marginBottom:12}}>
         ⚠️ A esa hora ya tienes: {solapes.map(tituloDe).join(" · ")}
       </div>}
-      {modal!=="new"&&orig&&(orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo,fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:gKey(orig.titulo)}}/>}
+      {modal!=="new"&&orig&&!orig.cancelada&&(orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo,fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:gKey(orig.titulo)}}/>}
+      {form.tipo!=="personal"&&<div style={{border:"1.5px solid "+(form.cancelada?"#E2685C":"#D9E3EA"),borderRadius:10,padding:"8px 12px",margin:"4px 0 12px",background:form.cancelada?"#FBE4E1":"transparent"}}>
+        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          <input type="checkbox" checked={!!form.cancelada} onChange={e=>setForm(f=>({...f,cancelada:e.target.checked,hecha:e.target.checked?false:f.hecha,motivoCancel:f.motivoCancel||"Otro"}))}/> ❌ Clase cancelada
+        </label>
+        {form.cancelada&&<div style={{marginTop:8}}>
+          <Field label="Motivo">
+            <Sel value={form.motivoCancel||"Otro"} onChange={v=>setForm(f=>({...f,motivoCancel:v}))} options={MOTIVOS_CANC.map(m=>({value:m,label:m}))}/>
+          </Field>
+          <Field label="Detalle (opcional)"><Input value={form.notaCancel||""} onChange={v=>setForm(f=>({...f,notaCancel:v}))} placeholder="Ej: avisó por WhatsApp, se recupera el sábado…"/></Field>
+          <div style={{fontSize:11,color:G.soft}}>Queda guardada en el histórico, no cuenta como clase dada ni se cobra.</div>
+        </div>}
+      </div>}
       <Field label="Nota (opcional)"><Textarea value={form.nota||""} onChange={v=>setForm(f=>({...f,nota:v}))} rows={2}/></Field>
       <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,marginBottom:14,cursor:"pointer"}}>
         <input type="checkbox" checked={!!form.hecha} onChange={e=>setForm(f=>({...f,hecha:e.target.checked}))}/> ✓ Clase ya realizada
