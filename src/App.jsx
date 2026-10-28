@@ -5390,6 +5390,220 @@ function ImportarAjustesIngresos({ data, setData, catI }) {
 // ═══════════════════════════════════════════════════════════════════
 // ADMIN: PAGOS
 // ═══════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// MÓDULO: GRUPOS Y COBROS (dentro de Pagos)
+// Los grupos salen de la Agenda (clases de tipo "Curso / Plan" o "Clase en grupo").
+// Cada grupo tiene alumnos (data.agendaGrupos), un importe y una forma de cobro (data.cobrosGrupos)
+// y sus cobros (data.cobros). Al marcar un cobro como pagado se crea el ingreso en la contabilidad
+// (IVA incluido en el importe). Los grupos infantiles normales los cobra el club, no aparecen aquí.
+// ═══════════════════════════════════════════════════════════════════
+const COBRO_IVA = 21;
+const COBRO_DIAS = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+function cobroMes(p){ try{ return new Date(p+"-01T12:00:00").toLocaleDateString("es-ES",{month:"long",year:"numeric"}); }catch(e){ return p; } }
+function cobroEur(n){ return Number(n||0).toFixed(2).replace(".",",")+" €"; }
+
+function ModGruposCobros({data,setData}){
+  const lista=data.agendaAdultos||[];
+  const alumnos=data.alumnos||[];
+  const cobros=data.cobros||[];
+  const cfg=data.cobrosGrupos||{};
+  const miembrosAll=data.agendaGrupos||{};
+  const ingresos=data.ingresos||[];
+  const hoy=today();
+  const [abierto,setAbierto]=useState(null);
+  const [mesSel,setMesSel]=useState(hoy.slice(0,7));
+  const [modalPago,setModalPago]=useState(null);
+  const [fp,setFp]=useState({});
+  const gk=t=>(t||"").trim().toLowerCase();
+  const nomAl=id=>alumnos.find(a=>a.id===id)?.nombre||"—";
+
+  const mapa={};
+  lista.forEach(e=>{
+    if(e.tipo!=="curso"&&e.tipo!=="grupo") return;
+    const k=gk(e.titulo); if(!k) return;
+    (mapa[k]=mapa[k]||{key:k,nombre:e.titulo.trim(),ents:[]}).ents.push(e);
+  });
+  const grupos=Object.values(mapa).sort((a,b)=>a.nombre.localeCompare(b.nombre,"es",{numeric:true}));
+
+  function horario(ents){
+    const c={};
+    ents.forEach(e=>{const d=new Date(e.fecha+"T12:00:00").getDay();const k=d+" "+e.hora;c[k]=(c[k]||0)+1;});
+    const top=Object.entries(c).sort((a,b)=>b[1]-a[1])[0];
+    if(!top) return "";
+    const [d,h]=top[0].split(" ");
+    return COBRO_DIAS[Number(d)]+" "+h;
+  }
+
+  function setCfg(key,patch){ setData({...data,cobrosGrupos:{...cfg,[key]:{...(cfg[key]||{}),...patch}}}); }
+  function setMiembros(key,ids){ setData({...data,agendaGrupos:{...miembrosAll,[key]:ids}}); }
+
+  function generar(g){
+    const c=cfg[g.key]||{}; const imp=Number(c.importe)||0;
+    if(!imp){ alert("Primero pon el importe por alumno (IVA incluido) y pulsa fuera de la casilla."); return; }
+    const miembros=miembrosAll[g.key]||[];
+    if(!miembros.length){ alert("Este grupo todavía no tiene alumnos. Añádelos primero."); return; }
+    const modo=c.modo||"unico";
+    const nuevos=[];
+    miembros.forEach(id=>{
+      let periodo="", importe=imp, concepto=g.nombre;
+      if(modo==="mensual"){ periodo=mesSel; concepto=g.nombre+" · "+cobroMes(mesSel); }
+      if(modo==="clase"){
+        periodo=mesSel;
+        const n=g.ents.filter(e=>e.fecha.slice(0,7)===mesSel&&(e.hecha||e.fecha<=hoy)).length;
+        if(!n) return;
+        importe=+(imp*n).toFixed(2); concepto=g.nombre+" · "+n+" clases de "+cobroMes(mesSel);
+      }
+      if(cobros.some(x=>x.grupoKey===g.key&&x.alumnoId===id&&(x.periodo||"")===periodo)) return;
+      nuevos.push({id:uid(),grupoKey:g.key,alumnoId:id,concepto,periodo,importe,estado:"pendiente",fechaEmision:hoy});
+    });
+    if(!nuevos.length){ alert(modo==="clase"?"No hay clases dadas en ese mes, o ya estaban generados los cobros.":"No hay nada nuevo que generar: todos ya tienen su cobro."); return; }
+    setData({...data,cobros:[...cobros,...nuevos]});
+  }
+
+  function abrirPago(c){ setFp({fecha:hoy,metodo:"Efectivo",importe:String(c.importe)}); setModalPago(c); }
+  function registrarPago(){
+    const c=modalPago; const imp=Number(String(fp.importe).replace(",","."))||0;
+    if(!c||!imp||!fp.fecha) return;
+    const base=+(imp/(1+COBRO_IVA/100)).toFixed(2);
+    const ivaImp=+(imp-base).toFixed(2);
+    const ingreso={id:uid(),fecha:fp.fecha,categoria:"Cursos y grupos",
+      concepto:c.concepto+" — "+nomAl(c.alumnoId),alumnoId:c.alumnoId,
+      importeBase:base,ivaPct:COBRO_IVA,ivaImporte:ivaImp,retencionPct:0,retencionImporte:0,importeTotal:imp,
+      metodo:fp.metodo,cobroId:c.id};
+    const cats=data.categoriasIngreso||[];
+    const tieneCat=cats.some(x=>(x.nombre||x)==="Cursos y grupos");
+    setData({...data,
+      ingresos:[...ingresos,ingreso],
+      cobros:cobros.map(x=>x.id===c.id?{...x,estado:"pagado",fechaPago:fp.fecha,metodo:fp.metodo,importe:imp,ingresoId:ingreso.id}:x),
+      categoriasIngreso:tieneCat?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]});
+    setModalPago(null);
+  }
+  function deshacerPago(c){
+    if(!confirm("¿Deshacer este pago? Se quitará también el ingreso de la contabilidad.")) return;
+    setData({...data,
+      ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),
+      cobros:cobros.map(x=>{ if(x.id!==c.id) return x; const {fechaPago,ingresoId,metodo,...resto}=x; return {...resto,estado:"pendiente"}; })});
+  }
+  function eliminarCobro(c){
+    if(!confirm("¿Eliminar este cobro"+(c.estado==="pagado"?" y su ingreso en la contabilidad":"")+"?")) return;
+    setData({...data,ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),cobros:cobros.filter(x=>x.id!==c.id)});
+  }
+
+  const totalPend=cobros.filter(c=>c.estado!=="pagado").reduce((s,c)=>s+Number(c.importe||0),0);
+  const totalCob=cobros.filter(c=>c.estado==="pagado").reduce((s,c)=>s+Number(c.importe||0),0);
+
+  return <div>
+    <p style={{fontSize:13,color:G.soft,margin:"0 0 14px"}}>
+      Los grupos salen de tu Agenda (clases de tipo «Curso / Plan» o «Clase en grupo»). Pon el importe de cada grupo, genera los cobros y márcalos como pagados: pasan solos a <b>Ingresos</b>.
+    </p>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:16}}>
+      <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,fontWeight:800,color:"#E2685C"}}>{cobroEur(totalPend)}</div><div style={{fontSize:12,color:G.soft}}>Pendiente de cobrar</div></Card>
+      <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,fontWeight:800,color:G.grass}}>{cobroEur(totalCob)}</div><div style={{fontSize:12,color:G.soft}}>Cobrado en grupos</div></Card>
+    </div>
+
+    {grupos.length===0&&<Card style={{textAlign:"center",padding:28,color:G.soft}}>
+      Todavía no hay grupos. Aparecen cuando tengas en la Agenda clases de tipo «Curso / Plan» (por ejemplo CURSO HCP A) o «Clase en grupo».
+    </Card>}
+
+    <div style={{display:"grid",gap:10}}>
+      {grupos.map(g=>{
+        const c=cfg[g.key]||{};
+        const miembros=miembrosAll[g.key]||[];
+        const cg=cobros.filter(x=>x.grupoKey===g.key);
+        const pend=cg.filter(x=>x.estado!=="pagado").reduce((s,x)=>s+Number(x.importe||0),0);
+        const cob=cg.filter(x=>x.estado==="pagado").reduce((s,x)=>s+Number(x.importe||0),0);
+        const hechas=g.ents.filter(e=>e.hecha||e.fecha<hoy).length;
+        const abierta=abierto===g.key;
+        const modo=c.modo||"unico";
+        const infantilesSinUsar=(data.gruposCurso||[]).filter(x=>(x.alumnoIds||[]).length&&!miembros.length);
+        const otrosCobros=cg.filter(x=>!miembros.includes(x.alumnoId));
+        return <Card key={g.key} style={{padding:0,overflow:"hidden"}}>
+          <div onClick={()=>setAbierto(abierta?null:g.key)} style={{padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+            <div>
+              <div style={{fontWeight:800,color:G.ink,fontSize:15}}>{abierta?"▾":"▸"} {g.nombre}</div>
+              <div style={{fontSize:12,color:G.soft,marginTop:2}}>{horario(g.ents)} · {g.ents.length} clases ({hechas} dadas) · {miembros.length} alumnos</div>
+            </div>
+            <div style={{fontSize:12,textAlign:"right"}}>
+              {pend>0&&<div style={{color:"#E2685C",fontWeight:700}}>Pendiente {cobroEur(pend)}</div>}
+              {cob>0&&<div style={{color:G.grass,fontWeight:700}}>Cobrado {cobroEur(cob)}</div>}
+              {!pend&&!cob&&<div style={{color:G.soft}}>Sin cobros todavía</div>}
+            </div>
+          </div>
+          {abierta&&<div style={{padding:"4px 16px 16px",borderTop:"1px solid #E3E9EE"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:10,margin:"12px 0"}}>
+              <Field label="Importe por alumno (IVA incluido)">
+                <input key={g.key+"-"+(c.importe||"")} defaultValue={c.importe||""} inputMode="decimal" placeholder="Ej: 150"
+                  onBlur={e=>setCfg(g.key,{importe:e.target.value.replace(",",".")})}
+                  style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box"}}/>
+              </Field>
+              <Field label="Forma de cobro">
+                <Sel value={modo} onChange={v=>setCfg(g.key,{modo:v})}
+                  options={[{value:"unico",label:"Pago único del curso"},{value:"mensual",label:"Cuota mensual"},{value:"clase",label:"Por clase dada"}]}/>
+              </Field>
+              {modo!=="unico"&&<Field label="Mes">
+                <Input type="month" value={mesSel} onChange={setMesSel}/>
+              </Field>}
+            </div>
+            <div style={{marginBottom:12}}><Btn small onClick={()=>generar(g)}>🧾 Generar cobros{modo!=="unico"?" del mes":""}</Btn></div>
+
+            <div style={{fontSize:12,fontWeight:700,color:G.soft,marginBottom:6}}>Alumnos del grupo</div>
+            {miembros.length===0&&<div style={{fontSize:13,color:G.soft,marginBottom:8}}>Sin alumnos todavía.</div>}
+            {miembros.map(id=>{
+              const suyos=cg.filter(x=>x.alumnoId===id).sort((a,b)=>(a.periodo||"").localeCompare(b.periodo||""));
+              return <div key={id} style={{background:"#fff",border:"1px solid #E3E9EE",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <b style={{fontSize:13}}>{nomAl(id)}</b>
+                  <span style={{cursor:"pointer",color:G.soft,fontSize:12}} title="Quitar del grupo"
+                    onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"? Sus cobros no se borran.")) setMiembros(g.key,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
+                </div>
+                {suyos.length===0&&<div style={{fontSize:12,color:G.soft,marginTop:3}}>Sin cobros generados</div>}
+                {suyos.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginTop:5,fontSize:12,flexWrap:"wrap"}}>
+                  <span>{x.estado==="pagado"?"✅":"🕓"} {x.concepto} · <b>{cobroEur(x.importe)}</b>{x.estado==="pagado"?" · "+x.metodo+" "+x.fechaPago:""}</span>
+                  <span style={{display:"flex",gap:6}}>
+                    {x.estado!=="pagado"&&<Btn small onClick={()=>abrirPago(x)}>Cobrar</Btn>}
+                    {x.estado==="pagado"&&<Btn small color="secondary" onClick={()=>deshacerPago(x)}>Deshacer</Btn>}
+                    <Btn small color="secondary" onClick={()=>eliminarCobro(x)}>🗑</Btn>
+                  </span>
+                </div>)}
+              </div>;
+            })}
+            {otrosCobros.length>0&&<div style={{fontSize:12,color:G.soft,margin:"6px 0"}}>
+              Cobros de alumnos que ya no están en el grupo: {otrosCobros.map(x=>nomAl(x.alumnoId)+" ("+cobroEur(x.importe)+(x.estado==="pagado"?" pagado":" pendiente")+")").join(" · ")}
+            </div>}
+
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+              <div style={{flex:"1 1 220px"}}>
+                <Sel value="" onChange={v=>{if(v) setMiembros(g.key,[...miembros,v]);}}
+                  options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>a.activo!==false&&!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
+              </div>
+              {infantilesSinUsar.map(x=><Btn key={x.id} small color="secondary" onClick={()=>setMiembros(g.key,[...(x.alumnoIds||[])])}>
+                Copiar alumnos de «{x.nombre}»</Btn>)}
+            </div>
+          </div>}
+        </Card>;
+      })}
+    </div>
+
+    {modalPago&&<Modal title="Registrar cobro" onClose={()=>setModalPago(null)}>
+      <div style={{fontSize:14,marginBottom:12}}><b>{nomAl(modalPago.alumnoId)}</b><br/><span style={{color:G.soft,fontSize:13}}>{modalPago.concepto}</span></div>
+      <Field label="Importe cobrado (IVA incluido)">
+        <Input value={fp.importe||""} onChange={v=>setFp(f=>({...f,importe:v}))}/>
+      </Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Field label="Fecha del pago"><Input type="date" value={fp.fecha||""} onChange={v=>setFp(f=>({...f,fecha:v}))}/></Field>
+        <Field label="Método"><Sel value={fp.metodo} onChange={v=>setFp(f=>({...f,metodo:v}))}
+          options={["Efectivo","Tarjeta","Transferencia","Bizum"].map(v=>({value:v,label:v}))}/></Field>
+      </div>
+      {(()=>{const imp=Number(String(fp.importe).replace(",","."))||0;const base=imp/(1+COBRO_IVA/100);
+        return <div style={{fontSize:12,color:G.soft,marginBottom:14}}>En la contabilidad: base {cobroEur(base)} + IVA {COBRO_IVA}% {cobroEur(imp-base)} = {cobroEur(imp)}</div>;})()}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <Btn color="secondary" onClick={()=>setModalPago(null)}>Cancelar</Btn>
+        <Btn onClick={registrarPago}>✅ Marcar como pagado</Btn>
+      </div>
+    </Modal>}
+  </div>;
+}
+
 function ModPagos({data,setData}){
   // ── Estados ──────────────────────────────────────────────────────
   const [tab,setTab]         = useState("resumen");
@@ -5650,6 +5864,7 @@ function ModPagos({data,setData}){
   // ── Colores tabs ─────────────────────────────────────────────────
   const TABS=[
     {id:"resumen",label:"📊 Resumen"},
+    {id:"grupos",label:"👥 Grupos y cobros"},
     {id:"ingresos",label:"💶 Ingresos"},
     {id:"gastos",label:"🧾 Gastos"},
     {id:"iva",label:"🏛️ IVA / Retención"},
@@ -5700,6 +5915,8 @@ function ModPagos({data,setData}){
     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:18,overflowX:"auto"}}>
       {TABS.map(t=><button key={t.id} style={estiloTabBtn(t.id)} onClick={()=>setTab(t.id)}>{t.label}</button>)}
     </div>
+
+    {tab==="grupos"&&<ModGruposCobros data={data} setData={setData}/>}
 
     {/* ══ RESUMEN ════════════════════════════════════════════════════ */}
     {tab==="resumen"&&<div>
@@ -15639,7 +15856,9 @@ function ModAgenda({data,setData}){
   const [todoDia,setTodoDia]=useState(false);
   const [modal,setModal]=useState(null); // null | "new" | id
   const [form,setForm]=useState({});
-  const [info,setInfo]=useState(null); // clase automática de infantil (solo lectura)
+  const [info,setInfo]=useState(null); // clase automática de infantil
+  const [alcance,setAlcance]=useState("una"); // al editar: "una" | "siguientes"
+  const omitidas=data.agendaOmitidas||[];
 
   const diasSemana=[0,1,2,3,4,5,6].map(i=>agendaSumaDias(lunes,i));
   const domingo=diasSemana[6];
@@ -15651,8 +15870,10 @@ function ModAgenda({data,setData}){
     const ini=Math.floor(agendaMin(g.horaIni)/30)*30;
     const fin=g.horaFin?agendaMin(g.horaFin):ini+60;
     const hora=agendaHora(ini);
-    if(lista.some(e=>e.fecha===f&&e.tipo==="escuela"&&e.hora===hora)) return;
-    autos.push({id:"auto-"+g.id+"-"+f,fecha:f,hora,dur:Math.max(1,Math.ceil((fin-ini)/30)),tipo:"escuela",titulo:g.nombre||"Grupo infantil",
+    if(lista.some(e=>e.fecha===f&&e.tipo!=="personal"&&e.hora===hora)) return;
+    const idAuto="auto-"+g.id+"-"+f;
+    if((data.agendaOmitidas||[]).includes(idAuto)) return;
+    autos.push({id:idAuto,fecha:f,hora,dur:Math.max(1,Math.ceil((fin-ini)/30)),tipo:"escuela",titulo:g.nombre||"Grupo infantil",
       alumnoIds:g.alumnoIds||[],nClase:"",hecha:f<today(),auto:true,horario:g.horaIni+(g.horaFin?"–"+g.horaFin:"")});
   });
   const deSemana=[...lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo),...autos];
@@ -15676,6 +15897,7 @@ function ModAgenda({data,setData}){
   }
   function abrirEditar(e){
     setForm({...e,alumnoIds:alumnosDe(e),nClase:e.nClase??"",nota:e.nota||"",repetir:0});
+    setAlcance("una");
     setModal(e.id);
   }
   function siguienteN(titulo,excluirId){
@@ -15703,15 +15925,36 @@ function ModAgenda({data,setData}){
       }
       setData({...data,agendaAdultos:[...lista,...nuevos],agendaGrupos:nuevosGrupos});
     } else {
-      setData({...data,agendaAdultos:lista.map(e=>e.id===modal?{...base,id:modal}:e),agendaGrupos:nuevosGrupos});
+      const o=lista.find(x=>x.id===modal);
+      const delta=o?Math.round((new Date(base.fecha+"T12:00:00")-new Date(o.fecha+"T12:00:00"))/86400000):0;
+      const idsSig=new Set(alcance==="siguientes"?siguientes.map(x=>x.id):[]);
+      setData({...data,agendaAdultos:lista.map(e=>{
+        if(e.id===modal) return {...base,id:modal};
+        if(idsSig.has(e.id)) return {...e,hora:base.hora,dur:base.dur,tipo:base.tipo,titulo:base.titulo,nota:base.nota,alumnoIds:base.alumnoIds,fecha:agendaSumaDias(e.fecha,delta)};
+        return e;
+      }),agendaGrupos:nuevosGrupos});
     }
     setModal(null);
   }
-  function borrar(){
+  function borrar(soloEsta=true){
     if(modal==="new") return;
-    if(!confirm("¿Eliminar esta clase de la agenda?")) return;
-    setData({...data,agendaAdultos:lista.filter(e=>e.id!==modal)});
+    const n=soloEsta?1:1+siguientes.length;
+    if(!confirm(n===1?"¿Eliminar esta clase de la agenda?":"¿Eliminar esta clase y las "+siguientes.length+" siguientes de la serie?")) return;
+    const quitar=new Set([modal,...(soloEsta?[]:siguientes.map(x=>x.id))]);
+    setData({...data,agendaAdultos:lista.filter(e=>!quitar.has(e.id))});
     setModal(null);
+  }
+  // Clase automática de infantil: quitar esa semana, o convertirla en una clase editable
+  function quitarAuto(a){
+    if(!confirm("¿Quitar esta clase ("+a.titulo+", "+a.fecha+") de la agenda? Las demás semanas no cambian.")) return;
+    setData({...data,agendaOmitidas:[...omitidas,a.id]});
+    setInfo(null);
+  }
+  function editarAuto(a){
+    const nueva={id:uid(),fecha:a.fecha,hora:a.hora,dur:a.dur,tipo:"escuela",titulo:a.titulo,alumnoIds:a.alumnoIds||[],nClase:"",hecha:!!a.hecha,nota:""};
+    setData({...data,agendaAdultos:[...lista,nueva],agendaOmitidas:[...omitidas,a.id]});
+    setInfo(null);
+    abrirEditar(nueva);
   }
   function importar(){
     if(!confirm("Se van a cargar en la agenda las "+AGENDA_IMPORT.length+" entradas de tu organigrama (octubre-diciembre 2026). ¿Continuar?")) return;
@@ -15728,6 +15971,11 @@ function ModAgenda({data,setData}){
     const ini=agendaMin(form.hora), fin=ini+30*(Number(form.dur)||2);
     return lista.filter(e=>e.id!==modal&&e.fecha===form.fecha&&agendaMin(e.hora)<fin&&agendaMin(e.hora)+30*(e.dur||2)>ini);
   })();
+
+  // Serie = misma clase repetida: mismo nombre, tipo, día de la semana y hora
+  const orig=(modal&&modal!=="new")?lista.find(x=>x.id===modal):null;
+  const diaSem=f=>new Date(f+"T12:00:00").getDay();
+  const siguientes=orig?lista.filter(x=>x.id!==orig.id&&gKey(x.titulo)===gKey(orig.titulo)&&x.tipo===orig.tipo&&x.hora===orig.hora&&diaSem(x.fecha)===diaSem(orig.fecha)&&x.fecha>orig.fecha):[];
 
   const horasSemana=deSemana.filter(e=>e.tipo!=="personal").reduce((s,e)=>s+(e.dur||2)*0.5,0);
   const nClases=deSemana.filter(e=>e.tipo!=="personal").length;
@@ -15809,9 +16057,15 @@ function ModAgenda({data,setData}){
       <div style={{fontSize:13,color:G.soft,marginBottom:6}}>Alumnos del grupo ({info.alumnoIds.length}):</div>
       <div style={{fontSize:13,marginBottom:14}}>{nombresDe(info).join(" · ")||"Sin alumnos asignados"}</div>
       <div style={{background:"#E6EBF0",borderRadius:8,padding:"8px 10px",fontSize:12,color:G.soft,marginBottom:14}}>
-        Esta clase sale sola cada semana del grupo infantil. Para cambiar el horario o los alumnos, entra en <b>🧒 Infantil → Alumnos</b>.
+        Esta clase sale sola cada semana del grupo infantil. Para cambiar el horario o los alumnos de <b>todas</b> las semanas, entra en <b>🧒 Infantil → Alumnos</b>. Aquí puedes tocar solo esta semana.
       </div>
-      <div style={{textAlign:"right"}}><Btn color="secondary" onClick={()=>setInfo(null)}>Cerrar</Btn></div>
+      <div style={{display:"flex",gap:8,justifyContent:"space-between",flexWrap:"wrap"}}>
+        <Btn color="danger" onClick={()=>quitarAuto(info)}>🗑 Quitar esta semana</Btn>
+        <div style={{display:"flex",gap:8}}>
+          <Btn color="secondary" onClick={()=>setInfo(null)}>Cerrar</Btn>
+          <Btn onClick={()=>editarAuto(info)}>✏️ Editar solo esta</Btn>
+        </div>
+      </div>
     </Modal>}
 
     {modal&&<Modal title={modal==="new"?"Nueva clase":"Editar clase"} onClose={()=>setModal(null)}>
@@ -15849,6 +16103,10 @@ function ModAgenda({data,setData}){
           <Input type="number" value={form.nClase===""||form.nClase==null?"":String(form.nClase)} onChange={v=>setForm(f=>({...f,nClase:v}))} placeholder="1, 2, 3…"/>
         </Field>
       </div>
+      {modal!=="new"&&siguientes.length>0&&<Field label={"Aplicar los cambios a"}>
+        <Sel value={alcance} onChange={setAlcance}
+          options={[{value:"una",label:"Solo esta clase"},{value:"siguientes",label:"Esta y las "+siguientes.length+" siguientes de la serie"}]}/>
+      </Field>}
       {solapes.length>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"8px 10px",fontSize:12,marginBottom:12}}>
         ⚠️ A esa hora ya tienes: {solapes.map(tituloDe).join(" · ")}
       </div>}
@@ -15861,7 +16119,10 @@ function ModAgenda({data,setData}){
           options={[0,1,2,3,4,5,6,7,8,9,10,12,15,20].map(n=>({value:String(n),label:n===0?"No repetir":n+" semanas más (el Nº de clase sube solo)"}))}/>
       </Field>}
       <div style={{display:"flex",gap:8,justifyContent:"space-between",marginTop:6}}>
-        <div>{modal!=="new"&&<Btn color="danger" onClick={borrar}>Eliminar</Btn>}</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {modal!=="new"&&<Btn color="danger" onClick={()=>borrar(true)}>Eliminar</Btn>}
+          {modal!=="new"&&siguientes.length>0&&<Btn color="danger" onClick={()=>borrar(false)}>Eliminar esta y siguientes ({siguientes.length})</Btn>}
+        </div>
         <div style={{display:"flex",gap:8}}>
           <Btn color="secondary" onClick={()=>setModal(null)}>Cancelar</Btn>
           <Btn onClick={guardar}>Guardar</Btn>
