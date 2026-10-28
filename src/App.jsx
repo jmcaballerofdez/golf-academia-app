@@ -5813,7 +5813,7 @@ function ModGruposCobros({data,setData}){
       if(modo==="mensual"){ periodo=mesSel; concepto=g.nombre+" · "+cobroMes(mesSel); }
       if(modo==="clase"){
         periodo=mesSel;
-        const n=g.ents.filter(e=>e.fecha.slice(0,7)===mesSel&&(e.hecha||e.fecha<=hoy)).length;
+        const n=g.ents.filter(e=>e.fecha.slice(0,7)===mesSel&&(e.hecha||e.fecha<=hoy)&&!cobros.some(x=>x.claseId===e.id&&x.alumnoId===id)).length;
         if(!n) return;
         importe=+(imp*n).toFixed(2); concepto=g.nombre+" · "+n+" clases de "+cobroMes(mesSel);
       }
@@ -16207,6 +16207,65 @@ function agendaDiaIdx(d){
   return ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"].findIndex(x=>s.startsWith(x));
 }
 
+// ── Cobro por alumno dentro de una clase de la agenda ──────────────
+function CobroClase({data,setData,clase}){
+  // clase: {id,titulo,fecha,alumnoIds,grupoKey}
+  const cobros=data.cobros||[]; const ingresos=data.ingresos||[]; const hoy=today();
+  const cfg=(data.cobrosGrupos||{})[clase.grupoKey]||{};
+  const [imp,setImp]=useState({}); const [met,setMet]=useState({});
+  const nomAl=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+  const de=id=>cobros.find(c=>c.claseId===clase.id&&c.alumnoId===id);
+  const impDe=id=>imp[id]!==undefined?imp[id]:(de(id)?String(de(id).importe):(cfg.importe||""));
+  const num=v=>Number(String(v).replace(",","."))||0;
+  function pagar(id,soloPendiente){
+    const importe=num(impDe(id)); if(!importe){ alert("Pon el importe de la clase (IVA incluido)."); return; }
+    const ex=de(id); const cid=ex?ex.id:uid();
+    let nuevosIng=ingresos, reg;
+    if(soloPendiente){
+      reg={id:cid,grupoKey:clase.grupoKey,alumnoId:id,concepto:clase.titulo+" · clase del "+clase.fecha,periodo:clase.fecha,claseId:clase.id,importe,estado:"pendiente",fechaEmision:hoy};
+    } else {
+      const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
+      const ing={id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:clase.titulo+" · clase del "+clase.fecha+" — "+nomAl(id),alumnoId:id,
+        importeBase:base,ivaPct:COBRO_IVA,ivaImporte:iva,retencionPct:0,retencionImporte:0,importeTotal:importe,metodo:met[id]||"Efectivo",cobroId:cid};
+      nuevosIng=[...ingresos,ing];
+      reg={...(ex||{id:cid,grupoKey:clase.grupoKey,alumnoId:id,concepto:clase.titulo+" · clase del "+clase.fecha,periodo:clase.fecha,claseId:clase.id,fechaEmision:hoy}),importe,estado:"pagado",fechaPago:hoy,metodo:met[id]||"Efectivo",ingresoId:ing.id};
+    }
+    const cats=data.categoriasIngreso||[];
+    const tieneCat=cats.some(x=>(x.nombre||x)==="Cursos y grupos");
+    setData({...data,ingresos:nuevosIng,cobros:ex?cobros.map(c=>c.id===cid?reg:c):[...cobros,reg],
+      categoriasIngreso:tieneCat?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]});
+  }
+  function deshacer(id){
+    const c=de(id); if(!c||!confirm("¿Deshacer el cobro de "+nomAl(id)+"? Se quitará también de la contabilidad.")) return;
+    setData({...data,ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),cobros:cobros.filter(x=>x.id!==c.id)});
+  }
+  const ids=clase.alumnoIds||[];
+  return <div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
+    <div style={{fontWeight:800,fontSize:13,color:G.ink,marginBottom:6}}>💶 Cobro de esta clase (por alumno, IVA incluido)</div>
+    {ids.length===0&&<div style={{fontSize:12,color:G.soft}}>Esta clase no tiene alumnos asignados.</div>}
+    {ids.map(id=>{
+      const c=de(id); const pagado=c&&c.estado==="pagado";
+      return <div key={id} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",padding:"5px 0",borderTop:"1px solid #E3E9EE",fontSize:13}}>
+        <b style={{flex:"1 1 110px"}}>{nomAl(id)}</b>
+        {pagado?<>
+          <span style={{color:G.grass,fontWeight:700}}>✓ Pagado {cobroEur(c.importe)} · {c.metodo}</span>
+          <span style={{cursor:"pointer",color:G.soft,fontSize:12}} onClick={()=>deshacer(id)}>↺ deshacer</span>
+        </>:<>
+          <input value={impDe(id)} inputMode="decimal" onChange={e=>setImp(m=>({...m,[id]:e.target.value}))}
+            style={{width:64,border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px 6px",fontSize:13}}/>€
+          <select value={met[id]||"Efectivo"} onChange={e=>setMet(m=>({...m,[id]:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>
+            {["Efectivo","Bizum","Transferencia","Tarjeta"].map(x=><option key={x}>{x}</option>)}
+          </select>
+          <Btn small onClick={()=>pagar(id,false)}>Cobrado</Btn>
+          {!c&&<Btn small color="secondary" onClick={()=>pagar(id,true)}>⏳ Pendiente</Btn>}
+          {c&&<span style={{color:"#E2685C",fontSize:12,fontWeight:700}}>⏳ pendiente</span>}
+        </>}
+      </div>;
+    })}
+    <div style={{fontSize:11,color:G.soft,marginTop:6}}>Al pulsar «Cobrado» se anota en Pagos → Ingresos (categoría «Cursos y grupos»). El importe por defecto sale de Pagos → Grupos y cobros.</div>
+  </div>;
+}
+
 function ModAgenda({data,setData}){
   const lista=data.agendaAdultos||[];
   const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
@@ -16414,6 +16473,7 @@ function ModAgenda({data,setData}){
       <div style={{fontSize:14,marginBottom:10}}><b>{new Date(info.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"})}</b> · {info.horario}</div>
       <div style={{fontSize:13,color:G.soft,marginBottom:6}}>Alumnos del grupo ({info.alumnoIds.length}):</div>
       <div style={{fontSize:13,marginBottom:14}}>{nombresDe(info).join(" · ")||"Sin alumnos asignados"}</div>
+      {(data.cobrosGrupos||{})["inf:"+String(info.id).replace(/^auto-/,"").replace(/-\d{4}-\d{2}-\d{2}$/,"")]?.incluir&&<CobroClase data={data} setData={setData} clase={{id:info.id,titulo:info.titulo,fecha:info.fecha,alumnoIds:info.alumnoIds||[],grupoKey:"inf:"+String(info.id).replace(/^auto-/,"").replace(/-\d{4}-\d{2}-\d{2}$/,"")}}/>}
       <div style={{background:"#E6EBF0",borderRadius:8,padding:"8px 10px",fontSize:12,color:G.soft,marginBottom:14}}>
         Esta clase sale sola cada semana del grupo infantil. Para cambiar el horario o los alumnos de <b>todas</b> las semanas, entra en <b>🧒 Infantil → Alumnos</b>. Aquí puedes tocar solo esta semana.
       </div>
@@ -16468,6 +16528,7 @@ function ModAgenda({data,setData}){
       {solapes.length>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"8px 10px",fontSize:12,marginBottom:12}}>
         ⚠️ A esa hora ya tienes: {solapes.map(tituloDe).join(" · ")}
       </div>}
+      {modal!=="new"&&orig&&(orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo,fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:gKey(orig.titulo)}}/>}
       <Field label="Nota (opcional)"><Textarea value={form.nota||""} onChange={v=>setForm(f=>({...f,nota:v}))} rows={2}/></Field>
       <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,marginBottom:14,cursor:"pointer"}}>
         <input type="checkbox" checked={!!form.hecha} onChange={e=>setForm(f=>({...f,hecha:e.target.checked}))}/> ✓ Clase ya realizada
