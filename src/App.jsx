@@ -5849,7 +5849,15 @@ function ModGruposCobros({data,setData}){
     return COBRO_DIAS[Number(d)]+" "+h;
   }
 
-  function setCfg(key,patch){ setData({...data,cobrosGrupos:{...cfg,[key]:{...(cfg[key]||{}),...patch}}}); }
+  // Precios por defecto: cursos HCP 164,95 € efectivo / 174,95 € Bizum o transferencia (pago único)
+  const defCfg=key=>({...(key.indexOf("curso hcp")===0?{importe:"164.95",importeAlt:"174.95",modo:"unico"}:{}),...(cfg[key]||{})});
+  const importeSegunMetodo=(cobro,metodo)=>{
+    const k=defCfg(cobro.grupoKey||""); const alt=Number(k.importeAlt)||0;
+    if(!cobro.claseId&&(k.modo||"unico")==="unico"&&alt&&(metodo==="Bizum"||metodo==="Transferencia")) return alt;
+    return Number(k.importe)||Number(cobro.importe)||0;
+  };
+  const diasA=f=>Math.round((new Date(f+"T12:00:00")-new Date(hoy+"T12:00:00"))/86400000);
+  function setCfg(key,patch){ setData({...data,cobrosGrupos:{...cfg,[key]:{...defCfg(key),...patch}}}); }
   const miembrosDe=g=>{
     if(g.infId){
       const gi=(data.gruposCurso||[]).find(x=>x.id===g.infId); const u=new Set(gi?(gi.alumnoIds||[]):[]);
@@ -5866,7 +5874,8 @@ function ModGruposCobros({data,setData}){
   }
 
   function generar(g){
-    const c=cfg[g.key]||{}; const imp=Number(c.importe)||0;
+    const c=defCfg(g.key); const imp=Number(c.importe)||0;
+    const primera=g.ents.filter(e=>!e.cancelada).map(e=>e.fecha).sort()[0]||"";
     if(!imp){ alert("Primero pon el importe por alumno (IVA incluido) y pulsa fuera de la casilla."); return; }
     const miembros=miembrosDe(g);
     if(!miembros.length){ alert("Este grupo todavía no tiene alumnos. Añádelos primero."); return; }
@@ -5882,13 +5891,13 @@ function ModGruposCobros({data,setData}){
         importe=+(imp*n).toFixed(2); concepto=g.nombre+" · "+n+" clases de "+cobroMes(mesSel);
       }
       if(cobros.some(x=>x.grupoKey===g.key&&x.alumnoId===id&&(x.periodo||"")===periodo)) return;
-      nuevos.push({id:uid(),grupoKey:g.key,alumnoId:id,concepto,periodo,importe,estado:"pendiente",fechaEmision:hoy});
+      nuevos.push({id:uid(),grupoKey:g.key,alumnoId:id,concepto,periodo,importe,estado:"pendiente",fechaEmision:hoy,vence:modo==="unico"?primera:""});
     });
     if(!nuevos.length){ alert(modo==="clase"?"No hay clases dadas en ese mes, o ya estaban generados los cobros.":"No hay nada nuevo que generar: todos ya tienen su cobro."); return; }
     setData({...data,cobros:[...cobros,...nuevos]});
   }
 
-  function abrirPago(c){ setFp({fecha:hoy,metodo:"Efectivo",importe:String(c.importe)}); setModalPago(c); }
+  function abrirPago(c){ setFp({fecha:hoy,metodo:"Efectivo",importe:String(importeSegunMetodo(c,"Efectivo"))}); setModalPago(c); }
   function registrarPago(){
     const c=modalPago; const imp=Number(String(fp.importe).replace(",","."))||0;
     if(!c||!imp||!fp.fecha) return;
@@ -5929,6 +5938,18 @@ function ModGruposCobros({data,setData}){
       <Card style={{textAlign:"center",padding:14}}><div style={{fontSize:22,fontWeight:800,color:G.grass}}>{cobroEur(totalCob)}</div><div style={{fontSize:12,color:G.soft}}>Cobrado en grupos</div></Card>
     </div>
 
+    {(()=>{
+      const pend=cobros.filter(x=>x.estado!=="pagado").sort((a,b)=>(a.vence||"9999").localeCompare(b.vence||"9999")||nomAl(a.alumnoId).localeCompare(nomAl(b.alumnoId)));
+      if(!pend.length) return null;
+      const venc=pend.filter(x=>x.vence&&x.vence<=hoy).length;
+      return <Card style={{marginBottom:14,border:"1.5px solid "+(venc?"#E2685C":"#F0985A")}}>
+        <div style={{fontWeight:800,fontSize:14,color:venc?"#C0392B":"#b7560a",marginBottom:6}}>⏰ Pagos pendientes: {pend.length}{venc>0&&" · "+venc+" vencidos"}</div>
+        {pend.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"5px 0",borderTop:"1px solid #E3E9EE",fontSize:13,flexWrap:"wrap"}}>
+          <span><b>{nomAl(x.alumnoId)}</b> · {x.concepto} · {cobroEur(x.importe)}{x.vence&&<span style={{color:x.vence<=hoy?"#E2685C":G.soft,fontWeight:x.vence<=hoy?700:400}}> · {x.vence<hoy?"vencido hace "+(-diasA(x.vence))+" d":x.vence===hoy?"vence HOY":"vence en "+diasA(x.vence)+" d"}</span>}</span>
+          <Btn small onClick={()=>abrirPago(x)}>Cobrar</Btn>
+        </div>)}
+      </Card>;
+    })()}
     <div style={{marginBottom:14,maxWidth:420}}>
       <Sel value="" onChange={v=>{if(v) setCfg(v,{incluir:true});}}
         options={[{value:"",label:"+ Añadir a cobros un alumno o plan individual (ej. David Navas)…"},...opcionesAnadir.map(([k,n])=>({value:k,label:n}))]}/>
@@ -5940,7 +5961,7 @@ function ModGruposCobros({data,setData}){
 
     <div style={{display:"grid",gap:10}}>
       {grupos.map(g=>{
-        const c=cfg[g.key]||{};
+        const c=defCfg(g.key);
         const miembros=miembrosDe(g);
         const cg=cobros.filter(x=>x.grupoKey===g.key||(g.fusion||[]).includes(x.grupoKey));
         const pend=cg.filter(x=>x.estado!=="pagado").reduce((s,x)=>s+Number(x.importe||0),0);
@@ -5969,6 +5990,11 @@ function ModGruposCobros({data,setData}){
                   onBlur={e=>setCfg(g.key,{importe:e.target.value.replace(",",".")})}
                   style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box"}}/>
               </Field>
+              {modo==="unico"&&<Field label="Importe si paga por Bizum / transferencia (opcional)">
+                <input key={g.key+"-alt-"+(c.importeAlt||"")} defaultValue={c.importeAlt||""} inputMode="decimal" placeholder="Ej: 174.95"
+                  onBlur={e=>setCfg(g.key,{importeAlt:e.target.value.replace(",",".")})}
+                  style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box"}}/>
+              </Field>}
               <Field label="Forma de cobro">
                 <Sel value={modo} onChange={v=>setCfg(g.key,{modo:v})}
                   options={[{value:"unico",label:"Pago único (curso, plan anual…)"},{value:"mensual",label:"Cuota mensual"},{value:"clase",label:"Por clase dada"}]}/>
@@ -5994,7 +6020,7 @@ function ModGruposCobros({data,setData}){
                 </div>
                 {suyos.length===0&&<div style={{fontSize:12,color:G.soft,marginTop:3}}>Sin cobros generados</div>}
                 {suyos.map(x=><div key={x.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginTop:5,fontSize:12,flexWrap:"wrap"}}>
-                  <span>{x.estado==="pagado"?"✅":"🕓"} {x.concepto} · <b>{cobroEur(x.importe)}</b>{x.estado==="pagado"?" · "+x.metodo+" "+x.fechaPago:""}</span>
+                  <span>{x.estado==="pagado"?"✅":"🕓"} {x.concepto} · <b>{cobroEur(x.importe)}</b>{x.estado==="pagado"?" · "+x.metodo+" "+x.fechaPago:""}{x.estado!=="pagado"&&x.vence&&<span style={{color:x.vence<=hoy?"#E2685C":G.soft,fontWeight:x.vence<=hoy?700:400}}> · {x.vence<hoy?"VENCIDO desde el "+x.vence:x.vence===hoy?"vence HOY":"vence el "+x.vence}</span>}</span>
                   <span style={{display:"flex",gap:6}}>
                     {x.estado!=="pagado"&&<Btn small onClick={()=>abrirPago(x)}>Cobrar</Btn>}
                     {x.estado==="pagado"&&<Btn small color="secondary" onClick={()=>deshacerPago(x)}>Deshacer</Btn>}
@@ -6027,7 +6053,7 @@ function ModGruposCobros({data,setData}){
       </Field>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <Field label="Fecha del pago"><Input type="date" value={fp.fecha||""} onChange={v=>setFp(f=>({...f,fecha:v}))}/></Field>
-        <Field label="Método"><Sel value={fp.metodo} onChange={v=>setFp(f=>({...f,metodo:v}))}
+        <Field label="Método"><Sel value={fp.metodo} onChange={v=>setFp(f=>({...f,metodo:v,importe:String(importeSegunMetodo(modalPago,v))}))}
           options={["Efectivo","Tarjeta","Transferencia","Bizum"].map(v=>({value:v,label:v}))}/></Field>
       </div>
       {(()=>{const imp=Number(String(fp.importe).replace(",","."))||0;const base=imp/(1+COBRO_IVA/100);
@@ -17463,6 +17489,19 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         <div style={{fontSize:20}}>→</div>
         <style>{`@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.02)}}`}</style>
       </div>}
+
+      {/* ── Aviso pagos vencidos ── */}
+      {(()=>{
+        const hoyP=today();
+        const venc=(data.cobros||[]).filter(c=>c.estado!=="pagado"&&c.vence&&c.vence<=hoyP);
+        if(!venc.length) return null;
+        const nom=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+        return <div style={{borderRadius:14,border:"2px solid #E2685C",background:"#FFF6F5",marginBottom:18,padding:"12px 18px"}}>
+          <div style={{fontWeight:800,fontSize:14,color:"#C0392B"}}>💶 {venc.length} pago{venc.length!==1?"s":""} pendiente{venc.length!==1?"s":""} de cobrar</div>
+          <div style={{fontSize:12,color:"#8a3a30",marginTop:4}}>{venc.slice(0,8).map(c=>nom(c.alumnoId)+" ("+Number(c.importe||0).toFixed(2).replace(".",",")+" €)").join(" · ")}{venc.length>8?" · …":""}</div>
+          <div style={{fontSize:11,color:"#8a3a30",marginTop:4}}>Cóbralos en Adultos → Pagos → Grupos y cobros.</div>
+        </div>;
+      })()}
 
       {/* ── Aviso alumnos sin clase reciente ── */}
       {(()=>{
