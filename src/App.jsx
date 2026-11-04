@@ -2737,41 +2737,54 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
   const edadForm = calcularEdad(form.fechaNacimiento);
   const menorForm = edadForm!==null && edadForm<18;
 
-  function exportarCSV(){
-    const listaExportar = tabTipo==="infantil" ? alumnosInfantil : alumnosAdultos;
-    const cabecera = [
-      "Nombre","Tipo escuela","Fecha nacimiento","Edad","Nivel/Grupo","Activo",
-      "Teléfono","Email","Fecha alta","RGPD","Imagen autorizada","Autorización legal",
-      "Alergias","Intolerancias","Lesiones","Equipo",
-      "Tutor 1 nombre","Tutor 1 relación","Tutor 1 teléfono","Tutor 1 email",
-      "Tutor 2 nombre","Tutor 2 relación","Tutor 2 teléfono","Tutor 2 email",
-      "Notas"
+  async function exportarCSV(){
+    const XLSX = await import("xlsx");
+    const esAd = tabTipo==="adultos";
+    const lista = [...(esAd?alumnosAdultos:alumnosInfantil)].sort((x,y)=>(x.nombre||"").localeCompare(y.nombre||"","es"));
+    const titulos = {};
+    (data.agendaAdultos||[]).forEach(e=>{ const t=(e.titulo||"").trim(); if(t) titulos[t.toLowerCase()]=t; });
+    const gruposDe = a=>{
+      if(esAd) return Object.entries(data.agendaGrupos||{}).filter(([k,ids])=>(ids||[]).includes(a.id)).map(([k])=>titulos[k]||k).join(" · ");
+      return (data.gruposCurso||[]).filter(g=>(g.alumnoIds||[]).includes(a.id)).map(g=>g.nombre).join(" · ");
+    };
+    const fecha = f=>f?String(f).split("-").reverse().join("/"):"";
+    const sn = v=>v?"Sí":"No";
+    const cols = [
+      ["Nombre",18,a=>a.nombre||""],
+      ["Estado",10,a=>a.activo===false?"Baja":"Activo"],
+      ["Edad",6,a=>{const e=calcularEdad(a.fechaNacimiento);return e!==null?e:"";}],
+      ["Fecha nacimiento",16,a=>fecha(a.fechaNacimiento)],
+      [esAd?"Curso / grupo":"Grupo",26,gruposDe],
+      ["Nivel",14,a=>a.nivel||a.grupo||""],
+      ["Teléfono",14,a=>a.telefono||""],
+      ["Email",28,a=>a.email||""],
+      ["Fecha alta",12,a=>fecha(a.fechaAlta)],
+      ...(esAd?[]:[
+        ["Tutor 1",22,a=>((a.tutores||[])[0]||{}).nombre||""],
+        ["Tutor 1 relación",14,a=>((a.tutores||[])[0]||{}).relacion||""],
+        ["Tutor 1 teléfono",14,a=>((a.tutores||[])[0]||{}).telefono||""],
+        ["Tutor 1 email",28,a=>((a.tutores||[])[0]||{}).email||""],
+        ["Tutor 2",22,a=>((a.tutores||[])[1]||{}).nombre||""],
+        ["Tutor 2 relación",14,a=>((a.tutores||[])[1]||{}).relacion||""],
+        ["Tutor 2 teléfono",14,a=>((a.tutores||[])[1]||{}).telefono||""],
+        ["Tutor 2 email",28,a=>((a.tutores||[])[1]||{}).email||""],
+      ]),
+      ["RGPD",8,a=>sn(a.rgpdAceptado)],
+      ["Imagen autorizada",16,a=>sn(a.imagenAutorizada)],
+      ["Autorización legal",16,a=>sn(a.firmaLegal)],
+      ["Alergias",20,a=>a.alergias||""],
+      ["Intolerancias",20,a=>a.intolerancias||""],
+      ["Lesiones",20,a=>a.lesiones||""],
+      ["Equipo",16,a=>a.equipo||""],
+      ["Notas",40,a=>a.notas||""],
     ];
-    function esc(v){ const s=String(v||""); return s.includes(",")||s.includes("\n")||s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s; }
-    const filas = listaExportar.map(a=>{
-      const edad = calcularEdad(a.fechaNacimiento);
-      const t1 = (a.tutores||[])[0]||{};
-      const t2 = (a.tutores||[])[1]||{};
-      return [
-        a.nombre, a.tipoEscuela==="adultos"?"Adultos":"Infantil",
-        a.fechaNacimiento||"", edad!==null?edad:"",
-        a.nivel||a.grupo||"", a.activo?"Sí":"No",
-        a.telefono||"", a.email||"", a.fechaAlta||"",
-        a.rgpdAceptado?"Sí":"No", a.imagenAutorizada?"Sí":"No", a.firmaLegal?"Sí":"No",
-        a.alergias||"", a.intolerancias||"", a.lesiones||"", a.equipo||"",
-        t1.nombre||"", t1.relacion||"", t1.telefono||"", t1.email||"",
-        t2.nombre||"", t2.relacion||"", t2.telefono||"", t2.email||"",
-        a.notas||""
-      ].map(esc).join(",");
-    });
-    const csv = "\uFEFF" + [cabecera.join(","), ...filas].join("\r\n");
-    const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `alumnos_${tabTipo}_${today()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filas = [cols.map(c=>c[0]), ...lista.map(a=>cols.map(c=>c[2](a)))];
+    const ws = XLSX.utils.aoa_to_sheet(filas);
+    ws["!cols"] = cols.map(c=>({wch:c[1]}));
+    ws["!autofilter"] = {ref:ws["!ref"]};
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, esAd?"Alumnos adultos":"Alumnos infantil");
+    XLSX.writeFile(wb, `alumnos_${tabTipo}_${today()}.xlsx`);
   }
 
   return <div>
@@ -2797,8 +2810,8 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
       {<Btn color="secondary" onClick={()=>setVistaEstructura(v=>!v)}>
         {vistaEstructura?"👥 Ver alumnos":"📊 Estructura"}
       </Btn>}
-      <Btn color="secondary" onClick={exportarCSV} title="Exportar listado a CSV (Excel)">
-        📥 Exportar CSV
+      <Btn color="secondary" onClick={exportarCSV} title="Descargar el listado en Excel (.xlsx)">
+        📥 Exportar Excel
       </Btn>
       <Btn onClick={openNew}>+ Nuevo alumno</Btn>
     </div>
