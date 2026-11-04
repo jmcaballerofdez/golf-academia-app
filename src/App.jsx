@@ -5266,8 +5266,55 @@ function ImportarAjustesIngresos({ data, setData, catI }) {
     setBorrado(true); setConfirmando(false); setTextoConfirmacion("");
   }
 
+  // ── Empezar desde cero (archiva lo anterior a una fecha, sin borrar) ──
+  const [corte, setCorte] = useState("2026-11-01");
+  const [txtCero, setTxtCero] = useState("");
+  const [ceroHecho, setCeroHecho] = useState("");
+  const antes = (f) => (f || "") < corte;
+  const nIng = (data.ingresos || []).filter(x => antes(x.fecha)).length;
+  const nGas = (data.gastos || []).filter(x => antes(x.fecha)).length;
+  const nCob = (data.cobros || []).filter(x => antes(x.fechaPago || x.fechaEmision)).length;
+  const nBon = (data.bonos || []).filter(x => antes(x.fechaCompra) && Number(x.precio) > 0).length;
+  function empezarDeCero() {
+    if (!corte) return;
+    const ing = (data.ingresos || []), gas = (data.gastos || []), cob = (data.cobros || []), bon = (data.bonos || []);
+    const archivo = {
+      id: uid(), creado: today(), corte,
+      ingresos: ing.filter(x => antes(x.fecha)),
+      gastos: gas.filter(x => antes(x.fecha)),
+      cobros: cob.filter(x => antes(x.fechaPago || x.fechaEmision)),
+      bonosPrecios: bon.filter(x => antes(x.fechaCompra) && Number(x.precio) > 0).map(x => ({ id: x.id, alumnoId: x.alumnoId, fechaCompra: x.fechaCompra || "", precio: Number(x.precio) })),
+    };
+    setData({
+      ...data,
+      ingresos: ing.filter(x => !antes(x.fecha)),
+      gastos: gas.filter(x => !antes(x.fecha)),
+      cobros: cob.filter(x => !antes(x.fechaPago || x.fechaEmision)),
+      bonos: bon.map(x => (antes(x.fechaCompra) && Number(x.precio) > 0) ? { ...x, precio: 0 } : x),
+      archivoFinanzas: [...(data.archivoFinanzas || []), archivo],
+    });
+    setCeroHecho("Hecho: " + archivo.ingresos.length + " ingresos, " + archivo.gastos.length + " gastos, " + archivo.cobros.length + " cobros y " + archivo.bonosPrecios.length + " bonos anteriores al " + corte + " se han archivado.");
+    setTxtCero("");
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Card style={{ border: "1.5px solid #E2685C" }}>
+        <div style={{ fontWeight: 700, color: G.ink, marginBottom: 6 }}>🆕 Empezar las finanzas desde cero</div>
+        <div style={{ fontSize: 13, color: G.soft, marginBottom: 10 }}>
+          Archiva todo lo anterior a la fecha elegida: ingresos, gastos, cobros de grupos y precio de los bonos vendidos. Los totales, el IVA y los informes empiezan en 0 €. No se borra nada: queda guardado aparte en el archivo de finanzas. Los bonos y sus clases restantes no se tocan.
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 13 }}>Empezar desde el</span>
+          <input type="date" value={corte} onChange={e => setCorte(e.target.value)} style={{ border: "1.5px solid #C7D2DC", borderRadius: 8, padding: "6px 8px", fontSize: 14 }} />
+        </div>
+        <div style={{ fontSize: 13, marginBottom: 10 }}>Se archivarán: <b>{nIng}</b> ingresos · <b>{nGas}</b> gastos · <b>{nCob}</b> cobros · <b>{nBon}</b> bonos con precio.</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input value={txtCero} onChange={e => setTxtCero(e.target.value)} placeholder="Escribe EMPEZAR para confirmar" style={{ border: "1.5px solid #C7D2DC", borderRadius: 8, padding: "8px 10px", fontSize: 14, minWidth: 220 }} />
+          <Btn color="danger" disabled={txtCero.trim().toUpperCase() !== "EMPEZAR" || !(nIng + nGas + nCob + nBon)} onClick={empezarDeCero}>Archivar y empezar en 0 €</Btn>
+        </div>
+        {ceroHecho && <div style={{ fontSize: 13, color: G.fairway, marginTop: 10, fontWeight: 700 }}>{ceroHecho}</div>}
+      </Card>
       <Card>
         <div style={{ fontWeight: 700, color: G.fairway, marginBottom: 6 }}>📥 Importar ingresos desde Excel/CSV</div>
         <div style={{ fontSize: 13, color: G.soft, marginBottom: 14 }}>
