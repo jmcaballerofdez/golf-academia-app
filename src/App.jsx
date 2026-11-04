@@ -2638,10 +2638,10 @@ function EstructuraInfantil({data, setData, alumnos}){
 }
 
 
-function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="infantil"}){
+function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="infantil",soloTipo=null}){
   const [modal,         setModal]         = useState(null);
   const [form,          setForm]          = useState({});
-  const [tabTipo,       setTabTipo]       = useState(tipoInicial);
+  const [tabTipo,       setTabTipo]       = useState(soloTipo||tipoInicial);
   const [buscar,        setBuscar]        = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null); // alumno a eliminar
   const [vistaEstructura, setVistaEstructura] = useState(false); // ver estructura/grupos
@@ -2778,7 +2778,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
     {/* Header con tipo de escuela */}
     <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
       <div style={{display:"flex",gap:6}}>
-        {[["infantil","🧒 Escuela Infantil","#6FB3E8"],["adultos","🏌️ Escuela Adultos","#3FA05F"]].map(([id,label,color])=>(
+        {[["infantil","🧒 Escuela Infantil","#6FB3E8"],["adultos","🏌️ Escuela Adultos","#3FA05F"]].filter(([id])=>!soloTipo||id===soloTipo).map(([id,label,color])=>(
           <button key={id} onClick={()=>setTabTipo(id)}
             style={{background:tabTipo===id?color:"#F5F8FA",color:tabTipo===id?"#fff":"#555",
               border:"none",borderRadius:10,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
@@ -5655,6 +5655,12 @@ function TarjetaMiGrupo({data,alumnoId}){
 // ESTRUCTURA DE ADULTOS: cursos y grupos de adultos (salen de la Agenda)
 // Es el equivalente a "Estructura" de infantil, pero para los cursos HCP, plan profesional, etc.
 // ═══════════════════════════════════════════════════════════════════
+// Un alumno es adulto si tiene 18 años o más; sin fecha de nacimiento, según su tipo de escuela
+function alumnoEsAdulto(a){
+  if(a&&a.fechaNacimiento){ const n=new Date(a.fechaNacimiento); if(!isNaN(n)){ const h=new Date(); let e=h.getFullYear()-n.getFullYear(); const m=h.getMonth()-n.getMonth(); if(m<0||(m===0&&h.getDate()<n.getDate())) e--; return e>=18; } }
+  return !!a&&a.tipoEscuela==="adultos";
+}
+
 function EstructuraAdultos({data,setData}){
   const [avisoG,setAvisoG]=useState(null);
   const [edit,setEdit]=useState(null); // {key,nombre,nuevo}
@@ -5769,7 +5775,7 @@ function EstructuraAdultos({data,setData}){
                 onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"?")) setMiembros(g.key,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
             </div>)}
             <Sel value="" onChange={v=>{if(v) setMiembros(g.key,[...miembros,v]);}}
-              options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
+              options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>alumnoEsAdulto(a)&&!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
           </div>
         </Card>;
       })}
@@ -6036,7 +6042,7 @@ function ModGruposCobros({data,setData}){
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
               <div style={{flex:"1 1 220px"}}>
                 <Sel value="" onChange={v=>{if(v) setMiembros(g,[...miembros,v]);}}
-                  options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>a.activo!==false&&!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
+                  options={[{value:"",label:"+ Añadir alumno al grupo…"},...alumnos.filter(a=>a.activo!==false&&(g.infId?!alumnoEsAdulto(a):alumnoEsAdulto(a))&&!miembros.includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
               </div>
               {infantilesSinUsar.map(x=><Btn key={x.id} small color="secondary" onClick={()=>setMiembros(g,[...(x.alumnoIds||[])])}>
                 Copiar alumnos de «{x.nombre}»</Btn>)}
@@ -17657,7 +17663,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
         {ADMIN_TABS.find(t=>t.id===tab)?.icon} {ADMIN_TABS.find(t=>t.id===tab)?.label}
       </h2>
       {tab==="calendario"&&<PanelPdfCalendario esProfesor={true}/>}
-      {tab==="alumnos"&&<ModAlumnos key={zona} tipoInicial={zona==="adultos"?"adultos":"infantil"} data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
+      {tab==="alumnos"&&<ModAlumnos key={zona} tipoInicial={zona==="adultos"?"adultos":"infantil"} soloTipo={zona==="adultos"?"adultos":"infantil"} data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
       {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
       {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
       {tab==="clases"&&<ModClases data={data} setData={setData}/>}
