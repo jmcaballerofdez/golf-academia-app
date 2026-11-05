@@ -2678,10 +2678,12 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
   // Separar por tipo de escuela
   const alumnosInfantil = alumnos.filter(a=>{
     const edad = calcularEdad(a.fechaNacimiento);
+    if(a.tipoForzado) return a.tipoForzado==="infantil";
     return edad!==null ? edad<18 : (a.tipoEscuela==="infantil"||!a.tipoEscuela);
   });
   const alumnosAdultos = alumnos.filter(a=>{
     const edad = calcularEdad(a.fechaNacimiento);
+    if(a.tipoForzado) return a.tipoForzado==="adultos";
     return edad!==null ? edad>=18 : a.tipoEscuela==="adultos";
   });
 
@@ -2721,8 +2723,8 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
   function save(){
     if(!form.nombre?.trim()) return;
     const edad = calcularEdad(form.fechaNacimiento);
-    const tipoAuto = edad!==null ? (edad<18?"infantil":"adultos") : form.tipoEscuela;
-    const reg = {...form, tipoEscuela:tipoAuto, id:form.id||uid()};
+    const tipoAuto = form.tipoForzado || (edad!==null ? (edad<18?"infantil":"adultos") : form.tipoEscuela);
+    const reg = {...form, tipoEscuela:tipoAuto, tipoForzado:form.tipoForzado||"", id:form.id||uid()};
     const updated = alumnos.some(a=>a.id===reg.id)
       ? alumnos.map(a=>a.id===reg.id?reg:a)
       : [...alumnos, reg];
@@ -2961,6 +2963,14 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
             const nivel=autoNivel(v);
             setForm(f=>({...f,fechaNacimiento:v,...(nivel?{nivel}:{})}));
           }}/>
+        </Field>
+        <Field label="Escuela">
+          <select value={form.tipoForzado||""} onChange={e=>setForm(f=>({...f,tipoForzado:e.target.value}))}
+            style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14}}>
+            <option value="">Automática (según la edad)</option>
+            <option value="adultos">🏌️ Siempre Adultos</option>
+            <option value="infantil">🧒 Siempre Infantil</option>
+          </select>
         </Field>
         <Field label="Nivel / Grupo">
           <select value={form.nivel||""} onChange={e=>setForm(f=>({...f,nivel:e.target.value}))}
@@ -5468,7 +5478,7 @@ function grupoEdadDe(f){
   const h=new Date(); let e=h.getFullYear()-n.getFullYear();
   const m=h.getMonth()-n.getMonth(); if(m<0||(m===0&&h.getDate()<n.getDate())) e--; return e;
 }
-function grupoEsMenor(a){ const e=grupoEdadDe(a.fechaNacimiento); return e!==null?e<18:a.tipoEscuela==="infantil"; }
+function grupoEsMenor(a){ if(a.tipoForzado) return a.tipoForzado==="infantil"; const e=grupoEdadDe(a.fechaNacimiento); return e!==null?e<18:a.tipoEscuela==="infantil"; }
 // A dónde va el aviso: al tutor si es menor, al propio alumno si es adulto
 function grupoDestino(a){
   const menor=grupoEsMenor(a);
@@ -5670,6 +5680,7 @@ function TarjetaMiGrupo({data,alumnoId}){
 // ═══════════════════════════════════════════════════════════════════
 // Un alumno es adulto si tiene 18 años o más; sin fecha de nacimiento, según su tipo de escuela
 function alumnoEsAdulto(a){
+  if(a&&a.tipoForzado) return a.tipoForzado==="adultos";
   if(a&&a.fechaNacimiento){ const n=new Date(a.fechaNacimiento); if(!isNaN(n)){ const h=new Date(); let e=h.getFullYear()-n.getFullYear(); const m=h.getMonth()-n.getMonth(); if(m<0||(m===0&&h.getDate()<n.getDate())) e--; return e>=18; } }
   return !!a&&a.tipoEscuela==="adultos";
 }
@@ -5734,7 +5745,7 @@ function EstructuraAdultos({data,setData}){
   const edadDe=f=>{if(!f)return null;const n=new Date(f);if(isNaN(n))return null;const h=new Date();let e=h.getFullYear()-n.getFullYear();const m=h.getMonth()-n.getMonth();if(m<0||(m===0&&h.getDate()<n.getDate()))e--;return e;};
   const sinGrupo=alumnos.filter(a=>{
     const edad=edadDe(a.fechaNacimiento);
-    const adulto=edad!==null?edad>=18:a.tipoEscuela==="adultos";
+    const adulto=a.tipoForzado?a.tipoForzado==="adultos":(edad!==null?edad>=18:a.tipoEscuela==="adultos");
     return adulto&&!grupos.some(g=>(miembrosAll[g.key]||[]).includes(a.id));
   });
   return <div>
@@ -5768,7 +5779,12 @@ function EstructuraAdultos({data,setData}){
           <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
             <div>
               <div style={{fontWeight:800,color:G.ink,fontSize:15}}>🎓 {g.nombre}</div>
-              <div style={{fontSize:12,color:G.soft,marginTop:2}}>{horario(g.ents)} · {g.ents.length} clases ({hechas} dadas)</div>
+              {(()=>{const st=cursoStats(data,g.key);return <>
+                <div style={{fontSize:12,color:G.soft,marginTop:2}}>{horario(g.ents)} · {st.total} clases · <b>{st.impartidas.length} impartidas</b> · <b>{st.pendientes} pendientes</b>{st.canceladas>0&&" · "+st.canceladas+" canceladas"}</div>
+                <div style={{fontSize:12,color:G.soft,marginTop:4,display:"flex",alignItems:"center",gap:6}}>Clases del curso:
+                  <input key={g.key+"-t-"+st.total} type="number" min="1" defaultValue={st.total} onBlur={e=>{const n=Number(e.target.value)||0; if(n>0&&n!==st.total) setData({...data,agendaCursos:{...(data.agendaCursos||{}),[g.key]:{total:n}}});}}
+                    style={{width:56,border:"1.5px solid #C7D2DC",borderRadius:6,padding:"2px 6px",fontSize:12}}/>
+                  {!st.definido&&<span>(según las clases cargadas; cámbialo si el curso tiene otro número)</span>}</div></>;})()}
               {prox&&<div style={{fontSize:12,color:G.soft}}>Próxima: {new Date(prox.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"})} · {prox.hora}</div>}
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:6,alignItems:"flex-end"}}>
@@ -5783,7 +5799,8 @@ function EstructuraAdultos({data,setData}){
           <div style={{marginTop:10}}>
             {miembros.length===0&&<div style={{fontSize:13,color:G.soft,marginBottom:6}}>Sin alumnos todavía.</div>}
             {miembros.map(id=><div key={id} style={{display:"flex",justifyContent:"space-between",background:"#fff",border:"1px solid #E3E9EE",borderRadius:8,padding:"6px 10px",marginBottom:5,fontSize:13}}>
-              <b>{nomAl(id)}</b>
+              <span><b>{nomAl(id)}</b>{(()=>{const st=cursoStats(data,g.key);const s=cursoAlumnoStats(st,id);return <span style={{fontSize:11,color:G.soft,marginLeft:8}}>
+                ✅ {s.asistio+s.recup} · ❌ {s.falta} · 🟡 {s.aviso}{s.sin>0&&<span style={{color:"#E2685C"}}> · sin marcar {s.sin}</span>}{s.completo&&" · 🏁 completó el curso"}</span>;})()}</span>
               <span style={{cursor:"pointer",color:G.soft,fontSize:12}}
                 onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"?")) setMiembros(g.key,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
             </div>)}
@@ -16316,6 +16333,78 @@ function agendaDiaIdx(d){
   return ["lunes","martes","miercoles","jueves","viernes","sabado","domingo"].findIndex(x=>s.startsWith(x));
 }
 
+// ── Asistencia y recuento de clases de un curso ──────────────────────
+// asistencia por clase: {alumnoId: "asistio" | "falta" (sin aviso, la pierde) | "aviso" (avisó; en principio la pierde) | "recuperada"}
+function cursoStats(data,key){
+  const hoy=today();
+  const ents=(data.agendaAdultos||[]).filter(e=>(e.titulo||"").trim().toLowerCase()===key&&(e.tipo==="curso"||e.tipo==="grupo"));
+  const activas=ents.filter(e=>!e.cancelada);
+  const total=Number(((data.agendaCursos||{})[key]||{}).total)||activas.length;
+  const impartidas=activas.filter(e=>e.hecha||e.fecha<hoy);
+  return {total,impartidas,pendientes:Math.max(0,total-impartidas.length),canceladas:ents.filter(e=>e.cancelada).length,definido:!!((data.agendaCursos||{})[key]||{}).total};
+}
+function cursoAlumnoStats(st,id){
+  let asistio=0,falta=0,aviso=0,recup=0,sin=0;
+  st.impartidas.forEach(e=>{ const v=(e.asistencia||{})[id];
+    if(v==="asistio") asistio++; else if(v==="recuperada") recup++; else if(v==="falta") falta++; else if(v==="aviso") aviso++; else sin++; });
+  return {asistio,falta,aviso,recup,sin,completo:st.impartidas.length>=st.total&&st.total>0};
+}
+
+function AsistenciaClase({data,setData,clase}){
+  // clase: {id,alumnoIds}
+  const e=(data.agendaAdultos||[]).find(x=>x.id===clase.id)||{};
+  const as=e.asistencia||{};
+  const nomAl=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+  function poner(id,v){
+    const nueva={...as}; if(as[id]===v) delete nueva[id]; else nueva[id]=v;
+    setData({...data,agendaAdultos:(data.agendaAdultos||[]).map(x=>x.id===clase.id?{...x,asistencia:nueva}:x)});
+  }
+  function todos(){
+    const nueva={...as}; (clase.alumnoIds||[]).forEach(id=>{ if(!nueva[id]) nueva[id]="asistio"; });
+    setData({...data,agendaAdultos:(data.agendaAdultos||[]).map(x=>x.id===clase.id?{...x,asistencia:nueva}:x)});
+  }
+  const OPC=[["asistio","✅","Asistió","#3FA05F"],["falta","❌","Faltó sin avisar (pierde la clase)","#E2685C"],["aviso","🟡","Faltó avisando (en principio la pierde; puede recuperarla)","#E0A100"]];
+  const ids=clase.alumnoIds||[];
+  return <div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+      <div style={{fontWeight:800,fontSize:13,color:G.ink}}>📋 Asistencia</div>
+      {ids.length>0&&<span style={{cursor:"pointer",fontSize:12,color:G.fairway,fontWeight:700}} onClick={todos}>✅ Marcar a todos como asistentes</span>}
+    </div>
+    {ids.length===0&&<div style={{fontSize:12,color:G.soft}}>Esta clase no tiene alumnos asignados.</div>}
+    {ids.map(id=><div key={id} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",padding:"5px 0",borderTop:"1px solid #E3E9EE",fontSize:13}}>
+      <b style={{flex:"1 1 120px"}}>{nomAl(id)}</b>
+      {OPC.map(([v,ic,tit,col])=><button key={v} title={tit} onClick={()=>poner(id,v)}
+        style={{border:"1.5px solid "+(as[id]===v?col:"#C7D2DC"),background:as[id]===v?col:"#fff",borderRadius:8,padding:"3px 9px",fontSize:14,cursor:"pointer",opacity:as[id]&&as[id]!==v?0.45:1}}>{ic}</button>)}
+      {(as[id]==="aviso"||as[id]==="falta"||as[id]==="recuperada")&&<button title="Recuperó la clase en otro grupo" onClick={()=>poner(id,"recuperada")}
+        style={{border:"1.5px solid "+(as[id]==="recuperada"?"#3F7FBF":"#C7D2DC"),background:as[id]==="recuperada"?"#3F7FBF":"#fff",color:as[id]==="recuperada"?"#fff":G.ink,borderRadius:8,padding:"3px 9px",fontSize:12,cursor:"pointer"}}>🔁 Recuperada</button>}
+    </div>)}
+    <div style={{fontSize:11,color:G.soft,marginTop:6}}>Si falta, la clase cuenta como usada. Si la recupera en otro grupo, márcala como 🔁 Recuperada.</div>
+  </div>;
+}
+
+// ── Control de cobro de clases particulares (y de grupos que se cobran por clase) ──
+function cobroDesdeFecha(data){ return (data.archivoFinanzas||[]).map(a=>a.corte).sort().pop()||"2000-01-01"; }
+function clasePideCobro(e,data){
+  if(!e||e.cancelada||e.auto||e.tipo==="personal"||e.tipo==="escuela") return false;
+  const k=(e.titulo||"").trim().toLowerCase();
+  return e.tipo==="individual"||((data.cobrosGrupos||{})[k]||{}).modo==="clase";
+}
+function claseAlumnos(e,data){ const k=(e.titulo||"").trim().toLowerCase(); const g=data.agendaGrupos||{}; return (k&&g[k])?g[k]:(e.alumnoIds||[]); }
+// "pagado" | "pendiente" | "sin" (sin cobro anotado) | null (no aplica)
+function estadoCobroClase(e,data){
+  if(!clasePideCobro(e,data)) return null;
+  const ids=claseAlumnos(e,data); if(!ids.length) return null;
+  const cs=ids.map(id=>(data.cobros||[]).find(c=>c.claseId===e.id&&c.alumnoId===id));
+  if(cs.some(c=>!c)) return "sin";
+  return cs.some(c=>c.estado!=="pagado")?"pendiente":"pagado";
+}
+function clasesSinCobrar(data){
+  const hoy=today(), desde=cobroDesdeFecha(data);
+  const d=desde<"2026-11-01"?"2026-11-01":desde;
+  return (data.agendaAdultos||[]).filter(e=>e.fecha<=hoy&&e.fecha>=d&&estadoCobroClase(e,data)==="sin")
+    .sort((a,b)=>(b.fecha+b.hora).localeCompare(a.fecha+a.hora));
+}
+
 // ── Cobro por alumno dentro de una clase de la agenda ──────────────
 function CobroClase({data,setData,clase}){
   // clase: {id,titulo,fecha,alumnoIds,grupoKey}
@@ -16324,14 +16413,15 @@ function CobroClase({data,setData,clase}){
   const [imp,setImp]=useState({}); const [met,setMet]=useState({});
   const nomAl=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
   const de=id=>cobros.find(c=>c.claseId===clase.id&&c.alumnoId===id);
-  const impDe=id=>imp[id]!==undefined?imp[id]:(de(id)?String(de(id).importe):(cfg.importe||""));
+  const ultimo=id=>{ const l=cobros.filter(c=>c.alumnoId===id&&c.claseId&&c.grupoKey===clase.grupoKey&&c.importe).sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""))[0]; return l?String(l.importe):""; };
+  const impDe=id=>imp[id]!==undefined?imp[id]:(de(id)?String(de(id).importe):(ultimo(id)||cfg.importe||""));
   const num=v=>Number(String(v).replace(",","."))||0;
   function pagar(id,soloPendiente){
     const importe=num(impDe(id)); if(!importe){ alert("Pon el importe de la clase (IVA incluido)."); return; }
     const ex=de(id); const cid=ex?ex.id:uid();
     let nuevosIng=ingresos, reg;
     if(soloPendiente){
-      reg={id:cid,grupoKey:clase.grupoKey,alumnoId:id,concepto:clase.titulo+" · clase del "+clase.fecha,periodo:clase.fecha,claseId:clase.id,importe,estado:"pendiente",fechaEmision:hoy};
+      reg={id:cid,grupoKey:clase.grupoKey,alumnoId:id,concepto:clase.titulo+" · clase del "+clase.fecha,periodo:clase.fecha,claseId:clase.id,importe,estado:"pendiente",fechaEmision:hoy,vence:clase.fecha};
     } else {
       const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
       const ing={id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:clase.titulo+" · clase del "+clase.fecha+" — "+nomAl(id),alumnoId:id,
@@ -16458,7 +16548,7 @@ function ModAgenda({data,setData}){
       const delta=o?Math.round((new Date(base.fecha+"T12:00:00")-new Date(o.fecha+"T12:00:00"))/86400000):0;
       const idsSig=new Set(alcance==="siguientes"?siguientes.map(x=>x.id):[]);
       setData({...data,agendaAdultos:lista.map(e=>{
-        if(e.id===modal) return {...base,id:modal};
+        if(e.id===modal) return {...e,...base,id:modal};
         if(idsSig.has(e.id)) return {...e,hora:base.hora,dur:base.dur,tipo:base.tipo,titulo:base.titulo,nota:base.nota,alumnoIds:base.alumnoIds,fecha:agendaSumaDias(e.fecha,delta)};
         return e;
       }),agendaGrupos:nuevosGrupos});
@@ -16528,6 +16618,20 @@ function ModAgenda({data,setData}){
       <Btn small onClick={()=>abrirNueva(hoy>=lunes&&hoy<=domingo?hoy:lunes,"17:00")}>+ Nueva clase</Btn>
     </div>
 
+    {(()=>{
+      const sc=clasesSinCobrar(data);
+      if(!sc.length) return null;
+      return <div style={{borderRadius:12,border:"2px solid #E2685C",background:"#FFF6F5",marginBottom:12,padding:"10px 14px"}}>
+        <div style={{fontWeight:800,fontSize:13,color:"#C0392B"}}>❗ {sc.length} clase{sc.length!==1?"s":""} dada{sc.length!==1?"s":""} sin cobro anotado</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+          {sc.slice(0,12).map(e=><span key={e.id} onClick={()=>abrirEditar(e)} style={{cursor:"pointer",background:"#fff",border:"1px solid #E2685C",borderRadius:8,padding:"3px 8px",fontSize:12}}>
+            {new Date(e.fecha+"T12:00:00").toLocaleDateString("es-ES",{day:"numeric",month:"short"})} · {tituloDe(e)}</span>)}
+          {sc.length>12&&<span style={{fontSize:12,color:G.soft}}>… y {sc.length-12} más</span>}
+        </div>
+        <div style={{fontSize:11,color:"#8a3a30",marginTop:6}}>Pulsa una clase para anotar el cobro (o dejarlo pendiente). Desde el 1 de noviembre.</div>
+      </div>;
+    })()}
+
     {lista.length===0&&<Card style={{marginBottom:14,textAlign:"center"}}>
       <div style={{fontWeight:700,marginBottom:6}}>Tu agenda está vacía</div>
       <div style={{fontSize:13,color:G.soft,marginBottom:12}}>Puedes cargar de golpe todo tu organigrama de octubre a diciembre de 2026, o ir añadiendo clases pulsando en la hora que quieras.</div>
@@ -16573,7 +16677,7 @@ function ModAgenda({data,setData}){
                 style={{position:"absolute",top:i*AGENDA_H+1,left:"calc("+(cr.lane*100/cr.n)+"% + 2px)",width:"calc("+(100/cr.n)+"% - 4px)",height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
                   background:e.cancelada?"#FBE4E1":t.bg,borderLeft:"4px solid "+(e.cancelada?"#E2685C":t.color),outline:e.auto?"1px dashed "+t.color:"none",borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
                   color:G.ink,opacity:e.cancelada?0.5:(e.hecha?0.6:1),textDecoration:e.cancelada?"line-through":"none",boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
-                <div style={{fontWeight:700,color:e.cancelada?"#C0392B":t.color}}>{e.cancelada?"❌ ":(e.hecha?"✓ ":"")}{tituloDe(e)}</div>
+                <div style={{fontWeight:700,color:e.cancelada?"#C0392B":t.color}}>{e.cancelada?"❌ ":(e.hecha?"✓ ":"")}{(()=>{const st=estadoCobroClase(e,data);return st==="pagado"?"💶 ":st==="pendiente"?"⏳ ":(st==="sin"&&e.fecha<=hoy&&e.fecha>=cobroDesdeFecha(data))?"❗ ":"";})()}{tituloDe(e)}</div>
                 <div style={{color:G.soft,fontSize:10}}>{e.hora}{e.nClase!==""&&e.nClase!=null?" · Nº "+e.nClase:""}{alumnosDe(e).length>1?" · 👥"+alumnosDe(e).length:""}</div>
               </div>;
             });})()}
@@ -16656,7 +16760,8 @@ function ModAgenda({data,setData}){
       {solapes.length>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"8px 10px",fontSize:12,marginBottom:12}}>
         ⚠️ A esa hora ya tienes: {solapes.map(tituloDe).join(" · ")}
       </div>}
-      {modal!=="new"&&orig&&!orig.cancelada&&(orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo,fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:gKey(orig.titulo)}}/>}
+      {modal!=="new"&&orig&&!orig.cancelada&&(orig.tipo==="curso"||orig.tipo==="grupo")&&<AsistenciaClase data={data} setData={setData} clase={{id:orig.id,alumnoIds:alumnosDe(orig)}}/>}
+      {modal!=="new"&&orig&&!orig.cancelada&&(orig.tipo==="individual"||orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo||nombresDe(orig).join(", ")||"Clase individual",fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:orig.tipo==="individual"?"ind":gKey(orig.titulo)}}/>}
       {form.tipo!=="personal"&&<div style={{border:"1.5px solid "+(form.cancelada?"#E2685C":"#D9E3EA"),borderRadius:10,padding:"8px 12px",margin:"4px 0 12px",background:form.cancelada?"#FBE4E1":"transparent"}}>
         <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
           <input type="checkbox" checked={!!form.cancelada} onChange={e=>setForm(f=>({...f,cancelada:e.target.checked,hecha:e.target.checked?false:f.hecha,motivoCancel:f.motivoCancel||"Otro"}))}/> ❌ Clase cancelada
@@ -17513,10 +17618,12 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {(()=>{
         const hoyP=today();
         const venc=(data.cobros||[]).filter(c=>c.estado!=="pagado"&&c.vence&&c.vence<=hoyP);
-        if(!venc.length) return null;
+        const sinCobro=clasesSinCobrar(data);
+        if(!venc.length&&!sinCobro.length) return null;
         const nom=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
         return <div style={{borderRadius:14,border:"2px solid #E2685C",background:"#FFF6F5",marginBottom:18,padding:"12px 18px"}}>
-          <div style={{fontWeight:800,fontSize:14,color:"#C0392B"}}>💶 {venc.length} pago{venc.length!==1?"s":""} pendiente{venc.length!==1?"s":""} de cobrar</div>
+          {venc.length>0&&<div style={{fontWeight:800,fontSize:14,color:"#C0392B"}}>💶 {venc.length} pago{venc.length!==1?"s":""} pendiente{venc.length!==1?"s":""} de cobrar</div>}
+          {sinCobro.length>0&&<div style={{fontWeight:800,fontSize:14,color:"#C0392B",marginTop:venc.length?6:0}}>❗ {sinCobro.length} clase{sinCobro.length!==1?"s":""} dada{sinCobro.length!==1?"s":""} sin cobro anotado (ver Agenda)</div>}
           <div style={{fontSize:12,color:"#8a3a30",marginTop:4}}>{venc.slice(0,8).map(c=>nom(c.alumnoId)+" ("+Number(c.importe||0).toFixed(2).replace(".",",")+" €)").join(" · ")}{venc.length>8?" · …":""}</div>
           <div style={{fontSize:11,color:"#8a3a30",marginTop:4}}>Cóbralos en Adultos → Pagos → Grupos y cobros.</div>
         </div>;
