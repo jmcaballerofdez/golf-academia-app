@@ -17149,6 +17149,7 @@ function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
 const GOLFB_APPS = [
   { id:"academia", nombre:"Academia", color:"#B03A2E", url:"https://academia.golfb.es/", emoji:"🎓" },
   { id:"mantenimiento", nombre:"Mantenimiento", color:"#3FA05F", url:"https://mantenimiento.golfb.es/", emoji:"🔧" },
+  { id:"recepcion", nombre:"Recepción", color:"#7C2A35", url:"https://recepciongcr.golfb.es/", emoji:"🛎️" },
   { id:"proshop", nombre:"Proshop", color:"#2E6DA4", url:"https://proshop.golfb.es/", emoji:"🛒" },
   { id:"finanzas", nombre:"Finanzas", color:"#8E969E", url:"https://finanzas.golfb.es/", emoji:"💰" },
   { id:"master", nombre:"Golf B Máster", color:"#C9A227", url:"https://golfb.es/", emoji:"🏠" },
