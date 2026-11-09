@@ -17146,6 +17146,8 @@ function ToastNuevaInscripcion({pendientesCount, ultimaNotif, onVerAhora}){
 }
 
 // ─── Selector de apps Golf B (fila de iconos, siempre visible) ────────
+// Aviso "alumnos sin clase en más de 30 días": desactivado a petición (poner true para volver a activarlo)
+const AVISO_SIN_CLASE_ACTIVO = false;
 const GOLFB_APPS = [
   { id:"academia", nombre:"Academia", color:"#B03A2E", url:"https://academia.golfb.es/", emoji:"🎓" },
   { id:"mantenimiento", nombre:"Mantenimiento", color:"#3FA05F", url:"https://mantenimiento.golfb.es/", emoji:"🔧" },
@@ -17642,7 +17644,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
           return {...a,ultimaClase:ult};
         }).filter(a=>!a.ultimaClase||a.ultimaClase<lim)
           .sort((a,b)=>(a.ultimaClase||"0000")<(b.ultimaClase||"0000")?-1:1);
-        if(sinClase.length===0) return null;
+        if(!AVISO_SIN_CLASE_ACTIVO||sinClase.length===0) return null;
         return <div style={{borderRadius:14,border:"2px solid #F0985A",background:"#fffbf5",
           marginBottom:18,overflow:"hidden"}}>
           <div onClick={()=>setVerSinClase(v=>!v)}
