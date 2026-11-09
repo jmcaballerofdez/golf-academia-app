@@ -17157,7 +17157,7 @@ function AppSwitcher({ actual }){
   return <div style={{display:"flex",alignItems:"center",gap:6}}>
     {GOLFB_APPS.map(app=>{
       const esActual = app.id===actual;
-      return <a key={app.id} href={esActual?undefined:app.url} title={app.nombre}
+      return <a key={app.id} href={esActual?undefined:app.url} target={esActual?undefined:"_blank"} rel="noopener noreferrer" title={app.nombre}
         onClick={e=>{ if(esActual) e.preventDefault(); }}
         style={{
           width:26,height:26,borderRadius:999,background:app.color,
