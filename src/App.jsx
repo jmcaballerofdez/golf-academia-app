@@ -15157,6 +15157,7 @@ function ModTareas({data,setData}){
 // ═══════════════════════════════════════════════════════════════════
 const ADMIN_TABS=[
   {id:"agenda",label:"Agenda de clases",icon:"🗓️",zonas:["agenda"]},
+  {id:"mis_tareas_sa",label:"Mis tareas",icon:"✅",zonas:["agenda"]},
   {id:"calendario",label:"Calendario Escolar",icon:"🗓️",zonas:["infantil"]},
   {id:"alumnos",label:"Alumnos",icon:"👤",zonas:["adultos","infantil"]},
   {id:"clases",label:"Clases",icon:"📅",zonas:["adultos","infantil"]},
@@ -17533,6 +17534,120 @@ function ModInformeNegocio({data,setData,profesorId=null,esSuperAdmin=false}){
   </div>;
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MIS TAREAS (solo superadmin): lista compartida entre todas las apps
+// (clubes/ciudad-real/tareas_personales). Al marcarlas pasan al historial con fecha y hora.
+// ═══════════════════════════════════════════════════════════════════
+const MT_COL = ["clubes", "ciudad-real", "tareas_personales"];
+const mtHoy = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); };
+const mtFechaHora = (ms) => ms ? new Date(ms).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+function useMisTareas(db, F) {
+  const [tareas, setTareas] = useState([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const u = F.onSnapshot(F.collection(db, ...MT_COL),
+      (s) => setTareas(s.docs.map((d) => ({ ...d.data(), id: d.id }))),
+      (e) => setError(e.message));
+    return () => u();
+  }, []);
+  return { tareas, error };
+}
+
+function AvisoTareas({ db, F, onIr }) {
+  const { tareas } = useMisTareas(db, F);
+  const [oculto, setOculto] = useState(false);
+  const pend = tareas.filter((t) => !t.hecha);
+  if (oculto || pend.length === 0) return null;
+  const venc = pend.filter((t) => t.fechaLimite && t.fechaLimite < mtHoy()).length;
+  const hoy = pend.filter((t) => t.fechaLimite === mtHoy()).length;
+  return (
+    <div style={{ background: venc ? "#FBE4E1" : "#FFF4E0", border: "1px solid " + (venc ? "#E2685C" : "#F0C27B"), color: "#1f2a33", borderRadius: 10, padding: "8px 12px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}>
+      <span style={{ fontWeight: 700 }}>✅ Tienes {pend.length} tarea{pend.length !== 1 ? "s" : ""} pendiente{pend.length !== 1 ? "s" : ""}</span>
+      {venc > 0 && <span style={{ color: "#C0392B", fontWeight: 700 }}>· {venc} vencida{venc !== 1 ? "s" : ""}</span>}
+      {hoy > 0 && <span>· {hoy} para hoy</span>}
+      <span style={{ flex: 1 }} />
+      <button onClick={onIr} style={{ background: "#2F6B3F", color: "#fff", border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Ver tareas</button>
+      <button onClick={() => setOculto(true)} style={{ background: "transparent", border: "none", fontSize: 16, cursor: "pointer", color: "#6b7a86" }} title="Ocultar">✕</button>
+    </div>
+  );
+}
+
+function MisTareasVista({ db, F, ink = "#f3f6f4", soft = "#c9d3cc" }) {
+  const { tareas, error } = useMisTareas(db, F);
+  const [verHist, setVerHist] = useState(false);
+  const [titulo, setTitulo] = useState("");
+  const [fecha, setFecha] = useState("");
+  const [nota, setNota] = useState("");
+  const [err, setErr] = useState("");
+  const hoy = mtHoy();
+  const pend = tareas.filter((t) => !t.hecha).sort((a, b) => (a.fechaLimite || "9999").localeCompare(b.fechaLimite || "9999") || (a.creadoEn || 0) - (b.creadoEn || 0));
+  const hechas = tareas.filter((t) => t.hecha).sort((a, b) => (b.hechaEn || 0) - (a.hechaEn || 0));
+  const inp = { color: "#1f2a33", background: "#fff", border: "1.5px solid #C7D2DC", borderRadius: 8, padding: "8px 10px", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit" };
+  const btn = (bg, col) => ({ background: bg, color: col, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" });
+  const run = async (fn) => { try { setErr(""); await fn(); } catch (e) { setErr("Error: " + e.message); } };
+
+  const añadir = () => run(async () => {
+    if (!titulo.trim()) return;
+    await F.addDoc(F.collection(db, ...MT_COL), { titulo: titulo.trim(), fechaLimite: fecha || "", nota: nota.trim(), hecha: false, creadoEn: Date.now() });
+    setTitulo(""); setFecha(""); setNota("");
+  });
+  const hecha = (t) => run(() => F.updateDoc(F.doc(db, ...MT_COL, t.id), { hecha: true, hechaEn: Date.now() }));
+  const reabrir = (t) => run(() => F.updateDoc(F.doc(db, ...MT_COL, t.id), { hecha: false, hechaEn: null }));
+  const borrar = (t) => run(async () => { if (window.confirm("¿Eliminar definitivamente «" + t.titulo + "»?")) await F.deleteDoc(F.doc(db, ...MT_COL, t.id)); });
+
+  return (
+    <div style={{ color: ink }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <button style={btn(!verHist ? "#2F6B3F" : "#E6EBF0", !verHist ? "#fff" : "#333")} onClick={() => setVerHist(false)}>Pendientes ({pend.length})</button>
+        <button style={btn(verHist ? "#2F6B3F" : "#E6EBF0", verHist ? "#fff" : "#333")} onClick={() => setVerHist(true)}>Historial ({hechas.length})</button>
+      </div>
+      {(error || err) && <div style={{ background: "#FBE4E1", color: "#C0392B", padding: 8, borderRadius: 8, fontSize: 13, marginBottom: 10 }}>{error || err}</div>}
+      {!verHist && (
+        <>
+          <div style={{ background: "#fff", color: "#1f2a33", borderRadius: 12, padding: 12, marginBottom: 14, display: "grid", gap: 8 }}>
+            <input style={{ ...inp, width: "100%" }} placeholder="Nueva tarea…" value={titulo} onChange={(e) => setTitulo(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") añadir(); }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input type="date" style={inp} value={fecha} onChange={(e) => setFecha(e.target.value)} title="Fecha límite (opcional)" />
+              <input style={{ ...inp, flex: 1, minWidth: 160 }} placeholder="Nota (opcional)" value={nota} onChange={(e) => setNota(e.target.value)} />
+              <button style={btn("#2F6B3F", "#fff")} onClick={añadir}>+ Añadir</button>
+            </div>
+          </div>
+          {pend.length === 0 && <div style={{ color: soft, fontSize: 14 }}>🎉 No tienes tareas pendientes.</div>}
+          {pend.map((t) => {
+            const venc = t.fechaLimite && t.fechaLimite < hoy;
+            return (
+              <div key={t.id} style={{ background: "#fff", color: "#1f2a33", borderRadius: 10, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10, borderLeft: "4px solid " + (venc ? "#E2685C" : t.fechaLimite === hoy ? "#E0A030" : "#2F6B3F") }}>
+                <button onClick={() => hecha(t)} title="Marcar como hecha" style={{ width: 26, height: 26, borderRadius: 13, border: "2px solid #2F6B3F", background: "#fff", cursor: "pointer", flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{t.titulo}</div>
+                  {(t.fechaLimite || t.nota) && <div style={{ fontSize: 12, color: venc ? "#C0392B" : "#6b7a86" }}>{t.fechaLimite ? (venc ? "Vencida: " : "Para: ") + new Date(t.fechaLimite + "T12:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" }) : ""}{t.fechaLimite && t.nota ? " · " : ""}{t.nota}</div>}
+                </div>
+                <button onClick={() => borrar(t)} title="Eliminar" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 15, color: "#9aa7b1" }}>🗑</button>
+              </div>
+            );
+          })}
+        </>
+      )}
+      {verHist && (
+        <>
+          {hechas.length === 0 && <div style={{ color: soft, fontSize: 14 }}>Todavía no has completado ninguna tarea.</div>}
+          {hechas.map((t) => (
+            <div key={t.id} style={{ background: "#fff", color: "#1f2a33", borderRadius: 10, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10, opacity: 0.9 }}>
+              <span style={{ fontSize: 18 }}>✅</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14, textDecoration: "line-through", color: "#6b7a86" }}>{t.titulo}</div>
+                <div style={{ fontSize: 12, color: "#2F6B3F" }}>Realizada el {mtFechaHora(t.hechaEn)}{t.nota ? " · " + t.nota : ""}</div>
+              </div>
+              <button onClick={() => reabrir(t)} style={btn("#E6EBF0", "#333")}>Reabrir</button>
+              <button onClick={() => borrar(t)} title="Eliminar" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 15, color: "#9aa7b1" }}>🗑</button>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,profesorId=null,profesorNombre=null,esSuperAdmin=false,authEmail=null}){
   // Navegación en dos niveles: zona (Adultos / Infantil / General) y pestaña dentro de la zona
   const navIni=(()=>{try{const j=JSON.parse(localStorage.getItem("gcr_admin_nav")||"null");if(j&&ADMIN_TABS.some(t=>t.id===j.tab&&t.zonas.includes(j.zona)))return j;}catch(e){}return {zona:"agenda",tab:"agenda"};})();
@@ -17868,7 +17983,9 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
       {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
+      {esSuperAdmin&&tab!=="mis_tareas_sa"&&<AvisoTareas db={db} F={{collection,onSnapshot,doc,addDoc,updateDoc,deleteDoc}} onIr={()=>setTab("mis_tareas_sa")}/>}
       {tab==="agenda"&&<ModAgenda data={data} setData={setData} esSuperAdmin={esSuperAdmin}/>}
+      {tab==="mis_tareas_sa"&&(esSuperAdmin?<MisTareasVista db={db} F={{collection,onSnapshot,doc,addDoc,updateDoc,deleteDoc}} ink="#1f2a33" soft="#5C6C62"/>:<div style={{fontSize:13}}>Solo disponible para el superadmin.</div>)}
       {tab==="cursosadultos"&&<ModCursosAdultos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
