@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { initializeApp, deleteApp } from "firebase/app";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot,
          addDoc, deleteDoc, updateDoc, serverTimestamp, query, orderBy, getDocs, where
 } from "firebase/firestore";
@@ -499,6 +500,12 @@ const firebaseConfig = {
 };
 
 const firebaseApp = initializeApp(firebaseConfig);
+// App Check (Fraud Defense / reCAPTCHA Enterprise): comprueba que las peticiones vienen de las webs reales de Golf B.
+// Modo vigilar: no bloquea nada hasta que se active el cumplimiento en la consola de Firebase.
+try {
+  if (typeof window !== "undefined" && window.location.hostname === "localhost") window.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+  initializeAppCheck(firebaseApp, { provider: new ReCaptchaEnterpriseProvider("6LeXiBsuAAAAAODBncyVXD11bnAMYF_AaiIwvktu"), isTokenAutoRefreshEnabled: true });
+} catch (e) { console.warn("App Check:", e); }
 const db      = getFirestore(firebaseApp);
 const auth    = getAuth(firebaseApp);
 const storage = getStorage(firebaseApp, "gs://golf-ciudad-real-50819.firebasestorage.app");
