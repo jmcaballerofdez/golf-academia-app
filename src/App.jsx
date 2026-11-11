@@ -15282,8 +15282,6 @@ const ADMIN_TABS=[
   {id:"calendario",label:"Calendario Escolar",icon:"🗓️",zonas:["infantil"]},
   {id:"alumnos",label:"Alumnos",icon:"👤",zonas:["adultos","infantil"]},
   {id:"clases",label:"Informe de clases",icon:"📊",zonas:["adultos","infantil"]},
-  {id:"cursosadultos",label:"Cursos Adultos",icon:"🎓",zonas:["adultos"]},
-  {id:"bonos",label:"Bonos",icon:"🎫",zonas:["adultos"]},
   {id:"programas",label:"Programas",icon:"📚",zonas:["infantil"]},
   {id:"ejercicios",label:"Ejercicios & Tests",icon:"🏋️",zonas:["adultos","infantil"]},
   {id:"pagos",label:"Pagos",icon:"💶",zonas:["adultos","infantil"]},
