@@ -16773,7 +16773,7 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
   const tituloDe=e=>e.titulo||nombresDe(e).join(", ")||AGENDA_TIPOS[e.tipo]?.label||"Clase";
 
   function abrirNueva(fecha,hora){
-    setForm({fecha,hora,dur:2,tipo:"individual",titulo:"",alumnoIds:[],nClase:"",hecha:false,nota:"",repetir:0});
+    setForm({fecha,hora,dur:2,tipo:"individual",titulo:"",alumnoIds:[],nClase:"",hecha:false,nota:"",repetir:0,dias:[],nClases:8,precioCurso:""});
     setModal("new");
   }
   function abrirEditar(e){
@@ -16800,12 +16800,27 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
     if(base.titulo) nuevosGrupos[gKey(base.titulo)]=form.alumnoIds||[];
     if(modal==="new"){
       const nuevos=[];
-      const veces=Math.min(Math.max(Number(form.repetir)||0,0),30);
-      for(let k=0;k<=veces;k++){
-        nuevos.push({...base,id:uid(),fecha:agendaSumaDias(base.fecha,7*k),
-          nClase:base.nClase===""?"":base.nClase+k,hecha:k===0?base.hecha:false});
+      let cobrosGr=data.cobrosGrupos||{};
+      if(base.tipo==="curso"){
+        // Curso: varios días por semana, nº total de clases y coste del curso (cobro único en la primera clase)
+        const dow0=(new Date(base.fecha+"T12:00:00").getDay()+6)%7;
+        const dias=(form.dias&&form.dias.length)?form.dias:[dow0];
+        const total=Math.min(Math.max(Number(form.nClases)||1,1),60);
+        let n0=base.nClase===""?1:base.nClase;
+        for(let f=base.fecha,i=0;nuevos.length<total&&i<600;f=agendaSumaDias(f,1),i++){
+          const dow=(new Date(f+"T12:00:00").getDay()+6)%7;
+          if(dias.includes(dow)) nuevos.push({...base,id:uid(),fecha:f,nClase:n0+nuevos.length,hecha:nuevos.length===0?base.hecha:false});
+        }
+        const pc=String(form.precioCurso||"").replace(",",".").trim();
+        if(pc&&base.titulo){ const kk=gKey(base.titulo); cobrosGr={...cobrosGr,[kk]:{...cfgCurso(data,kk),modo:"unico",importe:pc}}; }
+      } else {
+        const veces=Math.min(Math.max(Number(form.repetir)||0,0),30);
+        for(let k=0;k<=veces;k++){
+          nuevos.push({...base,id:uid(),fecha:agendaSumaDias(base.fecha,7*k),
+            nClase:base.nClase===""?"":base.nClase+k,hecha:k===0?base.hecha:false});
+        }
       }
-      setData({...data,agendaAdultos:[...lista,...nuevos],agendaGrupos:nuevosGrupos});
+      setData({...data,agendaAdultos:[...lista,...nuevos],agendaGrupos:nuevosGrupos,cobrosGrupos:cobrosGr});
     } else {
       const o=lista.find(x=>x.id===modal);
       const delta=o?Math.round((new Date(base.fecha+"T12:00:00")-new Date(o.fecha+"T12:00:00"))/86400000):0;
@@ -17060,7 +17075,21 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
       <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,marginBottom:14,cursor:"pointer"}}>
         <input type="checkbox" checked={!!form.hecha} onChange={e=>setForm(f=>({...f,hecha:e.target.checked}))}/> ✓ Clase ya realizada
       </label>
-      {modal==="new"&&<Field label="Repetir cada semana (veces más)">
+      {modal==="new"&&form.tipo==="curso"&&<div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
+        <div style={{fontWeight:800,fontSize:13,marginBottom:6}}>🎓 Datos del curso</div>
+        <div style={{fontSize:12,color:G.soft,marginBottom:4}}>Días de la semana en que se da (si no marcas ninguno, solo el día de la fecha elegida)</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {AGENDA_DIAS.map((d,i)=>{const on=(form.dias||[]).includes(i);
+            return <button key={d} type="button" onClick={()=>setForm(f=>{const ds=f.dias||[];return {...f,dias:on?ds.filter(x=>x!==i):[...ds,i].sort()};})}
+              style={{border:"none",borderRadius:16,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",background:on?G.fairway:"#E6EBF0",color:on?"#fff":"#333"}}>{d}</button>;})}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <Field label="Nº total de clases del curso"><Input type="number" value={String(form.nClases??"")} onChange={v=>setForm(f=>({...f,nClases:v}))}/></Field>
+          <Field label="Coste del curso por alumno (€, IVA incl.)"><Input value={form.precioCurso||""} onChange={v=>setForm(f=>({...f,precioCurso:v}))} placeholder="Ej: 164.95"/></Field>
+        </div>
+        <div style={{fontSize:11,color:G.soft}}>Se crean todas las clases numeradas, con los alumnos que añadas arriba. El coste queda como cobro único en la primera clase, donde marcas quién ha pagado y quién está pendiente.</div>
+      </div>}
+      {modal==="new"&&form.tipo!=="curso"&&<Field label="Repetir cada semana (veces más)">
         <Sel value={String(form.repetir||0)} onChange={v=>setForm(f=>({...f,repetir:Number(v)}))}
           options={[0,1,2,3,4,5,6,7,8,9,10,12,15,20].map(n=>({value:String(n),label:n===0?"No repetir":n+" semanas más (el Nº de clase sube solo)"}))}/>
       </Field>}
@@ -17115,11 +17144,11 @@ function ModCursosAdultos({data,setData}){
   }
 
   function abrirNuevo(){
-    setForm({modalidadId:"adulto_iniciacion",plazas:8,precio:"",horario:"",fechaInicio:"",fechaFin:"",nombre:"",activo:true,notas:"",agendar:true,ag:{dias:[],hora:"17:00",durMin:60,nClases:8}});
+    setForm({modalidadId:"adulto_iniciacion",plazas:8,precio:"",horario:"",fechaInicio:"",fechaFin:"",nombre:"",activo:true,notas:""});
     setModal({});
   }
   function abrirEditar(c){
-    setForm({...c,agendar:false,ag:c.agenda||{dias:[],hora:"17:00",durMin:60,nClases:8}});
+    setForm({...c});
     setModal(c);
   }
   function guardar(){
@@ -17136,42 +17165,9 @@ function ModCursosAdultos({data,setData}){
       activo: form.activo!==false,
       notas: form.notas||"",
     };
-    const ag=form.ag||{};
-    reg.agenda={dias:ag.dias||[],hora:ag.hora||"17:00",durMin:Number(ag.durMin)||60,nClases:Number(ag.nClases)||0};
     const existe = (data.cursos||[]).some(c=>c.id===reg.id);
     const nuevos = existe ? (data.cursos||[]).map(c=>c.id===reg.id?reg:c) : [...(data.cursos||[]),reg];
-    let extra={};
-    if(form.agendar){
-      if(!reg.fechaInicio||!reg.agenda.dias.length||!(reg.agenda.nClases>0||reg.fechaFin)){
-        alert("Para agendar las clases indica la fecha de inicio, los días de la semana y cuántas clases son (o la fecha fin)."); return;
-      }
-      const lista=data.agendaAdultos||[];
-      const ya=new Set(lista.filter(e=>e.cursoId===reg.id).map(e=>e.fecha));
-      const fechas=[];
-      for(let f=reg.fechaInicio,n=0;n<400;f=agendaSumaDias(f,1),n++){
-        if(reg.fechaFin&&f>reg.fechaFin) break;
-        if(!reg.fechaFin&&fechas.length+ya.size>=reg.agenda.nClases) break;
-        if(reg.agenda.nClases&&fechas.length+ya.size>=reg.agenda.nClases) break;
-        const dow=(new Date(f+"T12:00:00").getDay()+6)%7;
-        if(reg.agenda.dias.includes(dow)&&!ya.has(f)) fechas.push(f);
-      }
-      const durBloques=Math.max(1,Math.round(reg.agenda.durMin/30));
-      const nuevas=fechas.map(f=>({id:uid(),fecha:f,hora:reg.agenda.hora,dur:durBloques,tipo:"curso",titulo:reg.nombre,alumnoIds:[],nClase:"",hecha:false,nota:"",cursoId:reg.id}));
-      // renumerar las clases del curso por orden de fecha
-      const todas=[...lista,...nuevas];
-      const orden=todas.filter(e=>e.cursoId===reg.id).sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora));
-      const num={}; orden.forEach((e,i)=>{num[e.id]=i+1;});
-      const agendaAdultos=todas.map(e=>num[e.id]?{...e,nClase:num[e.id]}:e);
-      // alumnos matriculados en el curso y precio del curso (cobro único)
-      const k=reg.nombre.trim().toLowerCase();
-      const ag0=data.agendaGrupos||{};
-      const miembros=[...new Set([...(ag0[k]||[]),...(data.alumnos||[]).filter(a=>a.cursoId===reg.id&&a.activo!==false).map(a=>a.id)])];
-      const cg=data.cobrosGrupos||{};
-      extra={agendaAdultos,agendaGrupos:{...ag0,[k]:miembros},
-        cobrosGrupos:(cg[k]||!reg.precio)?cg:{...cg,[k]:{modo:"unico",importe:String(reg.precio)}}};
-      alert(nuevas.length?("Listo: se han agendado "+nuevas.length+" clases en la Agenda."):"No había clases nuevas que agendar (ya estaban todas).");
-    }
-    setData({...data, cursos:nuevos, ...extra});
+    setData({...data, cursos:nuevos});
     setModal(null);
   }
   function eliminar(c){
@@ -17241,25 +17237,6 @@ function ModCursosAdultos({data,setData}){
       <Field label="Horario">
         <Input value={form.horario||""} onChange={v=>setForm(f=>({...f,horario:v}))} placeholder="Ej: Martes y jueves 18:00-19:00"/>
       </Field>
-      <div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
-        <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
-          <input type="checkbox" checked={!!form.agendar} onChange={e=>setForm(f=>({...f,agendar:e.target.checked}))}/> 🗓️ {modal.id?"Agendar / completar las clases en la Agenda":"Agendar las clases automáticamente en la Agenda"}
-        </label>
-        {form.agendar&&<div style={{marginTop:10}}>
-          <div style={{fontSize:12,color:G.soft,marginBottom:4}}>Días de la semana (la primera clase es la «Fecha inicio» o el primer día marcado desde ella)</div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-            {["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"].map((d,i)=>{const on=(form.ag?.dias||[]).includes(i);
-              return <button key={d} type="button" onClick={()=>setForm(f=>{const ds=f.ag?.dias||[];return {...f,ag:{...f.ag,dias:on?ds.filter(x=>x!==i):[...ds,i].sort()}};})}
-                style={{border:"none",borderRadius:16,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",background:on?G.fairway:"#E6EBF0",color:on?"#fff":"#333"}}>{d}</button>;})}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-            <Field label="Hora"><Input type="time" value={form.ag?.hora||""} onChange={v=>setForm(f=>({...f,ag:{...f.ag,hora:v}}))}/></Field>
-            <Field label="Duración (min)"><Sel value={String(form.ag?.durMin||60)} onChange={v=>setForm(f=>({...f,ag:{...f.ag,durMin:Number(v)}}))} options={[30,60,90,120,150,180].map(n=>({value:String(n),label:n+" min"}))}/></Field>
-            <Field label="Nº de clases"><Input type="number" value={String(form.ag?.nClases??"")} onChange={v=>setForm(f=>({...f,ag:{...f.ag,nClases:v}}))}/></Field>
-          </div>
-          <div style={{fontSize:11,color:G.soft}}>Se crean como «Curso / Plan», numeradas, con los alumnos ya matriculados y el precio del curso como cobro único en la primera clase. Si ya existen, no se duplican. Los festivos no se saltan solos: borra desde la Agenda las clases que caigan en festivo.</div>
-        </div>}
-      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
         <Field label="Plazas">
           <Input type="number" min="1" value={form.plazas??""} onChange={v=>setForm(f=>({...f,plazas:v}))}/>
