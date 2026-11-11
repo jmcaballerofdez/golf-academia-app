@@ -16324,7 +16324,7 @@ function agendaCarriles(evs){
   const o=[...evs].sort((a,b)=>agendaMin(a.hora)-agendaMin(b.hora)||(b.dur||2)-(a.dur||2));
   const fines=[]; const res={};
   o.forEach(e=>{
-    const ini=agendaMin(e.hora), fin=ini+30*(e.dur||2);
+    const ini=agendaMin(e.hora), fin=ini+(e.durMin||30*(e.dur||2));
     let l=fines.findIndex(f=>f<=ini); if(l<0){l=fines.length;fines.push(0);}
     fines[l]=fin; res[e.id]={lane:l,n:1,ini,fin};
   });
@@ -16472,8 +16472,53 @@ function CobroClase({data,setData,clase}){
   </div>;
 }
 
-function ModAgenda({data,setData}){
-  const lista=data.agendaAdultos||[];
+function ModAgenda({data,setData,esSuperAdmin=false}){
+  const listaTodo=data.agendaAdultos||[];
+  const lista=listaTodo.filter(e=>e.tipo!=="personal");
+  // Agenda personal compartida con el resto de apps (colección propia, solo superadmin)
+  const [personales,setPersonales]=useState([]);
+  const [pModal,setPModal]=useState(null); // null | "new" | id
+  const [pForm,setPForm]=useState({});
+  useEffect(()=>{
+    if(!esSuperAdmin) return;
+    const unsub=onSnapshot(collection(db,"clubes","ciudad-real","agenda_personal"),
+      snap=>setPersonales(snap.docs.map(d=>({...d.data(),id:d.id,tipo:"personal"}))),
+      err=>console.warn("agenda_personal:",err));
+    return ()=>unsub();
+  },[esSuperAdmin]);
+  // Migración única: eventos "Reunión / personal" antiguos -> agenda_personal (mismo id, sin duplicados)
+  const migrando=useRef(false);
+  useEffect(()=>{
+    if(!esSuperAdmin||migrando.current) return;
+    const viejos=listaTodo.filter(e=>e.tipo==="personal");
+    if(!viejos.length) return;
+    migrando.current=true;
+    (async()=>{
+      try{
+        for(const e of viejos){
+          await setDoc(doc(db,"clubes","ciudad-real","agenda_personal",String(e.id)),
+            {titulo:e.titulo||"",fecha:e.fecha,hora:e.hora,durMin:(e.dur||2)*30,nota:e.nota||"",creadoEn:Date.now()});
+        }
+        setData({...data,agendaAdultos:listaTodo.filter(e=>e.tipo!=="personal")});
+      }catch(err){ console.warn("Migración agenda personal:",err); migrando.current=false; }
+    })();
+  },[esSuperAdmin,listaTodo.length]);
+  function abrirPersonal(fecha,hora){ setPForm({fecha,hora,durMin:60,titulo:"",nota:""}); setPModal("new"); }
+  function editarPersonal(e){ setPForm({fecha:e.fecha,hora:e.hora,durMin:e.durMin||30*(e.dur||2),titulo:e.titulo||"",nota:e.nota||""}); setPModal(e.id); }
+  async function guardarPersonal(){
+    if(!pForm.fecha||!pForm.hora) return;
+    const reg={titulo:(pForm.titulo||"").trim()||"Reunión",fecha:pForm.fecha,hora:pForm.hora,durMin:Math.max(5,Number(pForm.durMin)||60),nota:(pForm.nota||"").trim()};
+    try{
+      if(pModal==="new") await addDoc(collection(db,"clubes","ciudad-real","agenda_personal"),{...reg,creadoEn:Date.now()});
+      else await updateDoc(doc(db,"clubes","ciudad-real","agenda_personal",pModal),reg);
+      setPModal(null);
+    }catch(err){ alert("No se pudo guardar: "+err.message); }
+  }
+  async function borrarPersonal(){
+    if(pModal==="new"||!confirm("¿Eliminar este evento?")) return;
+    try{ await deleteDoc(doc(db,"clubes","ciudad-real","agenda_personal",pModal)); setPModal(null); }
+    catch(err){ alert("No se pudo eliminar: "+err.message); }
+  }
   const alumnos=(data.alumnos||[]).filter(a=>a.activo!==false);
   const [lunes,setLunes]=useState(()=>agendaLunes(today()));
   const [todoDia,setTodoDia]=useState(false);
@@ -16501,11 +16546,11 @@ function ModAgenda({data,setData}){
     autos.push({id:idAuto,fecha:f,hora,dur:Math.max(1,Math.ceil((fin-ini)/30)),tipo:"escuela",titulo:g.nombre||"Grupo infantil",
       alumnoIds:g.alumnoIds||[],nClase:"",hecha:f<today(),auto:true,horario:g.horaIni+(g.horaFin?"–"+g.horaFin:"")});
   });
-  const deSemana=[...lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo),...autos];
+  const deSemana=[...lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo),...autos,...(esSuperAdmin?personales.filter(e=>e.fecha>=lunes&&e.fecha<=domingo):[])];
   // Si hay algo fuera del horario habitual (p.ej. a las 14:00) se muestra todo el día
   const verTodo=todoDia||deSemana.some(e=>agendaMin(e.hora)>=14*60&&agendaMin(e.hora)<16*60);
   const slots=[];
-  for(let m=9*60;m<20*60;m+=30){ if(!verTodo&&m>=13*60+30&&m<16*60) continue; slots.push(m); }
+  for(let m=8*60;m<20*60;m+=30){ if(!verTodo&&m>=13*60+30&&m<16*60) continue; slots.push(m); }
   const idxSlot=m=>{let i=slots.indexOf(m);if(i>=0)return i;return slots.findIndex(s=>s>=m);};
 
   const hoy=today();
@@ -16623,6 +16668,7 @@ function ModAgenda({data,setData}){
         <input type="checkbox" checked={verTodo} disabled={deSemana.some(e=>agendaMin(e.hora)>=14*60&&agendaMin(e.hora)<16*60)} onChange={e=>setTodoDia(e.target.checked)}/> Ver mediodía
       </label>
       <Btn small onClick={()=>abrirNueva(hoy>=lunes&&hoy<=domingo?hoy:lunes,"17:00")}>+ Nueva clase</Btn>
+      {esSuperAdmin&&<Btn small color="secondary" onClick={()=>abrirPersonal(hoy>=lunes&&hoy<=domingo?hoy:lunes,"10:00")}>+ Reunión / evento</Btn>}
     </div>
 
     {(()=>{
@@ -16676,12 +16722,12 @@ function ModAgenda({data,setData}){
               style={{position:"absolute",top:i*AGENDA_H,height:AGENDA_H,width:"100%",boxSizing:"border-box",cursor:"pointer",
                 borderTop:m%60===0?"1px solid #DCE4EB":"1px dotted #E8EEF3"}}/>)}
             {(()=>{const car=agendaCarriles(delDia);return delDia.map(e=>{
-              const i=idxSlot(agendaMin(e.hora)); if(i<0) return null;
+              const mi=agendaMin(e.hora); const i=idxSlot(Math.floor(mi/30)*30); if(i<0) return null;
               const cr=car[e.id]||{lane:0,n:1};
               const t=AGENDA_TIPOS[e.tipo]||AGENDA_TIPOS.individual;
-              const h=Math.max(1,e.dur||2)*AGENDA_H-2;
-              return <div key={e.id} onClick={ev=>{ev.stopPropagation();e.auto?setInfo(e):abrirEditar(e);}}
-                style={{position:"absolute",top:i*AGENDA_H+1,left:"calc("+(cr.lane*100/cr.n)+"% + 2px)",width:"calc("+(100/cr.n)+"% - 4px)",height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
+              const h=Math.max(15,(e.durMin||Math.max(1,e.dur||2)*30))/30*AGENDA_H-2;
+              return <div key={e.id} onClick={ev=>{ev.stopPropagation();e.tipo==="personal"?editarPersonal(e):e.auto?setInfo(e):abrirEditar(e);}}
+                style={{position:"absolute",top:(i+(mi%30)/30)*AGENDA_H+1,left:"calc("+(cr.lane*100/cr.n)+"% + 2px)",width:"calc("+(100/cr.n)+"% - 4px)",height:h,boxSizing:"border-box",overflow:"hidden",cursor:"pointer",
                   background:e.cancelada?"#FBE4E1":t.bg,borderLeft:"4px solid "+(e.cancelada?"#E2685C":t.color),outline:e.auto?"1px dashed "+t.color:"none",borderRadius:6,padding:"2px 5px",fontSize:11,lineHeight:1.25,
                   color:G.ink,opacity:e.cancelada?0.5:(e.hecha?0.6:1),textDecoration:e.cancelada?"line-through":"none",boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
                 <div style={{fontWeight:700,color:e.cancelada?"#C0392B":t.color}}>{e.cancelada?"❌ ":(e.hecha?"✓ ":"")}{(()=>{const st=estadoCobroClase(e,data);return st==="pagado"?"💶 ":st==="pendiente"?"⏳ ":(st==="sin"&&e.fecha<=hoy&&e.fecha>=cobroDesdeFecha(data))?"❗ ":"";})()}{tituloDe(e)}</div>
@@ -16705,6 +16751,21 @@ function ModAgenda({data,setData}){
     </Modal>}
     <div style={{fontSize:11,color:G.soft,marginTop:8}}>Pulsa en una hora vacía para añadir una clase, o en una clase para editarla, marcarla como hecha o borrarla.</div>
 
+    {pModal&&<Modal title={pModal==="new"?"Nuevo evento personal":"Editar evento personal"} onClose={()=>setPModal(null)}>
+      <Field label="Título"><Input value={pForm.titulo||""} onChange={v=>setPForm(f=>({...f,titulo:v}))} placeholder="Ej: Reunión con proveedor, dentista…"/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+        <Field label="Fecha"><Input type="date" value={pForm.fecha||""} onChange={v=>setPForm(f=>({...f,fecha:v}))}/></Field>
+        <Field label="Hora"><Input type="time" value={pForm.hora||""} onChange={v=>setPForm(f=>({...f,hora:v}))}/></Field>
+        <Field label="Duración (min)"><Input type="number" value={String(pForm.durMin??"")} onChange={v=>setPForm(f=>({...f,durMin:v}))}/></Field>
+      </div>
+      <Field label="Nota (opcional)"><Textarea value={pForm.nota||""} onChange={v=>setPForm(f=>({...f,nota:v}))} rows={2}/></Field>
+      <div style={{fontSize:11,color:G.soft,marginBottom:10}}>Este evento se ve y se edita igual en todas tus apps.</div>
+      <div style={{display:"flex",gap:8,justifyContent:"space-between"}}>
+        <div>{pModal!=="new"&&<Btn color="danger" onClick={borrarPersonal}>Eliminar</Btn>}</div>
+        <div style={{display:"flex",gap:8}}><Btn color="secondary" onClick={()=>setPModal(null)}>Cancelar</Btn><Btn onClick={guardarPersonal}>Guardar</Btn></div>
+      </div>
+    </Modal>}
+
     {info&&<Modal title={"🧒 "+info.titulo} onClose={()=>setInfo(null)}>
       <div style={{fontSize:14,marginBottom:10}}><b>{new Date(info.fecha+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"})}</b> · {info.horario}</div>
       <div style={{fontSize:13,color:G.soft,marginBottom:6}}>Alumnos del grupo ({info.alumnoIds.length}):</div>
@@ -16727,8 +16788,8 @@ function ModAgenda({data,setData}){
 
     {modal&&<Modal title={modal==="new"?"Nueva clase":"Editar clase"} onClose={()=>setModal(null)}>
       <Field label="Tipo">
-        <Sel value={form.tipo} onChange={v=>setForm(f=>({...f,tipo:v}))}
-          options={Object.entries(AGENDA_TIPOS).map(([k,t])=>({value:k,label:t.label}))}/>
+        <Sel value={form.tipo} onChange={v=>{ if(v==="personal"&&esSuperAdmin){ const f0=form; setModal(null); abrirPersonal(f0.fecha,f0.hora); return; } setForm(f=>({...f,tipo:v})); }}
+          options={Object.entries(AGENDA_TIPOS).filter(([k])=>k!=="personal"||(esSuperAdmin&&modal==="new")).map(([k,t])=>({value:k,label:k==="personal"?"Reunión / evento personal (sin clase)":t.label}))}/>
       </Field>
       <Field label="Nombre (grupo, curso, alumno o asunto)">
         <input list="agenda-titulos" value={form.titulo||""}
@@ -16750,7 +16811,7 @@ function ModAgenda({data,setData}){
         <Field label="Fecha"><Input type="date" value={form.fecha||""} onChange={v=>setForm(f=>({...f,fecha:v}))}/></Field>
         <Field label="Hora">
           <Sel value={form.hora} onChange={v=>setForm(f=>({...f,hora:v}))}
-            options={Array.from({length:24},(_,i)=>agendaHora(9*60+30*i)).map(h=>({value:h,label:h}))}/>
+            options={Array.from({length:26},(_,i)=>agendaHora(8*60+30*i)).map(h=>({value:h,label:h}))}/>
         </Field>
         <Field label="Duración">
           <Sel value={String(form.dur)} onChange={v=>setForm(f=>({...f,dur:Number(v)}))}
@@ -17807,7 +17868,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="mensajes"&&<ModMensajeria data={data} setData={setData}/>}
       {tab==="tareas"&&<ModTareas data={data} setData={setData}/>}
       {tab==="bonos"&&<ModBonos data={data} setData={setData}/>}
-      {tab==="agenda"&&<ModAgenda data={data} setData={setData}/>}
+      {tab==="agenda"&&<ModAgenda data={data} setData={setData} esSuperAdmin={esSuperAdmin}/>}
       {tab==="cursosadultos"&&<ModCursosAdultos data={data} setData={setData}/>}
       {tab==="ajustes"&&<ModAjustes data={data} setData={setData} onLogout={onLogout}/>}
     </div>
