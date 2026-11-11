@@ -16400,6 +16400,13 @@ function clasePideCobro(e,data){
 function claseAlumnos(e,data){ const k=(e.titulo||"").trim().toLowerCase(); const g=data.agendaGrupos||{}; return (k&&g[k])?g[k]:(e.alumnoIds||[]); }
 // "pagado" | "pendiente" | "sin" (sin cobro anotado) | null (no aplica)
 function estadoCobroClase(e,data){
+  if(e&&!e.cancelada&&esCursoUnico(e,data)){
+    if(!esPrimeraClaseCurso(e,data)) return null;
+    const k=(e.titulo||"").trim().toLowerCase(); const ids=claseAlumnos(e,data); if(!ids.length) return null;
+    const cs=ids.map(id=>cobroCursoDe(data,k,id));
+    if(cs.some(c=>!c)) return "sin";
+    return cs.some(c=>c.estado!=="pagado")?"pendiente":"pagado";
+  }
   if(!clasePideCobro(e,data)) return null;
   const ids=claseAlumnos(e,data); if(!ids.length) return null;
   const cs=ids.map(id=>(data.cobros||[]).find(c=>c.claseId===e.id&&c.alumnoId===id));
@@ -16411,6 +16418,88 @@ function clasesSinCobrar(data){
   const d=desde<"2026-11-01"?"2026-11-01":desde;
   return (data.agendaAdultos||[]).filter(e=>e.fecha<=hoy&&e.fecha>=d&&estadoCobroClase(e,data)==="sin")
     .sort((a,b)=>(b.fecha+b.hora).localeCompare(a.fecha+a.hora));
+}
+
+// ── Cobro único de un CURSO (precio fijo del curso), en la primera clase ──
+function cfgCurso(data,key){
+  const c=(data.cobrosGrupos||{})[key]||{};
+  const def=key.indexOf("curso hcp")===0?{importe:"164.95",importeAlt:"174.95",modo:"unico"}:{};
+  return {...def,...c};
+}
+function esCursoUnico(e,data){
+  if(!e||e.tipo!=="curso") return false;
+  return (cfgCurso(data,(e.titulo||"").trim().toLowerCase()).modo||"unico")==="unico";
+}
+function primeraClaseCurso(e,data){
+  const k=(e.titulo||"").trim().toLowerCase();
+  const ms=(data.agendaAdultos||[]).filter(x=>x.tipo==="curso"&&!x.cancelada&&(x.titulo||"").trim().toLowerCase()===k).sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora));
+  return ms[0]||null;
+}
+function esPrimeraClaseCurso(e,data){ const p=primeraClaseCurso(e,data); return !!p&&p.id===e.id; }
+function cobroCursoDe(data,key,alumnoId){ return (data.cobros||[]).find(c=>c.grupoKey===key&&c.alumnoId===alumnoId&&!c.claseId&&(c.periodo||"")===""); }
+function CobroCurso({data,setData,clase}){
+  // clase: {titulo,fecha,alumnoIds,grupoKey}
+  const key=clase.grupoKey; const cfg=cfgCurso(data,key);
+  const cobros=data.cobros||[]; const ingresos=data.ingresos||[]; const hoy=today();
+  const [met,setMet]=useState({});
+  const [precio,setPrecio]=useState(cfg.importe!==undefined?String(cfg.importe):"");
+  const num=v=>Number(String(v).replace(",","."))||0;
+  const nomAl=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+  const alt=num(cfg.importeAlt);
+  const importeFor=m=>(alt&&(m==="Bizum"||m==="Transferencia"))?alt:num(cfg.importe);
+  function guardarPrecio(){ const v=String(precio).replace(",","."); setData({...data,cobrosGrupos:{...(data.cobrosGrupos||{}),[key]:{...cfg,modo:cfg.modo||"unico",importe:v}}}); }
+  function marcar(id,pagado){
+    const m=met[id]||"Efectivo"; const importe=pagado?importeFor(m):num(cfg.importe);
+    if(!importe){ alert("Primero pon el coste del curso (IVA incluido) y pulsa fuera de la casilla."); return; }
+    const ex=cobroCursoDe(data,key,id); const cid=ex?ex.id:uid();
+    let nuevosIng=ingresos, reg;
+    if(pagado){
+      const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
+      const ing={id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:clase.titulo+" — "+nomAl(id),alumnoId:id,importeBase:base,ivaPct:COBRO_IVA,ivaImporte:iva,retencionPct:0,retencionImporte:0,importeTotal:importe,metodo:m,cobroId:cid};
+      nuevosIng=[...ingresos,ing];
+      reg={...(ex||{id:cid,grupoKey:key,alumnoId:id,concepto:clase.titulo,periodo:"",fechaEmision:hoy,vence:clase.fecha}),importe,estado:"pagado",fechaPago:hoy,metodo:m,ingresoId:ing.id};
+    } else {
+      reg={id:cid,grupoKey:key,alumnoId:id,concepto:clase.titulo,periodo:"",importe,estado:"pendiente",fechaEmision:hoy,vence:clase.fecha};
+    }
+    const cats=data.categoriasIngreso||[];
+    const tieneCat=cats.some(x=>(x.nombre||x)==="Cursos y grupos");
+    setData({...data,ingresos:nuevosIng,cobros:ex?cobros.map(c=>c.id===cid?reg:c):[...cobros,reg],categoriasIngreso:tieneCat?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]});
+  }
+  function deshacer(id){
+    const c=cobroCursoDe(data,key,id); if(!c||!confirm("¿Deshacer el cobro de "+nomAl(id)+"? Se quitará también de la contabilidad.")) return;
+    setData({...data,ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),cobros:cobros.filter(x=>x.id!==c.id)});
+  }
+  const ids=clase.alumnoIds||[];
+  const nPag=ids.filter(id=>cobroCursoDe(data,key,id)?.estado==="pagado").length;
+  return <div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
+    <div style={{fontWeight:800,fontSize:13,color:G.ink,marginBottom:6}}>💶 Cobro del curso (primera clase)</div>
+    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",fontSize:13,marginBottom:6}}>
+      <span>Coste del curso por alumno (IVA incl.):</span>
+      <input value={precio} inputMode="decimal" onChange={e=>setPrecio(e.target.value)} onBlur={guardarPrecio}
+        style={{width:70,border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px 6px",fontSize:13}}/>€
+      {alt>0&&<span style={{fontSize:11,color:G.soft}}>(Bizum/transferencia: {cobroEur(alt)})</span>}
+    </div>
+    <div style={{fontSize:12,color:G.soft,marginBottom:4}}>{nPag} de {ids.length} alumnos han pagado</div>
+    {ids.length===0&&<div style={{fontSize:12,color:G.soft}}>Este curso no tiene alumnos asignados.</div>}
+    {ids.map(id=>{
+      const c=cobroCursoDe(data,key,id); const pagado=c&&c.estado==="pagado";
+      return <div key={id} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",padding:"5px 0",borderTop:"1px solid #E3E9EE",fontSize:13}}>
+        <b style={{flex:"1 1 110px"}}>{nomAl(id)}</b>
+        {pagado?<>
+          <span style={{color:G.grass,fontWeight:700}}>✓ Pagado {cobroEur(c.importe)} · {c.metodo}{c.fechaPago?" · "+c.fechaPago:""}</span>
+          <span style={{cursor:"pointer",color:G.soft,fontSize:12}} onClick={()=>deshacer(id)}>↺ deshacer</span>
+        </>:<>
+          <span style={{color:"#E2685C",fontWeight:700,fontSize:12}}>⏳ Pendiente</span>
+          <select value={met[id]||"Efectivo"} onChange={e=>setMet(m=>({...m,[id]:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>
+            {["Efectivo","Bizum","Transferencia","Tarjeta"].map(x=><option key={x}>{x}</option>)}
+          </select>
+          <Btn small onClick={()=>marcar(id,true)}>Cobrado</Btn>
+          {!c&&<Btn small color="secondary" onClick={()=>marcar(id,false)}>Anotar pendiente</Btn>}
+        </>}
+      </div>;
+    })}
+    <div style={{fontSize:11,color:G.soft,marginTop:6}}>Al pulsar «Cobrado» se anota en Pagos → Ingresos y aparece en Finanzas. Es el mismo cobro que ves en Pagos → Grupos y cobros.</div>
+  </div>;
 }
 
 // ── Cobro por alumno dentro de una clase de la agenda ──────────────
@@ -16830,7 +16919,10 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
         ⚠️ A esa hora ya tienes: {solapes.map(tituloDe).join(" · ")}
       </div>}
       {modal!=="new"&&orig&&!orig.cancelada&&(orig.tipo==="curso"||orig.tipo==="grupo")&&<AsistenciaClase data={data} setData={setData} clase={{id:orig.id,alumnoIds:alumnosDe(orig)}}/>}
-      {modal!=="new"&&orig&&!orig.cancelada&&(orig.tipo==="individual"||orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo||nombresDe(orig).join(", ")||"Clase individual",fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:orig.tipo==="individual"?"ind":gKey(orig.titulo)}}/>}
+      {modal!=="new"&&orig&&!orig.cancelada&&esCursoUnico(orig,data)&&(esPrimeraClaseCurso(orig,data)
+        ?<CobroCurso data={data} setData={setData} clase={{titulo:orig.titulo,fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:gKey(orig.titulo)}}/>
+        :<div style={{background:"#E6EBF0",borderRadius:8,padding:"8px 10px",fontSize:12,color:G.soft,margin:"4px 0 14px"}}>💶 El curso se cobra una sola vez, en la primera clase{primeraClaseCurso(orig,data)?" ("+primeraClaseCurso(orig,data).fecha+")":""}.</div>)}
+      {modal!=="new"&&orig&&!orig.cancelada&&!esCursoUnico(orig,data)&&(orig.tipo==="individual"||orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo||nombresDe(orig).join(", ")||"Clase individual",fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:orig.tipo==="individual"?"ind":gKey(orig.titulo)}}/>}
       {form.tipo!=="personal"&&<div style={{border:"1.5px solid "+(form.cancelada?"#E2685C":"#D9E3EA"),borderRadius:10,padding:"8px 12px",margin:"4px 0 12px",background:form.cancelada?"#FBE4E1":"transparent"}}>
         <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
           <input type="checkbox" checked={!!form.cancelada} onChange={e=>setForm(f=>({...f,cancelada:e.target.checked,hecha:e.target.checked?false:f.hecha,motivoCancel:f.motivoCancel||"Otro"}))}/> ❌ Clase cancelada
