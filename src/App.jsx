@@ -3297,6 +3297,127 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
 }
 
 
+// ═══════════════════════════════════════════════════════════════════
+// INFORME DE CLASES: se calcula solo a partir de la Agenda
+// ═══════════════════════════════════════════════════════════════════
+function ModInformeClases({data}){
+  const hoy=today();
+  const mesIni=hoy.slice(0,8)+"01";
+  const [desde,setDesde]=useState(mesIni);
+  const [hasta,setHasta]=useState(hoy);
+  const [tipo,setTipo]=useState("todos");
+  const [q,setQ]=useState("");
+  const alumnos=data.alumnos||[];
+  const grupos=data.agendaGrupos||{};
+  const gk=t=>(t||"").trim().toLowerCase();
+  const nombresDe=e=>{const k=gk(e.titulo);const ids=(e.auto?e.alumnoIds:((k&&grupos[k])?grupos[k]:(e.alumnoIds||[])))||[];return ids.map(id=>alumnos.find(a=>a.id===id)?.nombre||"").filter(Boolean);};
+  const tituloDe=e=>e.titulo||nombresDe(e).join(", ")||AGENDA_TIPOS[e.tipo]?.label||"Clase";
+  const durH=e=>(e.dur||2)*0.5;
+  const fmtF=f=>{const d=new Date(f+"T12:00:00");return d.toLocaleDateString("es-ES",{weekday:"short",day:"numeric",month:"short"});};
+
+  // Clases de la agenda + clases automáticas de infantil dentro del rango
+  const todas=[...(data.agendaAdultos||[]).filter(e=>e.tipo!=="personal")];
+  const omit=data.agendaOmitidas||[];
+  if(desde&&hasta&&desde<=hasta){
+    for(let f=desde,n=0;f<=hasta&&n<800;f=agendaSumaDias(f,1),n++){
+      if(f<AGENDA_INFANTIL_DESDE) continue;
+      const dIdx=(new Date(f+"T12:00:00").getDay()+6)%7;
+      (data.gruposCurso||[]).forEach(g=>{
+        if(agendaDiaIdx(g.dia)!==dIdx||!g.horaIni) return;
+        const ini=Math.floor(agendaMin(g.horaIni)/30)*30; const fin=g.horaFin?agendaMin(g.horaFin):ini+60; const hora=agendaHora(ini);
+        if((data.agendaAdultos||[]).some(e=>e.fecha===f&&e.tipo!=="personal"&&e.hora===hora)) return;
+        const id="auto-"+g.id+"-"+f; if(omit.includes(id)) return;
+        todas.push({id,fecha:f,hora,dur:Math.max(1,Math.ceil((fin-ini)/30)),tipo:"escuela",titulo:g.nombre||"Grupo infantil",alumnoIds:g.alumnoIds||[],hecha:f<=hoy,auto:true});
+      });
+    }
+  }
+  const enRango=todas.filter(e=>(!desde||e.fecha>=desde)&&(!hasta||e.fecha<=hasta)&&(tipo==="todos"||e.tipo===tipo)
+    &&(!q.trim()||(tituloDe(e)+" "+nombresDe(e).join(" ")).toLowerCase().includes(q.trim().toLowerCase())))
+    .sort((a,b)=>(b.fecha+b.hora).localeCompare(a.fecha+a.hora));
+  const estado=e=>e.cancelada?"cancelada":((e.hecha||e.fecha<=hoy)?"dada":"programada");
+  const dadas=enRango.filter(e=>estado(e)==="dada");
+  const progr=enRango.filter(e=>estado(e)==="programada");
+  const canc=enRango.filter(e=>e.cancelada);
+  const horas=dadas.reduce((s,e)=>s+durH(e),0);
+  const porTipo=Object.keys(AGENDA_TIPOS).filter(k=>k!=="personal").map(k=>({k,n:dadas.filter(e=>e.tipo===k).length,h:dadas.filter(e=>e.tipo===k).reduce((s,e)=>s+durH(e),0)})).filter(x=>x.n>0);
+  const porNombre={}; dadas.forEach(e=>{const t=tituloDe(e);porNombre[t]=porNombre[t]||{n:0,h:0};porNombre[t].n++;porNombre[t].h+=durH(e);});
+  const nombres=Object.entries(porNombre).sort((a,b)=>b[1].n-a[1].n);
+  const motivos={}; canc.forEach(e=>{const m=e.motivoCancel||"Otro";motivos[m]=(motivos[m]||0)+1;});
+
+  function rango(d,h){setDesde(d);setHasta(h);}
+  const hoyD=new Date(hoy+"T12:00:00");
+  const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  const mesAntIni=iso(new Date(hoyD.getFullYear(),hoyD.getMonth()-1,1)), mesAntFin=iso(new Date(hoyD.getFullYear(),hoyD.getMonth(),0));
+  const trimIni=iso(new Date(hoyD.getFullYear(),hoyD.getMonth()-2,1));
+  function exportar(){
+    const esc=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
+    const filas=[["Fecha","Hora","Clase","Tipo","Horas","Estado","Motivo cancelación","Alumnos"].map(esc).join(";")];
+    enRango.slice().reverse().forEach(e=>filas.push([e.fecha,e.hora,tituloDe(e),AGENDA_TIPOS[e.tipo]?.label||e.tipo,durH(e),estado(e),e.cancelada?(e.motivoCancel||"Otro"):"",nombresDe(e).join(", ")].map(esc).join(";")));
+    const blob=new Blob(["﻿"+filas.join("\n")],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="informe-clases-"+desde+"_"+hasta+".csv"; a.click();
+  }
+  const stat=(v,l,c)=><div style={{flex:"1 1 130px",background:"#fff",borderRadius:12,padding:"12px 14px",boxShadow:"0 1px 6px rgba(0,0,0,.06)",textAlign:"center"}}>
+    <div style={{fontSize:26,fontWeight:800,color:c||G.fairway}}>{v}</div><div style={{fontSize:12,color:G.soft}}>{l}</div></div>;
+  const pill=(txt,a,fn)=><button onClick={fn} style={{border:"none",borderRadius:16,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer",background:a?G.fairway:"#E6EBF0",color:a?"#fff":"#333"}}>{txt}</button>;
+  return <div>
+    <h2 style={{margin:"0 0 12px",color:G.fairway}}>📊 Informe de clases</h2>
+    <Card style={{marginBottom:14}}>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {pill("Este mes",desde===mesIni&&hasta===hoy,()=>rango(mesIni,hoy))}
+        {pill("Mes anterior",desde===mesAntIni&&hasta===mesAntFin,()=>rango(mesAntIni,mesAntFin))}
+        {pill("3 meses",desde===trimIni&&hasta===hoy,()=>rango(trimIni,hoy))}
+        {pill("Desde octubre",desde==="2026-10-01"&&hasta===hoy,()=>rango("2026-10-01",hoy))}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+        <Field label="Desde"><Input type="date" value={desde} onChange={setDesde}/></Field>
+        <Field label="Hasta"><Input type="date" value={hasta} onChange={setHasta}/></Field>
+        <Field label="Tipo"><Sel value={tipo} onChange={setTipo} options={[{value:"todos",label:"Todos"},...Object.entries(AGENDA_TIPOS).filter(([k])=>k!=="personal").map(([k,t])=>({value:k,label:t.label}))]}/></Field>
+        <Field label="Buscar (nombre / alumno)"><Input value={q} onChange={setQ} placeholder="Ej: HCP A, David…"/></Field>
+      </div>
+    </Card>
+    <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      {stat(dadas.length,"Clases dadas")}
+      {stat(horas.toLocaleString("es-ES")+" h","Horas impartidas")}
+      {stat(progr.length,"Programadas",G.soft)}
+      {stat(canc.length,"Canceladas","#C0392B")}
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:14,marginBottom:14}}>
+      <Card><div style={{fontWeight:800,fontSize:13,marginBottom:8}}>Por tipo de clase</div>
+        {porTipo.length===0&&<div style={{fontSize:12,color:G.soft}}>Sin clases en el periodo.</div>}
+        {porTipo.map(x=><div key={x.k} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0",borderTop:"1px solid #E3E9EE"}}><span><span style={{display:"inline-block",width:9,height:9,borderRadius:3,background:AGENDA_TIPOS[x.k].color,marginRight:6}}/>{AGENDA_TIPOS[x.k].label}</span><b>{x.n} · {x.h} h</b></div>)}
+        {Object.keys(motivos).length>0&&<><div style={{fontWeight:800,fontSize:13,margin:"12px 0 6px"}}>Cancelaciones por motivo</div>
+          {Object.entries(motivos).map(([m,n])=><div key={m} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0",borderTop:"1px solid #E3E9EE"}}><span>{m}</span><b>{n}</b></div>)}</>}
+      </Card>
+      <Card><div style={{fontWeight:800,fontSize:13,marginBottom:8}}>Por curso / alumno</div>
+        <div style={{maxHeight:230,overflowY:"auto"}}>
+        {nombres.length===0&&<div style={{fontSize:12,color:G.soft}}>Sin clases en el periodo.</div>}
+        {nombres.map(([t,v])=><div key={t} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0",borderTop:"1px solid #E3E9EE"}}><span>{t}</span><b>{v.n} · {v.h} h</b></div>)}
+        </div>
+      </Card>
+    </div>
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:8,flexWrap:"wrap"}}>
+        <div style={{fontWeight:800,fontSize:13}}>Detalle ({enRango.length} clases)</div>
+        <Btn small color="secondary" onClick={exportar}>⬇ Descargar Excel (CSV)</Btn>
+      </div>
+      <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:560}}>
+        <thead><tr style={{textAlign:"left",color:G.soft,fontSize:11}}><th style={{padding:"4px 6px"}}>Fecha</th><th>Hora</th><th>Clase</th><th>Tipo</th><th>Horas</th><th>Estado</th><th>Cobro</th></tr></thead>
+        <tbody>
+        {enRango.length===0&&<tr><td colSpan={7} style={{padding:14,textAlign:"center",color:G.soft}}>No hay clases en este periodo. Cambia las fechas arriba.</td></tr>}
+        {enRango.map(e=>{const st=estado(e);const cb=e.auto?null:estadoCobroClase(e,data);const t=AGENDA_TIPOS[e.tipo]||AGENDA_TIPOS.individual;
+          return <tr key={e.id} style={{borderTop:"1px solid #E3E9EE",opacity:st==="cancelada"?0.6:1}}>
+            <td style={{padding:"5px 6px",whiteSpace:"nowrap"}}>{fmtF(e.fecha)}</td><td>{e.hora}</td>
+            <td style={{textDecoration:st==="cancelada"?"line-through":"none"}}><b>{tituloDe(e)}</b></td>
+            <td><span style={{color:t.color,fontWeight:600}}>{t.label}</span></td><td>{durH(e)}</td>
+            <td>{st==="dada"?"✓ Dada":st==="programada"?"🗓 Programada":"❌ "+(e.motivoCancel||"Cancelada")}</td>
+            <td>{cb==="pagado"?"💶 Pagado":cb==="pendiente"?"⏳ Pendiente":cb==="sin"?"— sin anotar":""}</td></tr>;})}
+        </tbody>
+      </table></div>
+    </Card>
+  </div>;
+}
+
 function ModClases({data,setData,profesorId=null,modoAdmin=false}){
   const [modal,setModal]=useState(null);
   const [form,setForm]=useState({});
@@ -15160,7 +15281,7 @@ const ADMIN_TABS=[
   {id:"mis_tareas_sa",label:"Mis tareas",icon:"✅",zonas:["agenda"]},
   {id:"calendario",label:"Calendario Escolar",icon:"🗓️",zonas:["infantil"]},
   {id:"alumnos",label:"Alumnos",icon:"👤",zonas:["adultos","infantil"]},
-  {id:"clases",label:"Clases",icon:"📅",zonas:["adultos","infantil"]},
+  {id:"clases",label:"Informe de clases",icon:"📊",zonas:["adultos","infantil"]},
   {id:"cursosadultos",label:"Cursos Adultos",icon:"🎓",zonas:["adultos"]},
   {id:"bonos",label:"Bonos",icon:"🎫",zonas:["adultos"]},
   {id:"programas",label:"Programas",icon:"📚",zonas:["infantil"]},
@@ -18064,7 +18185,7 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {tab==="alumnos"&&<ModAlumnos key={zona} tipoInicial={zona==="adultos"?"adultos":"infantil"} soloTipo={zona==="adultos"?"adultos":"infantil"} data={dataProffesor} setData={setDataProfesor} profesorId={profesorId}/>}
       {tab==="pendientes"&&<ModRegistrosPendientes data={data} setData={setData} notifs={notifs}/>}
       {tab==="programas"&&<ModProgramas data={data} setData={setData}/>}
-      {tab==="clases"&&<ModClases data={data} setData={setData}/>}
+      {tab==="clases"&&<ModInformeClases data={data}/>}
       {tab==="estadisticas"&&<ModEstadisticas data={data} setData={setData}/>}
       {tab==="analisis"&&<ModAnalisis data={data} setData={setData}/>}
       {tab==="pagos"&&<ModPagos data={data} setData={setData}/>}
