@@ -16673,6 +16673,23 @@ function CobroClase({data,setData,clase}){
     const c=de(id); if(!c||!confirm("¿Deshacer el cobro de "+nomAl(id)+"? Se quitará también de la contabilidad.")) return;
     setData({...data,ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),cobros:cobros.filter(x=>x.id!==c.id)});
   }
+  // Acumulado: todo lo que ese alumno tiene pendiente (de esta clase y de otras)
+  const pendAl=id=>cobros.filter(c=>c.alumnoId===id&&c.estado==="pendiente");
+  const totalPend=id=>pendAl(id).reduce((s,c)=>s+Number(c.importe||0),0);
+  function cobrarTodo(id){
+    const ps=pendAl(id); if(!ps.length) return;
+    const total=totalPend(id);
+    if(!confirm("¿Cobrar a "+nomAl(id)+" todo lo acumulado ("+cobroEur(total)+" en "+ps.length+" "+(ps.length===1?"cobro":"cobros")+") por "+(met[id]||"Efectivo")+"?")) return;
+    let nuevosIng=[...ingresos]; const ids2={};
+    ps.forEach(c=>{
+      const importe=Number(c.importe||0); const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
+      const ing={id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:(c.concepto||"Clase")+" — "+nomAl(id),alumnoId:id,importeBase:base,ivaPct:COBRO_IVA,ivaImporte:iva,retencionPct:0,retencionImporte:0,importeTotal:importe,metodo:met[id]||"Efectivo",cobroId:c.id};
+      nuevosIng.push(ing); ids2[c.id]=ing.id;
+    });
+    const cats=data.categoriasIngreso||[]; const tieneCat=cats.some(x=>(x.nombre||x)==="Cursos y grupos");
+    setData({...data,ingresos:nuevosIng,cobros:cobros.map(c=>ids2[c.id]?{...c,estado:"pagado",fechaPago:hoy,metodo:met[id]||"Efectivo",ingresoId:ids2[c.id]}:c),
+      categoriasIngreso:tieneCat?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]});
+  }
   const ids=clase.alumnoIds||[];
   return <div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
     <div style={{fontWeight:800,fontSize:13,color:G.ink,marginBottom:6}}>💶 Cobro de esta clase (por alumno, IVA incluido)</div>
@@ -16694,6 +16711,12 @@ function CobroClase({data,setData,clase}){
           {!c&&<Btn small color="secondary" onClick={()=>pagar(id,true)}>⏳ Pendiente</Btn>}
           {c&&<span style={{color:"#E2685C",fontSize:12,fontWeight:700}}>⏳ pendiente</span>}
         </>}
+        {pendAl(id).length>0&&<div style={{flexBasis:"100%",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"5px 8px",fontSize:12}}>
+          <span style={{fontWeight:700,color:"#9A5B00"}}>⏳ Acumulado pendiente: {cobroEur(totalPend(id))} ({pendAl(id).length} {pendAl(id).length===1?"cobro":"cobros"})</span>
+          <span style={{color:G.soft}}>{pendAl(id).map(c=>(c.periodo||c.concepto||"").toString().slice(0,10)).filter(Boolean).slice(0,6).join(" · ")}</span>
+          <span style={{flex:1}}/>
+          <Btn small onClick={()=>cobrarTodo(id)}>Cobrar todo lo acumulado</Btn>
+        </div>}
       </div>;
     })}
     <div style={{fontSize:11,color:G.soft,marginTop:6}}>Al pulsar «Cobrado» se anota en Pagos → Ingresos (categoría «Cursos y grupos»). El importe por defecto sale de Pagos → Grupos y cobros.</div>
@@ -17075,7 +17098,7 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
       {modal!=="new"&&orig&&!orig.cancelada&&esCursoUnico(orig,data)&&(esPrimeraClaseCurso(orig,data)
         ?<CobroCurso data={data} setData={setData} clase={{titulo:orig.titulo,fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:gKey(orig.titulo)}}/>
         :<div style={{background:"#E6EBF0",borderRadius:8,padding:"8px 10px",fontSize:12,color:G.soft,margin:"4px 0 14px"}}>💶 El curso se cobra una sola vez, en la primera clase{primeraClaseCurso(orig,data)?" ("+primeraClaseCurso(orig,data).fecha+")":""}.</div>)}
-      {modal!=="new"&&orig&&!orig.cancelada&&!esCursoUnico(orig,data)&&(orig.tipo==="individual"||orig.tipo==="curso"||orig.tipo==="grupo"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo||nombresDe(orig).join(", ")||"Clase individual",fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:orig.tipo==="individual"?"ind":gKey(orig.titulo)}}/>}
+      {modal!=="new"&&orig&&!orig.cancelada&&!esCursoUnico(orig,data)&&(orig.tipo==="individual"||orig.tipo==="curso"||orig.tipo==="grupo"||orig.tipo==="escuela"||(data.cobrosGrupos||{})[gKey(orig.titulo)]?.incluir)&&<CobroClase data={data} setData={setData} clase={{id:orig.id,titulo:orig.titulo||nombresDe(orig).join(", ")||"Clase individual",fecha:orig.fecha,alumnoIds:alumnosDe(orig),grupoKey:orig.tipo==="individual"?"ind":gKey(orig.titulo)}}/>}
       {form.tipo!=="personal"&&<div style={{border:"1.5px solid "+(form.cancelada?"#E2685C":"#D9E3EA"),borderRadius:10,padding:"8px 12px",margin:"4px 0 12px",background:form.cancelada?"#FBE4E1":"transparent"}}>
         <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
           <input type="checkbox" checked={!!form.cancelada} onChange={e=>setForm(f=>({...f,cancelada:e.target.checked,hecha:e.target.checked?false:f.hecha,motivoCancel:f.motivoCancel||"Otro"}))}/> ❌ Clase cancelada
