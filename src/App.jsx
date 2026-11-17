@@ -16723,6 +16723,18 @@ function CobroClase({data,setData,clase}){
   </div>;
 }
 
+const agSegmentos=(e,gIni="08:00",gFin="20:00")=>{
+  const fin=e.fechaFin&&e.fechaFin>=e.fecha?e.fechaFin:e.fecha;
+  const hf=e.horaFin||agendaHora(Math.min(agendaMin(e.hora)+(e.durMin||60),23*60+59));
+  const orig={fechaOrig:e.fecha,horaOrig:e.hora};
+  if(fin===e.fecha) return [{...e,...orig,durMin:e.horaFin?Math.max(5,agendaMin(hf)-agendaMin(e.hora)):(e.durMin||60)}];
+  const out=[];
+  for(let d=e.fecha,n=0;d<=fin&&n<60;d=agendaSumaDias(d,1),n++){
+    const a=d===e.fecha?e.hora:gIni, b=d===fin?hf:gFin;
+    out.push({...e,...orig,fecha:d,hora:a,durMin:Math.max(15,agendaMin(b)-agendaMin(a))});
+  }
+  return out;
+};
 function ModAgenda({data,setData,esSuperAdmin=false}){
   const listaTodo=data.agendaAdultos||[];
   const lista=listaTodo.filter(e=>e.tipo!=="personal");
@@ -16754,11 +16766,14 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
       }catch(err){ console.warn("Migración agenda personal:",err); migrando.current=false; }
     })();
   },[esSuperAdmin,listaTodo.length]);
-  function abrirPersonal(fecha,hora){ setPForm({fecha,hora,durMin:60,titulo:"",nota:""}); setPModal("new"); }
-  function editarPersonal(e){ setPForm({fecha:e.fecha,hora:e.hora,durMin:e.durMin||30*(e.dur||2),titulo:e.titulo||"",nota:e.nota||""}); setPModal(e.id); }
+  function abrirPersonal(fecha,hora){ setPForm({fecha,hora,fechaFin:fecha,horaFin:agendaHora(Math.min(agendaMin(hora)+60,23*60+59)),titulo:"",nota:""}); setPModal("new"); }
+  function editarPersonal(e){ const f0=e.fechaOrig||e.fecha,h0=e.horaOrig||e.hora; setPForm({fecha:f0,hora:h0,fechaFin:e.fechaFin||f0,horaFin:e.horaFin||agendaHora(Math.min(agendaMin(h0)+(e.durMin||30*(e.dur||2)),23*60+59)),titulo:e.titulo||"",nota:e.nota||""}); setPModal(e.id); }
   async function guardarPersonal(){
     if(!pForm.fecha||!pForm.hora) return;
-    const reg={titulo:(pForm.titulo||"").trim()||"Reunión",fecha:pForm.fecha,hora:pForm.hora,durMin:Math.max(5,Number(pForm.durMin)||60),nota:(pForm.nota||"").trim()};
+    const fFin=pForm.fechaFin||pForm.fecha, hFin=pForm.horaFin||agendaHora(Math.min(agendaMin(pForm.hora)+60,23*60+59));
+    const durTotal=Math.round((new Date(fFin+"T00:00:00")-new Date(pForm.fecha+"T00:00:00"))/864e5)*1440+agendaMin(hFin)-agendaMin(pForm.hora);
+    if(durTotal<5){ alert("El final debe ser posterior al inicio."); return; }
+    const reg={titulo:(pForm.titulo||"").trim()||"Reunión",fecha:pForm.fecha,hora:pForm.hora,fechaFin:fFin,horaFin:hFin,durMin:durTotal,nota:(pForm.nota||"").trim()};
     try{
       if(pModal==="new") await addDoc(collection(db,"clubes","ciudad-real","agenda_personal"),{...reg,creadoEn:Date.now()});
       else await updateDoc(doc(db,"clubes","ciudad-real","agenda_personal",pModal),reg);
@@ -16797,7 +16812,7 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
     autos.push({id:idAuto,fecha:f,hora,dur:Math.max(1,Math.ceil((fin-ini)/30)),tipo:"escuela",titulo:g.nombre||"Grupo infantil",
       alumnoIds:g.alumnoIds||[],nClase:"",hecha:f<today(),auto:true,horario:g.horaIni+(g.horaFin?"–"+g.horaFin:"")});
   });
-  const deSemana=[...lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo),...autos,...(esSuperAdmin?personales.filter(e=>e.fecha>=lunes&&e.fecha<=domingo):[])];
+  const deSemana=[...lista.filter(e=>e.fecha>=lunes&&e.fecha<=domingo),...autos,...(esSuperAdmin?personales.filter(e=>e.fecha<=domingo&&(e.fechaFin||e.fecha)>=lunes).flatMap(e=>agSegmentos(e)).filter(e=>e.fecha>=lunes&&e.fecha<=domingo):[])];
   // Si hay algo fuera del horario habitual (p.ej. a las 14:00) se muestra todo el día
   const verTodo=todoDia||deSemana.some(e=>agendaMin(e.hora)>=14*60&&agendaMin(e.hora)<16*60);
   const slots=[];
@@ -17019,10 +17034,11 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
 
     {pModal&&<Modal title={pModal==="new"?"Nuevo evento personal":"Editar evento personal"} onClose={()=>setPModal(null)}>
       <Field label="Título"><Input value={pForm.titulo||""} onChange={v=>setPForm(f=>({...f,titulo:v}))} placeholder="Ej: Reunión con proveedor, dentista…"/></Field>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-        <Field label="Fecha"><Input type="date" value={pForm.fecha||""} onChange={v=>setPForm(f=>({...f,fecha:v}))}/></Field>
-        <Field label="Hora"><Input type="time" value={pForm.hora||""} onChange={v=>setPForm(f=>({...f,hora:v}))}/></Field>
-        <Field label="Duración (min)"><Input type="number" value={String(pForm.durMin??"")} onChange={v=>setPForm(f=>({...f,durMin:v}))}/></Field>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Field label="Fecha inicio"><Input type="date" value={pForm.fecha||""} onChange={v=>setPForm(f=>({...f,fecha:v,fechaFin:(f.fechaFin&&f.fechaFin>=v)?f.fechaFin:v}))}/></Field>
+        <Field label="Hora inicio"><Input type="time" value={pForm.hora||""} onChange={v=>setPForm(f=>({...f,hora:v}))}/></Field>
+        <Field label="Fecha final"><Input type="date" value={pForm.fechaFin||pForm.fecha||""} onChange={v=>setPForm(f=>({...f,fechaFin:v}))}/></Field>
+        <Field label="Hora final"><Input type="time" value={pForm.horaFin||""} onChange={v=>setPForm(f=>({...f,horaFin:v}))}/></Field>
       </div>
       <Field label="Nota (opcional)"><Textarea value={pForm.nota||""} onChange={v=>setPForm(f=>({...f,nota:v}))} rows={2}/></Field>
       <div style={{fontSize:11,color:G.soft,marginBottom:10}}>Este evento se ve y se edita igual en todas tus apps.</div>
