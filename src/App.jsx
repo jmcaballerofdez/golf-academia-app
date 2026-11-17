@@ -16478,6 +16478,18 @@ function cursoAlumnoStats(st,id){
   return {asistio,falta,aviso,recup,sin,completo:st.impartidas.length>=st.total&&st.total>0};
 }
 
+function NotaAsistencia({valor,onGuardar,abierto}){
+  const [txt,setTxt]=useState(valor||"");
+  const [edit,setEdit]=useState(!!abierto);
+  useEffect(()=>{ setTxt(valor||""); },[valor]);
+  if(!edit&&!valor) return <span title="Añadir comentario" style={{cursor:"pointer",fontSize:12,color:G.soft}} onClick={()=>setEdit(true)}>💬 comentario</span>;
+  if(!edit) return <div onClick={()=>setEdit(true)} style={{flexBasis:"100%",fontSize:12,color:G.ink,background:"#FFF8E1",border:"1px solid #F0DFA6",borderRadius:8,padding:"4px 8px",cursor:"pointer"}}>💬 {valor}</div>;
+  return <div style={{flexBasis:"100%",display:"flex",gap:6,alignItems:"flex-start"}}>
+    <textarea autoFocus rows={2} value={txt} onChange={e=>setTxt(e.target.value)} placeholder="Comentario (motivo de la falta, aviso, recuperación, lo que quieras anotar…)"
+      style={{flex:1,border:"1.5px solid #C7D2DC",borderRadius:8,padding:"6px 8px",fontSize:13,fontFamily:"inherit",boxSizing:"border-box"}}/>
+    <button onClick={()=>{ onGuardar(txt.trim()); setEdit(false); }} style={{border:"none",background:G.fairway,color:"#fff",borderRadius:8,padding:"6px 10px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Guardar</button>
+  </div>;
+}
 function AsistenciaClase({data,setData,clase}){
   // clase: {id,alumnoIds}
   const e=(data.agendaAdultos||[]).find(x=>x.id===clase.id)||{};
@@ -16486,6 +16498,11 @@ function AsistenciaClase({data,setData,clase}){
   function poner(id,v){
     const nueva={...as}; if(as[id]===v) delete nueva[id]; else nueva[id]=v;
     setData({...data,agendaAdultos:(data.agendaAdultos||[]).map(x=>x.id===clase.id?{...x,asistencia:nueva}:x)});
+  }
+  const notas=e.asistenciaNota||{};
+  function ponerNota(id,t){
+    const n={...notas}; if(t) n[id]=t; else delete n[id];
+    setData({...data,agendaAdultos:(data.agendaAdultos||[]).map(x=>x.id===clase.id?{...x,asistenciaNota:n}:x)});
   }
   function todos(){
     const nueva={...as}; (clase.alumnoIds||[]).forEach(id=>{ if(!nueva[id]) nueva[id]="asistio"; });
@@ -16505,6 +16522,7 @@ function AsistenciaClase({data,setData,clase}){
         style={{border:"1.5px solid "+(as[id]===v?col:"#C7D2DC"),background:as[id]===v?col:"#fff",borderRadius:8,padding:"3px 9px",fontSize:14,cursor:"pointer",opacity:as[id]&&as[id]!==v?0.45:1}}>{ic}</button>)}
       {(as[id]==="aviso"||as[id]==="falta"||as[id]==="recuperada")&&<button title="Recuperó la clase en otro grupo" onClick={()=>poner(id,"recuperada")}
         style={{border:"1.5px solid "+(as[id]==="recuperada"?"#3F7FBF":"#C7D2DC"),background:as[id]==="recuperada"?"#3F7FBF":"#fff",color:as[id]==="recuperada"?"#fff":G.ink,borderRadius:8,padding:"3px 9px",fontSize:12,cursor:"pointer"}}>🔁 Recuperada</button>}
+      <NotaAsistencia valor={notas[id]} onGuardar={t=>ponerNota(id,t)}/>
     </div>)}
     <div style={{fontSize:11,color:G.soft,marginTop:6}}>Si falta, la clase cuenta como usada. Si la recupera en otro grupo, márcala como 🔁 Recuperada.</div>
   </div>;
