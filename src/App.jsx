@@ -16742,23 +16742,25 @@ function estadoCobroClase(e,data){
   return cs.some(c=>c.estado!=="pagado")?"pendiente":"pagado";
 }
 // Todo lo pendiente por alumno: cobros anotados vencidos + clases ya dadas sin pagar (mismo criterio que el acumulado de cada clase)
+// cobros actuales + los archivados al "poner a cero" (para saber qué clases antiguas ya se pagaron)
+function cobrosConArchivo(data){ const ar=(data.archivoFinanzas||[]).flatMap(a=>a.cobros||[]); const ids=new Set((data.cobros||[]).map(c=>c.id)); return [...(data.cobros||[]),...ar.filter(c=>!ids.has(c.id))]; }
 function pendientesTodos(data){
-  const hoy=today(), desde=cobroDesdeFecha(data), cobros=data.cobros||[];
+  const hoy=today(), cobros=data.cobros||[], todosC=cobrosConArchivo(data);
   const gk=t=>(t||"").trim().toLowerCase();
   const items=[]; const vistos=new Set();
   const clasesIds=new Set((data.agendaAdultos||[]).map(e=>e.id));
   cobros.forEach(c=>{ if(c.claseId&&clasesIds.has(c.claseId)) vistos.add(c.id); });
   (data.agendaAdultos||[]).forEach(e=>{
-    if(e.cancelada||e.auto||e.tipo==="personal"||e.fecha>hoy||e.fecha<desde||esCursoUnico(e,data)) return;
+    if(e.cancelada||e.auto||e.tipo==="personal"||e.fecha>hoy||esCursoUnico(e,data)) return;
     const key=e.tipo==="individual"?"ind":gk(e.titulo);
     if(!(e.tipo==="individual"||e.tipo==="curso"||e.tipo==="grupo"||e.tipo==="escuela"||((data.cobrosGrupos||{})[key]||{}).incluir)) return;
     const cfg=(data.cobrosGrupos||{})[key]||{};
     claseAlumnos(e,data).forEach(id=>{
-      const c=cobros.find(x=>x.claseId===e.id&&x.alumnoId===id);
+      const c=todosC.find(x=>x.claseId===e.id&&x.alumnoId===id);
       if(c) vistos.add(c.id);
       if(c&&c.estado==="pagado") return;
       let importe=c?Number(c.importe||0):0;
-      if(!c){ const l=cobros.filter(x=>x.alumnoId===id&&x.claseId&&x.grupoKey===key&&x.importe).sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""))[0];
+      if(!c){ const l=todosC.filter(x=>x.alumnoId===id&&x.claseId&&x.grupoKey===key&&x.importe).sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""))[0];
         importe=Number(String(l?l.importe:(cfg.importe||"")).replace(",","."))||0; }
       if(importe>0) items.push({alumnoId:id,grupo:e.titulo||"Clase individual",fecha:e.fecha,importe});
     });
@@ -16899,7 +16901,8 @@ function CobroClase({data,setData,clase}){
   const clasesGrupo=(data.agendaAdultos||[]).filter(e=>!e.cancelada&&e.fecha<=hoy&&e.fecha<=clase.fecha&&!esCursoUnico(e,data)&&(clase.grupoKey==="ind"?(e.tipo==="individual"&&!(e.titulo||"").trim()):(e.titulo||"").trim().toLowerCase()===clase.grupoKey)).sort((a,b)=>a.fecha.localeCompare(b.fecha));
   const acumDe=id=>clasesGrupo.filter(e=>claseAlumnos(e,data).includes(id)).map(e=>{
     const c=cobros.find(x=>x.claseId===e.id&&x.alumnoId===id);
-    if(c&&c.estado==="pagado") return null;
+    const cAr=!c&&cobrosConArchivo(data).find(x=>x.claseId===e.id&&x.alumnoId===id);
+    if((c&&c.estado==="pagado")||(cAr&&cAr.estado==="pagado")) return null;
     const importe=c?Number(c.importe||0):num(ultimo(id)||cfg.importe||"");
     return importe>0?{e,c,importe}:null;
   }).filter(Boolean);
