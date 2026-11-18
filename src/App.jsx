@@ -2662,17 +2662,22 @@ function FichaAlumnoResumen({alumno,data,setData,onClose}){
   };
   const conCategoria=()=>{ const cats=data.categoriasIngreso||[]; return cats.some(x=>(x.nombre||x)==="Cursos y grupos")?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]; };
   function cobrarUno(c){
-    const metodo=metP[c.id]||"Efectivo"; const ing=crearIngreso(c,metodo);
+    const metodo=metP[c.id]||"Efectivo";
+    const real=c.virtual?(({virtual,...r})=>({...r,id:uid()}))(c):c;
+    const ing=crearIngreso(real,metodo);
+    const pag={...real,estado:"pagado",fechaPago:hoy,metodo,ingresoId:ing.id};
     setData({...data,ingresos:[...(data.ingresos||[]),ing],categoriasIngreso:conCategoria(),
-      cobros:(data.cobros||[]).map(x=>x.id===c.id?{...x,estado:"pagado",fechaPago:hoy,metodo,ingresoId:ing.id}:x)});
+      cobros:c.virtual?[...(data.cobros||[]),pag]:(data.cobros||[]).map(x=>x.id===c.id?pag:x)});
   }
   function cobrarTodo(){
     const metodo=metP["__todo"]||"Efectivo"; const total=pend.reduce((s,c)=>s+Number(c.importe||0),0);
     if(!pend.length||!confirm("¿Cobrar a "+alumno.nombre+" todo lo pendiente ("+cobroEur(total)+" en "+pend.length+" "+(pend.length===1?"cobro":"cobros")+") por "+metodo+"?")) return;
-    const ings=[]; const mapa={};
-    pend.forEach(c=>{ const ing=crearIngreso(c,metodo); ings.push(ing); mapa[c.id]=ing.id; });
+    const ings=[]; const mapa={}; const nuevos=[];
+    pend.forEach(c=>{
+      if(c.virtual){ const {virtual,...r}=c; const real={...r,id:uid()}; const ing=crearIngreso(real,metodo); ings.push(ing); nuevos.push({...real,estado:"pagado",fechaPago:hoy,metodo,ingresoId:ing.id}); return; }
+      const ing=crearIngreso(c,metodo); ings.push(ing); mapa[c.id]=ing.id; });
     setData({...data,ingresos:[...(data.ingresos||[]),...ings],categoriasIngreso:conCategoria(),
-      cobros:(data.cobros||[]).map(x=>mapa[x.id]?{...x,estado:"pagado",fechaPago:hoy,metodo,ingresoId:mapa[x.id]}:x)});
+      cobros:[...(data.cobros||[]).map(x=>mapa[x.id]?{...x,estado:"pagado",fechaPago:hoy,metodo,ingresoId:mapa[x.id]}:x),...nuevos]});
   }
   function guardarNuevo(pagado){
     const importe=numI(nuevo?.importe); if(!importe){ alert("Pon el importe (IVA incluido)."); return; }
@@ -2712,7 +2717,9 @@ function FichaAlumnoResumen({alumno,data,setData,onClose}){
   const porClase={}; dadas.forEach(c=>{porClase[c.titulo]=porClase[c.titulo]||{n:0,h:0};porClase[c.titulo].n++;porClase[c.titulo].h+=c.dur;});
   // Pagos: cobros (pendientes y pagados) + ingresos sueltos del alumno
   const cobros=(data.cobros||[]).filter(c=>c.alumnoId===id);
-  const pend=cobros.filter(c=>c.estado!=="pagado").sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""));
+  const virtuales=pendientesTodos(data).filter(x=>x.alumnoId===id&&x.claseId&&!x.anotado)
+    .map(x=>({id:"v-"+x.claseId,virtual:true,grupoKey:x.grupoKey,alumnoId:id,concepto:x.grupo+" · clase del "+x.fecha,periodo:x.fecha,claseId:x.claseId,importe:x.importe,estado:"pendiente",fechaEmision:x.fecha,vence:x.fecha}));
+  const pend=[...cobros.filter(c=>c.estado!=="pagado"),...virtuales].sort((a,b)=>(a.periodo||a.fechaEmision||"").localeCompare(b.periodo||b.fechaEmision||""));
   const pagCobros=cobros.filter(c=>c.estado==="pagado");
   const idsCobroIng=new Set(pagCobros.map(c=>c.ingresoId).filter(Boolean));
   const ingSueltos=(data.ingresos||[]).filter(i=>i.alumnoId===id&&!i.cobroId&&!idsCobroIng.has(i.id));
@@ -2744,7 +2751,7 @@ function FichaAlumnoResumen({alumno,data,setData,onClose}){
       <b style={{color:"#C0392B"}}>{cobroEur(c.importe)}</b>
       <select value={metP[c.id]||"Efectivo"} onChange={e=>setMetP(m=>({...m,[c.id]:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
       <Btn small onClick={()=>cobrarUno(c)}>Cobrado</Btn>
-      <span title="Anular este cobro pendiente (no se debe)" style={{cursor:"pointer",color:G.soft,fontSize:13}} onClick={()=>{ if(confirm("¿Anular el cobro pendiente «"+(c.concepto||"Cobro")+"» de "+cobroEur(c.importe)+"? Desaparece de pendientes.")) setData({...data,cobros:(data.cobros||[]).filter(x=>x.id!==c.id)}); }}>🗑</span></div>)}
+      {!c.virtual&&<span title="Anular este cobro pendiente (no se debe)" style={{cursor:"pointer",color:G.soft,fontSize:13}} onClick={()=>{ if(confirm("¿Anular el cobro pendiente «"+(c.concepto||"Cobro")+"» de "+cobroEur(c.importe)+"? Desaparece de pendientes.")) setData({...data,cobros:(data.cobros||[]).filter(x=>x.id!==c.id)}); }}>🗑</span>}</div>)}
     {pend.length>1&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"6px 10px",margin:"6px 0",fontSize:12}}>
       <b style={{color:"#9A5B00"}}>Total pendiente: {cobroEur(totPend)}</b><span style={{flex:1}}/>
       <select value={metP["__todo"]||"Efectivo"} onChange={e=>setMetP(m=>({...m,__todo:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
@@ -16762,7 +16769,7 @@ function pendientesTodos(data){
       let importe=c?Number(c.importe||0):0;
       if(!c){ const l=todosC.filter(x=>x.alumnoId===id&&x.claseId&&x.grupoKey===key&&x.importe).sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""))[0];
         importe=Number(String(l?l.importe:(cfg.importe||"")).replace(",","."))||0; }
-      if(importe>0) items.push({alumnoId:id,grupo:e.titulo||"Clase individual",fecha:e.fecha,importe});
+      if(importe>0) items.push({alumnoId:id,grupo:e.titulo||"Clase individual",fecha:e.fecha,importe,claseId:e.id,grupoKey:key,anotado:!!c});
     });
   });
   cobros.forEach(c=>{ if(c.estado!=="pagado"&&!vistos.has(c.id)&&!c.claseId&&c.vence&&c.vence<=hoy&&Number(c.importe||0)>0)
