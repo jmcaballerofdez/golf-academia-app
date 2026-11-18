@@ -2646,12 +2646,43 @@ function EstructuraInfantil({data, setData, alumnos}){
 
 
 // ── Ficha del alumno: clases impartidas, asistencia, pagos y pendientes ──
-function FichaAlumnoResumen({alumno,data,onClose}){
+function FichaAlumnoResumen({alumno,data,setData,onClose}){
   const hoy=today();
+  const [metP,setMetP]=useState({});
+  const [nuevo,setNuevo]=useState(null); // {concepto,importe,metodo}
+  const METODOS=["Efectivo","Bizum","Transferencia","Tarjeta"];
   const [periodo,setPeriodo]=useState("todo"); // todo | mes | 3m
   const mesIni=hoy.slice(0,8)+"01";
   const desde=periodo==="mes"?mesIni:periodo==="3m"?(()=>{const d=new Date(hoy+"T12:00:00");d.setMonth(d.getMonth()-3);return d.toISOString().slice(0,10);})():"0000-00-00";
   const id=alumno.id;
+  const numI=v=>Number(String(v).replace(",","."))||0;
+  const crearIngreso=(c,metodo)=>{
+    const importe=Number(c.importe||0); const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
+    return {id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:(c.concepto||"Cobro")+" — "+alumno.nombre,alumnoId:id,importeBase:base,ivaPct:COBRO_IVA,ivaImporte:iva,retencionPct:0,retencionImporte:0,importeTotal:importe,metodo,cobroId:c.id};
+  };
+  const conCategoria=()=>{ const cats=data.categoriasIngreso||[]; return cats.some(x=>(x.nombre||x)==="Cursos y grupos")?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]; };
+  function cobrarUno(c){
+    const metodo=metP[c.id]||"Efectivo"; const ing=crearIngreso(c,metodo);
+    setData({...data,ingresos:[...(data.ingresos||[]),ing],categoriasIngreso:conCategoria(),
+      cobros:(data.cobros||[]).map(x=>x.id===c.id?{...x,estado:"pagado",fechaPago:hoy,metodo,ingresoId:ing.id}:x)});
+  }
+  function cobrarTodo(){
+    const metodo=metP["__todo"]||"Efectivo"; const total=pend.reduce((s,c)=>s+Number(c.importe||0),0);
+    if(!pend.length||!confirm("¿Cobrar a "+alumno.nombre+" todo lo pendiente ("+cobroEur(total)+" en "+pend.length+" "+(pend.length===1?"cobro":"cobros")+") por "+metodo+"?")) return;
+    const ings=[]; const mapa={};
+    pend.forEach(c=>{ const ing=crearIngreso(c,metodo); ings.push(ing); mapa[c.id]=ing.id; });
+    setData({...data,ingresos:[...(data.ingresos||[]),...ings],categoriasIngreso:conCategoria(),
+      cobros:(data.cobros||[]).map(x=>mapa[x.id]?{...x,estado:"pagado",fechaPago:hoy,metodo,ingresoId:mapa[x.id]}:x)});
+  }
+  function guardarNuevo(pagado){
+    const importe=numI(nuevo?.importe); if(!importe){ alert("Pon el importe (IVA incluido)."); return; }
+    const cid=uid(); const concepto=(nuevo.concepto||"").trim()||"Clase suelta / recuperación";
+    const c={id:cid,grupoKey:"suelto",alumnoId:id,concepto,periodo:"",importe,estado:pagado?"pagado":"pendiente",fechaEmision:hoy,vence:hoy};
+    let ingresos=data.ingresos||[], reg=c;
+    if(pagado){ const metodo=nuevo.metodo||"Efectivo"; const ing=crearIngreso(c,metodo); ingresos=[...ingresos,ing]; reg={...c,fechaPago:hoy,metodo,ingresoId:ing.id}; }
+    setData({...data,ingresos,categoriasIngreso:pagado?conCategoria():(data.categoriasIngreso||[]),cobros:[...(data.cobros||[]),reg]});
+    setNuevo(null);
+  }
   const gk=t=>(t||"").trim().toLowerCase();
   // Clases de la agenda donde participa + clases automáticas de infantil
   const clases=[];
@@ -2708,8 +2739,29 @@ function FichaAlumnoResumen({alumno,data,onClose}){
     {sinAnotar>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"6px 10px",fontSize:12,marginBottom:10}}>⚠️ {sinAnotar} {sinAnotar===1?"clase impartida sin cobro anotado":"clases impartidas sin cobro anotado"} (ábrelas en la Agenda para cobrarlas o dejarlas pendientes).</div>}
 
     <div style={{fontWeight:800,fontSize:13,margin:"6px 0"}}>⏳ Pendiente de cobro ({pend.length})</div>
-    {pend.length===0?<div style={{fontSize:12,color:G.soft,marginBottom:8}}>Nada pendiente. 🎉</div>:pend.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:13,padding:"4px 0",borderTop:"1px solid #E3E9EE"}}>
-      <span>{c.concepto||"Cobro"} <span style={{color:G.soft,fontSize:11}}>· {fmt(c.fechaEmision)}</span></span><b style={{color:"#C0392B"}}>{cobroEur(c.importe)}</b></div>)}
+    {pend.length===0?<div style={{fontSize:12,color:G.soft,marginBottom:8}}>Nada pendiente. 🎉</div>:pend.map(c=><div key={c.id} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",fontSize:13,padding:"5px 0",borderTop:"1px solid #E3E9EE"}}>
+      <span style={{flex:"1 1 160px"}}>{c.concepto||"Cobro"} <span style={{color:G.soft,fontSize:11}}>· {fmt(c.fechaEmision)}</span></span>
+      <b style={{color:"#C0392B"}}>{cobroEur(c.importe)}</b>
+      <select value={metP[c.id]||"Efectivo"} onChange={e=>setMetP(m=>({...m,[c.id]:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
+      <Btn small onClick={()=>cobrarUno(c)}>Cobrado</Btn></div>)}
+    {pend.length>1&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"6px 10px",margin:"6px 0",fontSize:12}}>
+      <b style={{color:"#9A5B00"}}>Total pendiente: {cobroEur(totPend)}</b><span style={{flex:1}}/>
+      <select value={metP["__todo"]||"Efectivo"} onChange={e=>setMetP(m=>({...m,__todo:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
+      <Btn small onClick={cobrarTodo}>Cobrar todo lo pendiente</Btn></div>}
+    <div style={{margin:"6px 0 4px"}}>
+      {!nuevo?<Btn small color="secondary" onClick={()=>setNuevo({concepto:"",importe:"",metodo:"Efectivo"})}>+ Nuevo cobro (clase suelta / recuperación)</Btn>
+      :<div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"8px 10px",background:"#fff"}}>
+        <div style={{fontWeight:700,fontSize:12,marginBottom:6}}>Nuevo cobro para {alumno.nombre}</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <input value={nuevo.concepto} onChange={e=>setNuevo(n=>({...n,concepto:e.target.value}))} placeholder="Concepto (ej: Recuperación Grupo B 12/11)" style={{flex:"1 1 200px",border:"1.5px solid #C7D2DC",borderRadius:6,padding:"5px 8px",fontSize:13}}/>
+          <input value={nuevo.importe} inputMode="decimal" onChange={e=>setNuevo(n=>({...n,importe:e.target.value}))} placeholder="€" style={{width:70,border:"1.5px solid #C7D2DC",borderRadius:6,padding:"5px 8px",fontSize:13}}/>
+          <select value={nuevo.metodo} onChange={e=>setNuevo(n=>({...n,metodo:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
+          <Btn small onClick={()=>guardarNuevo(true)}>Cobrado</Btn>
+          <Btn small color="secondary" onClick={()=>guardarNuevo(false)}>⏳ Dejar pendiente</Btn>
+          <span style={{cursor:"pointer",color:G.soft,fontSize:12}} onClick={()=>setNuevo(null)}>cancelar</span>
+        </div>
+      </div>}
+    </div>
 
     <div style={{fontWeight:800,fontSize:13,margin:"12px 0 6px"}}>💶 Pagos realizados ({pagos.length})</div>
     {pagos.length===0?<div style={{fontSize:12,color:G.soft}}>Sin pagos en este periodo.</div>:pagos.map(p=><div key={p.k} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:13,padding:"4px 0",borderTop:"1px solid #E3E9EE"}}>
@@ -3012,7 +3064,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
     )}
 
     {/* ══ ACCESO DE ALUMNO/TUTOR ══ */}
-    {fichaAl&&<FichaAlumnoResumen alumno={fichaAl} data={data} onClose={()=>setFichaAl(null)}/>}
+    {fichaAl&&<FichaAlumnoResumen alumno={fichaAl} data={data} setData={setData} onClose={()=>setFichaAl(null)}/>}
     {modalAcceso&&<ModalAccesoAlumno alumno={modalAcceso} data={data} setData={setData} onClose={()=>setModalAcceso(null)}/>}
 
     {/* ══ CONFIRMAR BORRADO ══ */}
