@@ -6060,7 +6060,7 @@ function EstructuraAdultos({data,setData}){
                   <input key={g.key+"-t-"+st.total} type="number" min="1" defaultValue={st.total} onBlur={e=>{const n=Number(e.target.value)||0; if(n>0&&n!==st.total) setData({...data,agendaCursos:{...(data.agendaCursos||{}),[g.key]:{total:n}}});}}
                     style={{width:56,border:"1.5px solid #C7D2DC",borderRadius:6,padding:"2px 6px",fontSize:12}}/>
                   {!st.definido&&<span>(según las clases cargadas; cámbialo si el curso tiene otro número)</span>}</div></>;})()}
-              {(()=>{const cg=(data.cobros||[]).filter(c=>c.grupoKey===g.key&&miembros.includes(c.alumnoId));
+              {(()=>{const cg=miembros.flatMap(mid=>cobrosAlumnoCurso(data,g.key,mid,miembrosAll));
                 const pg=cg.filter(c=>c.estado==="pagado").reduce((t,c)=>t+Number(c.importe||0),0);
                 const pd=cg.filter(c=>c.estado!=="pagado").reduce((t,c)=>t+Number(c.importe||0),0);
                 const nPg=new Set(cg.filter(c=>c.estado==="pagado").map(c=>c.alumnoId)).size;
@@ -6082,7 +6082,7 @@ function EstructuraAdultos({data,setData}){
             {miembros.map(id=><div key={id} style={{display:"flex",justifyContent:"space-between",background:"#fff",border:"1px solid #E3E9EE",borderRadius:8,padding:"6px 10px",marginBottom:5,fontSize:13}}>
               <span><b>{nomAl(id)}</b>{(()=>{const st=cursoStats(data,g.key);const s=cursoAlumnoStats(st,id);return <span style={{fontSize:11,color:G.soft,marginLeft:8}}>
                 ✅ {s.asistio+s.recup} · ❌ {s.falta} · 🟡 {s.aviso}{s.sin>0&&<span style={{color:"#E2685C"}}> · sin marcar {s.sin}</span>}{s.completo&&" · 🏁 completó el curso"}</span>;})()}
-                {(()=>{const cg=(data.cobros||[]).filter(c=>c.grupoKey===g.key&&c.alumnoId===id);
+                {(()=>{const cg=cobrosAlumnoCurso(data,g.key,id,miembrosAll);
                   const pg=cg.filter(c=>c.estado==="pagado").reduce((t,c)=>t+Number(c.importe||0),0);
                   const pd=cg.filter(c=>c.estado!=="pagado").reduce((t,c)=>t+Number(c.importe||0),0);
                   return <span style={{fontSize:11,marginLeft:8,fontWeight:700}}>
@@ -6090,7 +6090,7 @@ function EstructuraAdultos({data,setData}){
                     {pg>0&&pd>0&&" · "}
                     {pd>0&&<span style={{color:"#C0392B"}}>⏳ {cobroEur(pd)} pendiente</span>}
                     {pg===0&&pd===0&&(()=>{
-                      const ot=(data.cobros||[]).filter(c=>c.alumnoId===id&&c.grupoKey!==g.key);
+                      const ot=(data.cobros||[]).filter(c=>c.alumnoId===id&&c.grupoKey!==g.key&&Number(c.importe||0)>0);
                       const nom=c=>((c.concepto||c.grupoKey||"otro curso")+"").split(" — ")[0].split(" · clase")[0];
                       const pgO=ot.filter(c=>c.estado==="pagado"), pdO=ot.filter(c=>c.estado!=="pagado");
                       if(!ot.length) return <span style={{color:G.soft,fontWeight:500}}>sin cobro anotado</span>;
@@ -16744,6 +16744,12 @@ function primeraClaseCurso(e,data){
   return ms[0]||null;
 }
 function esPrimeraClaseCurso(e,data){ const p=primeraClaseCurso(e,data); return !!p&&p.id===e.id; }
+// cobros de un alumno en un curso; los ajustes en negativo (devoluciones/duplicados) anotados como "suelto" cuentan en su único curso
+function cobrosAlumnoCurso(data,key,alumnoId,miembrosAll){
+  const enCursos=Object.keys(miembrosAll||{}).filter(k=>(miembrosAll[k]||[]).includes(alumnoId));
+  const unico=enCursos.length===1&&enCursos[0]===key;
+  return (data.cobros||[]).filter(c=>c.alumnoId===alumnoId&&(c.grupoKey===key||(unico&&c.grupoKey==="suelto"&&Number(c.importe||0)<0)));
+}
 function cobroCursoDe(data,key,alumnoId){ return (data.cobros||[]).find(c=>c.grupoKey===key&&c.alumnoId===alumnoId&&!c.claseId&&(c.periodo||"")===""); }
 function CobroCurso({data,setData,clase}){
   // clase: {titulo,fecha,alumnoIds,grupoKey}
