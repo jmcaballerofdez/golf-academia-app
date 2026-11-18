@@ -6045,6 +6045,25 @@ function EstructuraAdultos({data,setData}){
     {grupos.length===0&&<Card style={{textAlign:"center",padding:28,color:G.soft}}>
       Todavía no hay cursos de adultos. Aparecen al crear en la Agenda clases de tipo «Curso / Plan» o «Clase en grupo».
     </Card>}
+    {(()=>{
+      const filas=[]; grupos.forEach(g=>{ (data.cobros||[]).filter(c=>c.grupoKey===g.key&&c.estado!=="pagado"&&Number(c.importe||0)>0).forEach(c=>filas.push({g,c})); });
+      if(!filas.length) return <Card style={{marginBottom:12,border:"1.5px solid #9CCB9C"}}><div style={{fontSize:13,fontWeight:700,color:G.grass}}>✅ No hay cobros pendientes en ningún curso.</div></Card>;
+      const total=filas.reduce((t,f)=>t+Number(f.c.importe||0),0);
+      const porAl={}; filas.forEach(f=>{ const k=f.c.alumnoId; (porAl[k]=porAl[k]||[]).push(f); });
+      const orden=Object.keys(porAl).sort((a,b)=>String(nomAl(a)).localeCompare(String(nomAl(b)),"es"));
+      return <Card style={{marginBottom:12,border:"1.5px solid #E2685C"}}>
+        <details open>
+          <summary style={{cursor:"pointer",fontWeight:800,fontSize:14,color:"#C0392B"}}>⏳ Pendientes de cobro en cursos: {cobroEur(total)} · {orden.length} {orden.length===1?"alumno":"alumnos"} · {filas.length} {filas.length===1?"cobro":"cobros"}</summary>
+          <div style={{marginTop:8}}>
+            {orden.map(aid=>{ const fs=porAl[aid]; const tt=fs.reduce((t,f)=>t+Number(f.c.importe||0),0);
+              return <div key={aid} style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",fontSize:13,padding:"5px 0",borderTop:"1px solid #F1D5D1"}}>
+                <span><b>{nomAl(aid)}</b> <span style={{color:G.soft,fontSize:12}}>· {fs.map(f=>f.g.nombre+(f.c.periodo?" ("+f.c.periodo+")":"")).join(", ")}</span></span>
+                <b style={{color:"#C0392B"}}>{cobroEur(tt)}</b></div>; })}
+          </div>
+          <div style={{fontSize:11,color:G.soft,marginTop:6}}>Para cobrar: abre la ficha del alumno (pestaña Alumnos → 📒 Ficha) o la primera clase del curso en la Agenda.</div>
+        </details>
+      </Card>;
+    })()}
     <div style={{display:"grid",gap:10}}>
       {grupos.map(g=>{
         const miembros=miembrosAll[g.key]||[];
