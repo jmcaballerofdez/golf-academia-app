@@ -16906,12 +16906,6 @@ function CobroClase({data,setData,clase}){
           {!c&&<Btn small color="secondary" onClick={()=>pagar(id,true)}>⏳ Pendiente</Btn>}
           {c&&<span style={{color:"#E2685C",fontSize:12,fontWeight:700}}>⏳ pendiente</span>}
         </>}
-        {pendAl(id).length>0&&<div style={{flexBasis:"100%",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"5px 8px",fontSize:12}}>
-          <span style={{fontWeight:700,color:"#9A5B00"}}>⏳ Acumulado pendiente: {cobroEur(totalPend(id))} ({pendAl(id).length} {pendAl(id).length===1?"cobro":"cobros"})</span>
-          <span style={{color:G.soft}}>{pendAl(id).map(c=>(c.periodo||c.concepto||"").toString().slice(0,10)).filter(Boolean).slice(0,6).join(" · ")}</span>
-          <span style={{flex:1}}/>
-          <Btn small onClick={()=>cobrarTodo(id)}>Cobrar todo lo acumulado</Btn>
-        </div>}
       </div>;
     })}
     <div style={{fontSize:11,color:G.soft,marginTop:6}}>Al pulsar «Cobrado» se anota en Pagos → Ingresos (categoría «Cursos y grupos»). El importe por defecto sale de Pagos → Grupos y cobros.</div>
