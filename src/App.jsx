@@ -6089,7 +6089,16 @@ function EstructuraAdultos({data,setData}){
                     {pg>0&&<span style={{color:G.grass}}>💶 {cobroEur(pg)} pagado</span>}
                     {pg>0&&pd>0&&" · "}
                     {pd>0&&<span style={{color:"#C0392B"}}>⏳ {cobroEur(pd)} pendiente</span>}
-                    {pg===0&&pd===0&&<span style={{color:G.soft,fontWeight:500}}>sin cobro anotado</span>}</span>;})()}</span>
+                    {pg===0&&pd===0&&(()=>{
+                      const ot=(data.cobros||[]).filter(c=>c.alumnoId===id&&c.grupoKey!==g.key);
+                      const nom=c=>((c.concepto||c.grupoKey||"otro curso")+"").split(" — ")[0].split(" · clase")[0];
+                      const pgO=ot.filter(c=>c.estado==="pagado"), pdO=ot.filter(c=>c.estado!=="pagado");
+                      if(!ot.length) return <span style={{color:G.soft,fontWeight:500}}>sin cobro anotado</span>;
+                      return <span style={{fontWeight:500}}>
+                        {pgO.length>0&&<span style={{color:G.grass}}>💶 pagó {cobroEur(pgO.reduce((t,c)=>t+Number(c.importe||0),0))} en {[...new Set(pgO.map(nom))].join(", ")}</span>}
+                        {pgO.length>0&&pdO.length>0&&" · "}
+                        {pdO.length>0&&<span style={{color:"#C0392B"}}>⏳ {cobroEur(pdO.reduce((t,c)=>t+Number(c.importe||0),0))} pendiente en {[...new Set(pdO.map(nom))].join(", ")}</span>}
+                        <span style={{color:G.soft}}> · aquí sin cobro propio</span></span>;})()}</span>;})()}</span>
               <span style={{cursor:"pointer",color:G.soft,fontSize:12}}
                 onClick={()=>{ if(confirm("¿Quitar a "+nomAl(id)+" del grupo "+g.nombre+"?")) setMiembros(g.key,miembros.filter(x=>x!==id)); }}>✕ quitar</span>
             </div>)}
