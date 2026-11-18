@@ -2743,7 +2743,8 @@ function FichaAlumnoResumen({alumno,data,setData,onClose}){
       <span style={{flex:"1 1 160px"}}>{c.concepto||"Cobro"} <span style={{color:G.soft,fontSize:11}}>· {fmt(c.fechaEmision)}</span></span>
       <b style={{color:"#C0392B"}}>{cobroEur(c.importe)}</b>
       <select value={metP[c.id]||"Efectivo"} onChange={e=>setMetP(m=>({...m,[c.id]:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
-      <Btn small onClick={()=>cobrarUno(c)}>Cobrado</Btn></div>)}
+      <Btn small onClick={()=>cobrarUno(c)}>Cobrado</Btn>
+      <span title="Anular este cobro pendiente (no se debe)" style={{cursor:"pointer",color:G.soft,fontSize:13}} onClick={()=>{ if(confirm("¿Anular el cobro pendiente «"+(c.concepto||"Cobro")+"» de "+cobroEur(c.importe)+"? Desaparece de pendientes.")) setData({...data,cobros:(data.cobros||[]).filter(x=>x.id!==c.id)}); }}>🗑</span></div>)}
     {pend.length>1&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"6px 10px",margin:"6px 0",fontSize:12}}>
       <b style={{color:"#9A5B00"}}>Total pendiente: {cobroEur(totPend)}</b><span style={{flex:1}}/>
       <select value={metP["__todo"]||"Efectivo"} onChange={e=>setMetP(m=>({...m,__todo:e.target.value}))} style={{border:"1.5px solid #C7D2DC",borderRadius:6,padding:"4px",fontSize:12}}>{METODOS.map(x=><option key={x}>{x}</option>)}</select>
@@ -16745,6 +16746,8 @@ function pendientesTodos(data){
   const hoy=today(), desde=cobroDesdeFecha(data), cobros=data.cobros||[];
   const gk=t=>(t||"").trim().toLowerCase();
   const items=[]; const vistos=new Set();
+  const clasesIds=new Set((data.agendaAdultos||[]).map(e=>e.id));
+  cobros.forEach(c=>{ if(c.claseId&&clasesIds.has(c.claseId)) vistos.add(c.id); });
   (data.agendaAdultos||[]).forEach(e=>{
     if(e.cancelada||e.auto||e.tipo==="personal"||e.fecha>hoy||e.fecha<desde||esCursoUnico(e,data)) return;
     const key=e.tipo==="individual"?"ind":gk(e.titulo);
@@ -16760,7 +16763,7 @@ function pendientesTodos(data){
       if(importe>0) items.push({alumnoId:id,grupo:e.titulo||"Clase individual",fecha:e.fecha,importe});
     });
   });
-  cobros.forEach(c=>{ if(c.estado!=="pagado"&&!vistos.has(c.id)&&c.vence&&c.vence<=hoy&&Number(c.importe||0)>0)
+  cobros.forEach(c=>{ if(c.estado!=="pagado"&&!vistos.has(c.id)&&!c.claseId&&c.vence&&c.vence<=hoy&&Number(c.importe||0)>0)
     items.push({alumnoId:c.alumnoId,grupo:((c.concepto||c.grupoKey||"Cobro")+"").split(" — ")[0].split(" · clase")[0],fecha:c.vence,importe:Number(c.importe||0)}); });
   return items;
 }
@@ -17110,7 +17113,9 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
       const o=lista.find(x=>x.id===modal);
       const delta=o?Math.round((new Date(base.fecha+"T12:00:00")-new Date(o.fecha+"T12:00:00"))/86400000):0;
       const idsSig=new Set(alcance==="siguientes"?siguientes.map(x=>x.id):[]);
-      setData({...data,agendaAdultos:lista.map(e=>{
+      const exIds=base.excluidos||[];
+      const cobrosLimpios=(data.cobros||[]).filter(c=>!(c.claseId===modal&&exIds.includes(c.alumnoId)&&c.estado!=="pagado"));
+      setData({...data,cobros:cobrosLimpios,agendaAdultos:lista.map(e=>{
         if(e.id===modal) return {...e,...base,id:modal};
         if(idsSig.has(e.id)) return {...e,hora:base.hora,dur:base.dur,tipo:base.tipo,titulo:base.titulo,nota:base.nota,alumnoIds:base.alumnoIds,fecha:agendaSumaDias(e.fecha,delta)};
         return e;
