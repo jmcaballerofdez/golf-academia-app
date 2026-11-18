@@ -2645,7 +2645,100 @@ function EstructuraInfantil({data, setData, alumnos}){
 }
 
 
+// ── Ficha del alumno: clases impartidas, asistencia, pagos y pendientes ──
+function FichaAlumnoResumen({alumno,data,onClose}){
+  const hoy=today();
+  const [periodo,setPeriodo]=useState("todo"); // todo | mes | 3m
+  const mesIni=hoy.slice(0,8)+"01";
+  const desde=periodo==="mes"?mesIni:periodo==="3m"?(()=>{const d=new Date(hoy+"T12:00:00");d.setMonth(d.getMonth()-3);return d.toISOString().slice(0,10);})():"0000-00-00";
+  const id=alumno.id;
+  const gk=t=>(t||"").trim().toLowerCase();
+  // Clases de la agenda donde participa + clases automáticas de infantil
+  const clases=[];
+  (data.agendaAdultos||[]).forEach(e=>{
+    if(e.tipo==="personal") return;
+    if(!claseAlumnos(e,data).includes(id)) return;
+    clases.push({id:e.id,fecha:e.fecha,hora:e.hora,titulo:e.titulo||AGENDA_TIPOS[e.tipo]?.label||"Clase",tipo:e.tipo,nClase:e.nClase,cancelada:!!e.cancelada,motivo:e.motivoCancel,
+      hecha:!!e.hecha,asist:(e.asistencia||{})[id]||"",nota:(e.asistenciaNota||{})[id]||"",cobro:estadoCobroClase(e,data),dur:(e.dur||2)*0.5});
+  });
+  const omit=data.agendaOmitidas||[];
+  for(let f=AGENDA_INFANTIL_DESDE,n=0;f<=hoy&&n<900;f=agendaSumaDias(f,1),n++){
+    const dIdx=(new Date(f+"T12:00:00").getDay()+6)%7;
+    (data.gruposCurso||[]).forEach(g=>{
+      if(!(g.alumnoIds||[]).includes(id)||agendaDiaIdx(g.dia)!==dIdx||!g.horaIni) return;
+      const ini=Math.floor(agendaMin(g.horaIni)/30)*30; const fin=g.horaFin?agendaMin(g.horaFin):ini+60; const hora=agendaHora(ini);
+      if((data.agendaAdultos||[]).some(e=>e.fecha===f&&e.tipo!=="personal"&&e.hora===hora)) return;
+      const cid="auto-"+g.id+"-"+f; if(omit.includes(cid)) return;
+      clases.push({id:cid,fecha:f,hora,titulo:g.nombre||"Grupo infantil",tipo:"escuela",cancelada:false,hecha:true,asist:"",nota:"",cobro:null,dur:Math.max(30,fin-ini)/60});
+    });
+  }
+  const enP=clases.filter(c=>c.fecha>=desde).sort((a,b)=>(b.fecha+b.hora).localeCompare(a.fecha+a.hora));
+  const dada=c=>!c.cancelada&&(c.hecha||c.fecha<=hoy);
+  const dadas=enP.filter(dada), progr=enP.filter(c=>!c.cancelada&&!dada(c)), canc=enP.filter(c=>c.cancelada);
+  const cnt=v=>dadas.filter(c=>c.asist===v).length;
+  const horas=dadas.reduce((s,c)=>s+c.dur,0);
+  // Acumulado por curso / grupo
+  const porClase={}; dadas.forEach(c=>{porClase[c.titulo]=porClase[c.titulo]||{n:0,h:0};porClase[c.titulo].n++;porClase[c.titulo].h+=c.dur;});
+  // Pagos: cobros (pendientes y pagados) + ingresos sueltos del alumno
+  const cobros=(data.cobros||[]).filter(c=>c.alumnoId===id);
+  const pend=cobros.filter(c=>c.estado!=="pagado").sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""));
+  const pagCobros=cobros.filter(c=>c.estado==="pagado");
+  const idsCobroIng=new Set(pagCobros.map(c=>c.ingresoId).filter(Boolean));
+  const ingSueltos=(data.ingresos||[]).filter(i=>i.alumnoId===id&&!i.cobroId&&!idsCobroIng.has(i.id));
+  const pagos=[...pagCobros.map(c=>({k:c.id,fecha:c.fechaPago||c.fechaEmision||"",concepto:c.concepto||"Cobro",importe:Number(c.importe||0),metodo:c.metodo||""})),
+    ...ingSueltos.map(i=>({k:i.id,fecha:i.fecha||"",concepto:i.concepto||"Ingreso",importe:Number(i.importeTotal||0),metodo:i.metodo||""}))]
+    .filter(p=>p.fecha>=desde).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const totPagado=pagos.reduce((s,p)=>s+p.importe,0);
+  const totPend=pend.reduce((s,c)=>s+Number(c.importe||0),0);
+  const sinAnotar=dadas.filter(c=>c.cobro==="sin").length;
+  const fmt=f=>f?new Date(f+"T12:00:00").toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"2-digit"}):"";
+  const ASIST={asistio:["✅ Asistió",G.grass],falta:["❌ Faltó",G.danger],aviso:["🟡 Faltó avisando","#B07A00"],recuperada:["🔁 Recuperada","#3F7FBF"]};
+  const stat=(v,l,c)=><div style={{flex:"1 1 95px",background:"#fff",borderRadius:10,padding:"8px 6px",textAlign:"center",boxShadow:"0 1px 5px rgba(0,0,0,.06)"}}>
+    <div style={{fontSize:20,fontWeight:800,color:c||G.fairway}}>{v}</div><div style={{fontSize:11,color:G.soft}}>{l}</div></div>;
+  const pill=(t,a,fn)=><button key={t} onClick={fn} style={{border:"none",borderRadius:14,padding:"4px 11px",fontSize:12,fontWeight:600,cursor:"pointer",background:a?G.fairway:"#E6EBF0",color:a?"#fff":"#333"}}>{t}</button>;
+  return <Modal title={"📒 Ficha de "+alumno.nombre} onClose={onClose} wide>
+    <div style={{display:"flex",gap:6,marginBottom:10}}>
+      {pill("Todo",periodo==="todo",()=>setPeriodo("todo"))}{pill("Este mes",periodo==="mes",()=>setPeriodo("mes"))}{pill("3 meses",periodo==="3m",()=>setPeriodo("3m"))}
+    </div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+      {stat(dadas.length,"Clases impartidas")}{stat(horas.toLocaleString("es-ES")+" h","Horas")}
+      {stat(cnt("falta")+cnt("aviso"),"Faltas",G.danger)}{stat(cnt("recuperada"),"Recuperadas","#3F7FBF")}
+      {stat(cobroEur(totPagado),"Pagado",G.grass)}{stat(cobroEur(totPend),"Pendiente",totPend>0?"#C0392B":G.soft)}
+    </div>
+    {sinAnotar>0&&<div style={{background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"6px 10px",fontSize:12,marginBottom:10}}>⚠️ {sinAnotar} {sinAnotar===1?"clase impartida sin cobro anotado":"clases impartidas sin cobro anotado"} (ábrelas en la Agenda para cobrarlas o dejarlas pendientes).</div>}
+
+    <div style={{fontWeight:800,fontSize:13,margin:"6px 0"}}>⏳ Pendiente de cobro ({pend.length})</div>
+    {pend.length===0?<div style={{fontSize:12,color:G.soft,marginBottom:8}}>Nada pendiente. 🎉</div>:pend.map(c=><div key={c.id} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:13,padding:"4px 0",borderTop:"1px solid #E3E9EE"}}>
+      <span>{c.concepto||"Cobro"} <span style={{color:G.soft,fontSize:11}}>· {fmt(c.fechaEmision)}</span></span><b style={{color:"#C0392B"}}>{cobroEur(c.importe)}</b></div>)}
+
+    <div style={{fontWeight:800,fontSize:13,margin:"12px 0 6px"}}>💶 Pagos realizados ({pagos.length})</div>
+    {pagos.length===0?<div style={{fontSize:12,color:G.soft}}>Sin pagos en este periodo.</div>:pagos.map(p=><div key={p.k} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:13,padding:"4px 0",borderTop:"1px solid #E3E9EE"}}>
+      <span>{p.concepto} <span style={{color:G.soft,fontSize:11}}>· {fmt(p.fecha)}{p.metodo?" · "+p.metodo:""}</span></span><b style={{color:G.grass}}>{cobroEur(p.importe)}</b></div>)}
+
+    <div style={{fontWeight:800,fontSize:13,margin:"12px 0 6px"}}>📚 Acumulado por curso / grupo</div>
+    {Object.keys(porClase).length===0?<div style={{fontSize:12,color:G.soft}}>Sin clases impartidas.</div>:Object.entries(porClase).sort((a,b)=>b[1].n-a[1].n).map(([t,v])=><div key={t} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0",borderTop:"1px solid #E3E9EE"}}><span>{t}</span><b>{v.n} {v.n===1?"clase":"clases"} · {v.h.toLocaleString("es-ES")} h</b></div>)}
+
+    <div style={{fontWeight:800,fontSize:13,margin:"12px 0 6px"}}>🗓 Clases ({enP.length}{progr.length?" · "+progr.length+" programadas":""}{canc.length?" · "+canc.length+" canceladas":""})</div>
+    <div style={{maxHeight:300,overflowY:"auto"}}>
+    {enP.length===0&&<div style={{fontSize:12,color:G.soft}}>Sin clases en este periodo.</div>}
+    {enP.map(c=>{const a=ASIST[c.asist];const d=dada(c);
+      return <div key={c.id} style={{fontSize:13,padding:"5px 0",borderTop:"1px solid #E3E9EE",opacity:c.cancelada?0.55:1}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+          <span><b style={{textDecoration:c.cancelada?"line-through":"none"}}>{c.titulo}</b>{c.nClase?<span style={{color:G.soft}}> · Nº {c.nClase}</span>:null} <span style={{color:G.soft,fontSize:11}}>· {fmt(c.fecha)} {c.hora}</span></span>
+          <span style={{fontSize:12}}>
+            {c.cancelada?<span style={{color:G.danger}}>❌ Cancelada{c.motivo?" ("+c.motivo+")":""}</span>:a?<span style={{color:a[1],fontWeight:700}}>{a[0]}</span>:d?<span style={{color:G.soft}}>✓ Dada</span>:<span style={{color:G.soft}}>🗓 Programada</span>}
+            {c.cobro==="pagado"&&" · 💶 pagado"}{c.cobro==="pendiente"&&" · ⏳ pendiente"}{c.cobro==="sin"&&d&&" · — sin cobro anotado"}
+          </span>
+        </div>
+        {c.nota&&<div style={{fontSize:12,background:"#FFF8E1",border:"1px solid #F0DFA6",borderRadius:6,padding:"3px 8px",marginTop:3}}>💬 {c.nota}</div>}
+      </div>;})}
+    </div>
+    <div style={{display:"flex",justifyContent:"flex-end",marginTop:12}}><Btn color="secondary" onClick={onClose}>Cerrar</Btn></div>
+  </Modal>;
+}
+
 function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="infantil",soloTipo=null}){
+  const [fichaAl,setFichaAl]=useState(null);
   const [modal,         setModal]         = useState(null);
   const [form,          setForm]          = useState({});
   const [tabTipo,       setTabTipo]       = useState(soloTipo||tipoInicial);
@@ -2901,6 +2994,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
                 </div>
                 <div style={{display:"flex",gap:5,flexShrink:0,flexDirection:"column"}}>
                   <Btn small color="secondary" onClick={()=>openEdit(a)}>Editar</Btn>
+                  <Btn small color="sky" onClick={()=>setFichaAl(a)}>📒 Ficha</Btn>
                   <Btn small color="sky" onClick={()=>setModalAcceso(a)}>🔑 Acceso</Btn>
                   <Btn small color={a.activo?"gold":"secondary"}
                     onClick={()=>setData({...data,alumnos:alumnos.map(x=>x.id===a.id?{...x,activo:!x.activo}:x)})}>
@@ -2918,6 +3012,7 @@ function ModAlumnos({data,setData,profesorId=null,modoAdmin=false,tipoInicial="i
     )}
 
     {/* ══ ACCESO DE ALUMNO/TUTOR ══ */}
+    {fichaAl&&<FichaAlumnoResumen alumno={fichaAl} data={data} onClose={()=>setFichaAl(null)}/>}
     {modalAcceso&&<ModalAccesoAlumno alumno={modalAcceso} data={data} setData={setData} onClose={()=>setModalAcceso(null)}/>}
 
     {/* ══ CONFIRMAR BORRADO ══ */}
