@@ -16724,7 +16724,7 @@ function clasePideCobro(e,data){
   const k=(e.titulo||"").trim().toLowerCase();
   return e.tipo==="individual"||((data.cobrosGrupos||{})[k]||{}).modo==="clase";
 }
-function claseAlumnos(e,data){ const k=(e.titulo||"").trim().toLowerCase(); const g=data.agendaGrupos||{}; return (k&&g[k])?g[k]:(e.alumnoIds||[]); }
+function claseAlumnos(e,data){ const k=(e.titulo||"").trim().toLowerCase(); const g=data.agendaGrupos||{}; const l=(k&&g[k])?g[k]:(e.alumnoIds||[]); const ex=e.excluidos||[]; return ex.length?l.filter(x=>!ex.includes(x)):l; }
 // "pagado" | "pendiente" | "sin" (sin cobro anotado) | null (no aplica)
 function estadoCobroClase(e,data){
   if(e&&!e.cancelada&&esCursoUnico(e,data)){
@@ -16868,22 +16868,31 @@ function CobroClase({data,setData,clase}){
     const c=de(id); if(!c||!confirm("¿Deshacer el cobro de "+nomAl(id)+"? Se quitará también de la contabilidad.")) return;
     setData({...data,ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),cobros:cobros.filter(x=>x.id!==c.id)});
   }
-  // Acumulado: todo lo que ese alumno tiene pendiente (de esta clase y de otras)
-  const pendAl=id=>cobros.filter(c=>c.alumnoId===id&&c.estado==="pendiente");
-  const totalPend=id=>pendAl(id).reduce((s,c)=>s+Number(c.importe||0),0);
+  // Acumulado: clases ya dadas de ESTE grupo que el alumno no ha pagado (anotadas como pendientes o sin cobro anotado)
+  const clasesGrupo=(data.agendaAdultos||[]).filter(e=>!e.cancelada&&e.fecha<=hoy&&!esCursoUnico(e,data)&&(clase.grupoKey==="ind"?(e.tipo==="individual"&&!(e.titulo||"").trim()):(e.titulo||"").trim().toLowerCase()===clase.grupoKey)).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  const acumDe=id=>clasesGrupo.filter(e=>claseAlumnos(e,data).includes(id)).map(e=>{
+    const c=cobros.find(x=>x.claseId===e.id&&x.alumnoId===id);
+    if(c&&c.estado==="pagado") return null;
+    const importe=c?Number(c.importe||0):num(ultimo(id)||cfg.importe||"");
+    return importe>0?{e,c,importe}:null;
+  }).filter(Boolean);
+  const totalAcum=id=>acumDe(id).reduce((t,x)=>t+x.importe,0);
   function cobrarTodo(id){
-    const ps=pendAl(id); if(!ps.length) return;
-    const total=totalPend(id);
-    if(!confirm("¿Cobrar a "+nomAl(id)+" todo lo acumulado ("+cobroEur(total)+" en "+ps.length+" "+(ps.length===1?"cobro":"cobros")+") por "+(met[id]||"Efectivo")+"?")) return;
-    let nuevosIng=[...ingresos]; const ids2={};
-    ps.forEach(c=>{
-      const importe=Number(c.importe||0); const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
-      const ing={id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:(c.concepto||"Clase")+" — "+nomAl(id),alumnoId:id,importeBase:base,ivaPct:COBRO_IVA,ivaImporte:iva,retencionPct:0,retencionImporte:0,importeTotal:importe,metodo:met[id]||"Efectivo",cobroId:c.id};
-      nuevosIng.push(ing); ids2[c.id]=ing.id;
+    const its=acumDe(id); if(!its.length) return;
+    const total=totalAcum(id);
+    if(!confirm("¿Cobrar a "+nomAl(id)+" todo lo acumulado ("+cobroEur(total)+" en "+its.length+" "+(its.length===1?"clase":"clases")+") por "+(met[id]||"Efectivo")+"?")) return;
+    let nuevosIng=[...ingresos]; let nuevosCobros=[...cobros];
+    its.forEach(({e,c,importe})=>{
+      const cid=c?c.id:uid();
+      const concepto=(e.titulo||"Clase")+" · clase del "+e.fecha;
+      const base=+(importe/(1+COBRO_IVA/100)).toFixed(2); const iva=+(importe-base).toFixed(2);
+      const ing={id:uid(),fecha:hoy,categoria:"Cursos y grupos",concepto:concepto+" — "+nomAl(id),alumnoId:id,importeBase:base,ivaPct:COBRO_IVA,ivaImporte:iva,retencionPct:0,retencionImporte:0,importeTotal:importe,metodo:met[id]||"Efectivo",cobroId:cid};
+      nuevosIng.push(ing);
+      const reg={...(c||{id:cid,grupoKey:clase.grupoKey,alumnoId:id,concepto,periodo:e.fecha,claseId:e.id,fechaEmision:hoy,vence:e.fecha}),importe,estado:"pagado",fechaPago:hoy,metodo:met[id]||"Efectivo",ingresoId:ing.id};
+      nuevosCobros=c?nuevosCobros.map(x=>x.id===cid?reg:x):[...nuevosCobros,reg];
     });
     const cats=data.categoriasIngreso||[]; const tieneCat=cats.some(x=>(x.nombre||x)==="Cursos y grupos");
-    setData({...data,ingresos:nuevosIng,cobros:cobros.map(c=>ids2[c.id]?{...c,estado:"pagado",fechaPago:hoy,metodo:met[id]||"Efectivo",ingresoId:ids2[c.id]}:c),
-      categoriasIngreso:tieneCat?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]});
+    setData({...data,ingresos:nuevosIng,cobros:nuevosCobros,categoriasIngreso:tieneCat?cats:[...cats,{nombre:"Cursos y grupos",precio:0}]});
   }
   const ids=clase.alumnoIds||[];
   return <div style={{border:"1.5px solid #D9E3EA",borderRadius:10,padding:"10px 12px",margin:"4px 0 14px",background:"#F8FAFB"}}>
@@ -16906,6 +16915,12 @@ function CobroClase({data,setData,clase}){
           {!c&&<Btn small color="secondary" onClick={()=>pagar(id,true)}>⏳ Pendiente</Btn>}
           {c&&<span style={{color:"#E2685C",fontSize:12,fontWeight:700}}>⏳ pendiente</span>}
         </>}
+        {acumDe(id).length>0&&<div style={{flexBasis:"100%",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#FFF4E0",border:"1px solid #F0C27B",borderRadius:8,padding:"5px 8px",fontSize:12}}>
+          <span style={{fontWeight:700,color:"#9A5B00"}}>⏳ Acumulado de «{clase.titulo}»: {cobroEur(totalAcum(id))} ({acumDe(id).length} {acumDe(id).length===1?"clase":"clases"})</span>
+          <span style={{color:G.soft}}>{acumDe(id).map(x=>x.e.fecha.slice(5).split("-").reverse().join("/")).slice(0,10).join(" · ")}</span>
+          <span style={{flex:1}}/>
+          <Btn small onClick={()=>cobrarTodo(id)}>Cobrar todo lo acumulado</Btn>
+        </div>}
       </div>;
     })}
     <div style={{fontSize:11,color:G.soft,marginTop:6}}>Al pulsar «Cobrado» se anota en Pagos → Ingresos (categoría «Cursos y grupos»). El importe por defecto sale de Pagos → Grupos y cobros.</div>
@@ -17012,7 +17027,8 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
   // Los alumnos pertenecen al NOMBRE de la clase (todas las sesiones de "CURSO HCP A" comparten miembros)
   const grupos=data.agendaGrupos||{};
   const gKey=t=>(t||"").trim().toLowerCase();
-  const alumnosDe=e=>{if(e.auto) return e.alumnoIds||[];const k=gKey(e.titulo);return (k&&grupos[k])?grupos[k]:(e.alumnoIds||[]);};
+  const alumnosDeTodos=e=>{if(e.auto) return e.alumnoIds||[];const k=gKey(e.titulo);return (k&&grupos[k])?grupos[k]:(e.alumnoIds||[]);};
+  const alumnosDe=e=>{const l=alumnosDeTodos(e);const ex=e.excluidos||[];return ex.length?l.filter(x=>!ex.includes(x)):l;};
   const nombresDe=e=>alumnosDe(e).map(id=>alumnos.find(a=>a.id===id)?.nombre||"").filter(Boolean);
   const tituloDe=e=>e.titulo||nombresDe(e).join(", ")||AGENDA_TIPOS[e.tipo]?.label||"Clase";
 
@@ -17021,7 +17037,7 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
     setModal("new");
   }
   function abrirEditar(e){
-    setForm({...e,alumnoIds:alumnosDe(e),nClase:e.nClase??"",nota:e.nota||"",repetir:0});
+    setForm({...e,alumnoIds:alumnosDeTodos(e),excluidos:e.excluidos||[],nClase:e.nClase??"",nota:e.nota||"",repetir:0});
     setAlcance("una");
     setModal(e.id);
   }
@@ -17037,7 +17053,8 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
       titulo:(form.titulo||"").trim(),alumnoIds:(form.titulo||"").trim()?[]:(form.alumnoIds||[]),
       nClase:form.nClase===""||form.nClase==null?"":Number(form.nClase),
       hecha:!!form.hecha&&!form.cancelada,nota:(form.nota||"").trim(),
-      cancelada:!!form.cancelada,motivoCancel:form.cancelada?(form.motivoCancel||"Otro"):"",notaCancel:form.cancelada?(form.notaCancel||"").trim():""
+      cancelada:!!form.cancelada,motivoCancel:form.cancelada?(form.motivoCancel||"Otro"):"",notaCancel:form.cancelada?(form.notaCancel||"").trim():"",
+      excluidos:modal==="new"?[]:(form.excluidos||[]).filter(x=>(form.alumnoIds||[]).includes(x))
     };
     // Con nombre de clase, los alumnos se guardan una sola vez para todo el grupo
     const nuevosGrupos={...grupos};
@@ -17270,10 +17287,15 @@ function ModAgenda({data,setData,esSuperAdmin=false}){
           style={{width:"100%",border:"1.5px solid #C7D2DC",borderRadius:8,padding:"8px 10px",fontSize:14,boxSizing:"border-box",fontFamily:"inherit"}}/>
         <datalist id="agenda-titulos">{sugeridos.map(s=><option key={s} value={s}/>)}</datalist>
       </Field>
-      {form.tipo!=="personal"&&<Field label={(form.titulo||"").trim()?"Alumnos de «"+form.titulo.trim()+"» (valen para todas sus clases)":"Alumnos (opcional)"}>
+      {form.tipo!=="personal"&&<Field label={(form.titulo||"").trim()?"Alumnos de «"+form.titulo.trim()+"» "+((modal!=="new"&&alcance==="una")?"(la ✕ solo lo quita de ESTA clase; sigue en el grupo)":"(la ✕ lo quita del grupo y de todas sus clases)"):"Alumnos (opcional)"}>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}}>
-          {(form.alumnoIds||[]).map(id=><span key={id} style={{background:"#E3ECFC",color:G.fairway,borderRadius:12,padding:"3px 10px",fontSize:12,fontWeight:600}}>
-            {alumnos.find(a=>a.id===id)?.nombre||"—"} <span style={{cursor:"pointer"}} onClick={()=>setForm(f=>({...f,alumnoIds:f.alumnoIds.filter(x=>x!==id)}))}>✕</span></span>)}
+          {(form.alumnoIds||[]).map(id=>{
+            const soloClase=modal!=="new"&&alcance==="una"&&!!(form.titulo||"").trim();
+            const exc=(form.excluidos||[]).includes(id);
+            return <span key={id} style={{background:exc?"#EEE":"#E3ECFC",color:exc?"#999":G.fairway,textDecoration:exc?"line-through":"none",borderRadius:12,padding:"3px 10px",fontSize:12,fontWeight:600}}>
+            {alumnos.find(a=>a.id===id)?.nombre||"—"} {exc
+              ?<span style={{cursor:"pointer",textDecoration:"none",display:"inline-block"}} title="Volver a incluirlo en esta clase" onClick={()=>setForm(f=>({...f,excluidos:(f.excluidos||[]).filter(x=>x!==id)}))}>↺</span>
+              :<span style={{cursor:"pointer"}} title={soloClase?"No vino a esta clase (sigue en el grupo)":"Quitar del grupo"} onClick={()=>soloClase?setForm(f=>({...f,excluidos:[...(f.excluidos||[]),id]})):setForm(f=>({...f,alumnoIds:f.alumnoIds.filter(x=>x!==id),excluidos:(f.excluidos||[]).filter(x=>x!==id)}))}>✕</span>}</span>;})}
         </div>
         <Sel value="" onChange={v=>{if(v)setForm(f=>({...f,alumnoIds:[...(f.alumnoIds||[]),v]}));}}
           options={[{value:"",label:"+ Añadir alumno…"},...alumnos.filter(a=>!(form.alumnoIds||[]).includes(a.id)).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")).map(a=>({value:a.id,label:a.nombre}))]}/>
