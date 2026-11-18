@@ -16740,6 +16740,30 @@ function estadoCobroClase(e,data){
   if(cs.some(c=>!c)) return "sin";
   return cs.some(c=>c.estado!=="pagado")?"pendiente":"pagado";
 }
+// Todo lo pendiente por alumno: cobros anotados vencidos + clases ya dadas sin pagar (mismo criterio que el acumulado de cada clase)
+function pendientesTodos(data){
+  const hoy=today(), desde=cobroDesdeFecha(data), cobros=data.cobros||[];
+  const gk=t=>(t||"").trim().toLowerCase();
+  const items=[]; const vistos=new Set();
+  (data.agendaAdultos||[]).forEach(e=>{
+    if(e.cancelada||e.auto||e.tipo==="personal"||e.fecha>hoy||e.fecha<desde||esCursoUnico(e,data)) return;
+    const key=e.tipo==="individual"?"ind":gk(e.titulo);
+    if(!(e.tipo==="individual"||e.tipo==="curso"||e.tipo==="grupo"||e.tipo==="escuela"||((data.cobrosGrupos||{})[key]||{}).incluir)) return;
+    const cfg=(data.cobrosGrupos||{})[key]||{};
+    claseAlumnos(e,data).forEach(id=>{
+      const c=cobros.find(x=>x.claseId===e.id&&x.alumnoId===id);
+      if(c) vistos.add(c.id);
+      if(c&&c.estado==="pagado") return;
+      let importe=c?Number(c.importe||0):0;
+      if(!c){ const l=cobros.filter(x=>x.alumnoId===id&&x.claseId&&x.grupoKey===key&&x.importe).sort((a,b)=>(b.fechaEmision||"").localeCompare(a.fechaEmision||""))[0];
+        importe=Number(String(l?l.importe:(cfg.importe||"")).replace(",","."))||0; }
+      if(importe>0) items.push({alumnoId:id,grupo:e.titulo||"Clase individual",fecha:e.fecha,importe});
+    });
+  });
+  cobros.forEach(c=>{ if(c.estado!=="pagado"&&!vistos.has(c.id)&&c.vence&&c.vence<=hoy&&Number(c.importe||0)>0)
+    items.push({alumnoId:c.alumnoId,grupo:((c.concepto||c.grupoKey||"Cobro")+"").split(" — ")[0].split(" · clase")[0],fecha:c.vence,importe:Number(c.importe||0)}); });
+  return items;
+}
 function clasesSinCobrar(data){
   const hoy=today(), desde=cobroDesdeFecha(data);
   const d=desde<"2026-11-01"?"2026-11-01":desde;
@@ -18451,15 +18475,23 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
       {/* ── Aviso pagos vencidos ── */}
       {(()=>{
         const hoyP=today();
-        const venc=(data.cobros||[]).filter(c=>c.estado!=="pagado"&&c.vence&&c.vence<=hoyP);
-        const sinCobro=clasesSinCobrar(data);
-        if(!venc.length&&!sinCobro.length) return null;
+        const its=pendientesTodos(data);
+        if(!its.length) return null;
         const nom=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+        const eur=v=>v.toFixed(2).replace(".",",")+" €";
+        const porAl={}; its.forEach(x=>{ const a=(porAl[x.alumnoId]=porAl[x.alumnoId]||{total:0,grupos:{}}); a.total+=x.importe; const g=(a.grupos[x.grupo]=a.grupos[x.grupo]||{n:0,t:0}); g.n++; g.t+=x.importe; });
+        const orden=Object.keys(porAl).sort((a,b)=>porAl[b].total-porAl[a].total);
+        const total=its.reduce((t,x)=>t+x.importe,0);
         return <div style={{borderRadius:14,border:"2px solid #E2685C",background:"#FFF6F5",marginBottom:18,padding:"12px 18px"}}>
-          {venc.length>0&&<div style={{fontWeight:800,fontSize:14,color:"#C0392B"}}>💶 {venc.length} pago{venc.length!==1?"s":""} pendiente{venc.length!==1?"s":""} de cobrar</div>}
-          {sinCobro.length>0&&<div style={{fontWeight:800,fontSize:14,color:"#C0392B",marginTop:venc.length?6:0}}>❗ {sinCobro.length} clase{sinCobro.length!==1?"s":""} dada{sinCobro.length!==1?"s":""} sin cobro anotado (ver Agenda)</div>}
-          <div style={{fontSize:12,color:"#8a3a30",marginTop:4}}>{venc.slice(0,8).map(c=>nom(c.alumnoId)+" ("+Number(c.importe||0).toFixed(2).replace(".",",")+" €)").join(" · ")}{venc.length>8?" · …":""}</div>
-          <div style={{fontSize:11,color:"#8a3a30",marginTop:4}}>Cóbralos en Adultos → Pagos → Grupos y cobros.</div>
+          <details>
+            <summary style={{cursor:"pointer",fontWeight:800,fontSize:14,color:"#C0392B"}}>💶 Pendiente de cobrar: {eur(total)} · {orden.length} alumno{orden.length!==1?"s":""} · {its.length} cobro{its.length!==1?"s":""} <span style={{fontWeight:500,fontSize:12}}>(pulsa para ver el detalle)</span></summary>
+            <div style={{marginTop:6}}>
+              {orden.map(id=><div key={id} style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",fontSize:12,color:"#8a3a30",padding:"4px 0",borderTop:"1px solid #F1D5D1"}}>
+                <span><b>{nom(id)}</b> · {Object.entries(porAl[id].grupos).map(([g,v])=>g+(v.n>1?" ("+v.n+" clases)":"")).join(", ")}</span>
+                <b>{eur(porAl[id].total)}</b></div>)}
+            </div>
+          </details>
+          <div style={{fontSize:11,color:"#8a3a30",marginTop:4}}>Cóbralos desde la clase en la Agenda («Cobrar todo lo acumulado») o desde la 📒 Ficha del alumno.</div>
         </div>;
       })()}
 
