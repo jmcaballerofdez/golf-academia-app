@@ -16868,8 +16868,8 @@ function CobroClase({data,setData,clase}){
     const c=de(id); if(!c||!confirm("¿Deshacer el cobro de "+nomAl(id)+"? Se quitará también de la contabilidad.")) return;
     setData({...data,ingresos:ingresos.filter(i=>i.id!==c.ingresoId&&i.cobroId!==c.id),cobros:cobros.filter(x=>x.id!==c.id)});
   }
-  // Acumulado: clases ya dadas de ESTE grupo que el alumno no ha pagado (anotadas como pendientes o sin cobro anotado)
-  const clasesGrupo=(data.agendaAdultos||[]).filter(e=>!e.cancelada&&e.fecha<=hoy&&!esCursoUnico(e,data)&&(clase.grupoKey==="ind"?(e.tipo==="individual"&&!(e.titulo||"").trim()):(e.titulo||"").trim().toLowerCase()===clase.grupoKey)).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  // Acumulado: clases de ESTE grupo hasta la fecha de esta clase (nunca las siguientes) que el alumno no ha pagado (anotadas como pendientes o sin cobro anotado)
+  const clasesGrupo=(data.agendaAdultos||[]).filter(e=>!e.cancelada&&e.fecha<=hoy&&e.fecha<=clase.fecha&&!esCursoUnico(e,data)&&(clase.grupoKey==="ind"?(e.tipo==="individual"&&!(e.titulo||"").trim()):(e.titulo||"").trim().toLowerCase()===clase.grupoKey)).sort((a,b)=>a.fecha.localeCompare(b.fecha));
   const acumDe=id=>clasesGrupo.filter(e=>claseAlumnos(e,data).includes(id)).map(e=>{
     const c=cobros.find(x=>x.claseId===e.id&&x.alumnoId===id);
     if(c&&c.estado==="pagado") return null;
