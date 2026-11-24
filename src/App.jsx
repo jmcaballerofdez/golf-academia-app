@@ -2701,7 +2701,7 @@ function FichaAlumnoResumen({alumno,data,setData,onClose}){
   for(let f=AGENDA_INFANTIL_DESDE,n=0;f<=hoy&&n<900;f=agendaSumaDias(f,1),n++){
     const dIdx=(new Date(f+"T12:00:00").getDay()+6)%7;
     (data.gruposCurso||[]).forEach(g=>{
-      if(!(g.alumnoIds||[]).includes(id)||agendaDiaIdx(g.dia)!==dIdx||!g.horaIni) return;
+      if(alumnoEsAdulto(alumno)||!(g.alumnoIds||[]).includes(id)||agendaDiaIdx(g.dia)!==dIdx||!g.horaIni) return;
       const ini=Math.floor(agendaMin(g.horaIni)/30)*30; const fin=g.horaFin?agendaMin(g.horaFin):ini+60; const hora=agendaHora(ini);
       if((data.agendaAdultos||[]).some(e=>e.fecha===f&&e.tipo!=="personal"&&e.hora===hora)) return;
       const cid="auto-"+g.id+"-"+f; if(omit.includes(cid)) return;
@@ -16732,7 +16732,11 @@ function clasePideCobro(e,data){
   const k=(e.titulo||"").trim().toLowerCase();
   return e.tipo==="individual"||((data.cobrosGrupos||{})[k]||{}).modo==="clase";
 }
-function claseAlumnos(e,data){ const k=(e.titulo||"").trim().toLowerCase(); const g=data.agendaGrupos||{}; const l=(k&&g[k])?g[k]:(e.alumnoIds||[]); const ex=e.excluidos||[]; return ex.length?l.filter(x=>!ex.includes(x)):l; }
+// Adulto vs infantil (mismo criterio que la pestaña Adultos)
+function alumnoEsAdulto(a){ if(!a) return false; if(a.tipoForzado) return a.tipoForzado==="adultos"; const f=a.fechaNacimiento; if(f){ const n=new Date(f); if(!isNaN(n)){ const h=new Date(); let e=h.getFullYear()-n.getFullYear(); const m=h.getMonth()-n.getMonth(); if(m<0||(m===0&&h.getDate()<n.getDate())) e--; return e>=18; } } return a.tipoEscuela==="adultos"; }
+function claseAlumnos(e,data){ const k=(e.titulo||"").trim().toLowerCase(); const g=data.agendaGrupos||{}; let l=(k&&g[k])?g[k]:(e.alumnoIds||[]); const ex=e.excluidos||[]; if(ex.length) l=l.filter(x=>!ex.includes(x));
+  if(e.tipo==="escuela"){ const al=data.alumnos||[]; l=l.filter(x=>!alumnoEsAdulto(al.find(a=>a.id===x))); } // la escuela infantil no se mezcla con adultos
+  return l; }
 // "pagado" | "pendiente" | "sin" (sin cobro anotado) | null (no aplica)
 function estadoCobroClase(e,data){
   if(e&&!e.cancelada&&esCursoUnico(e,data)){
@@ -18344,6 +18348,23 @@ function AdminShell({data,setData,onLogout,savedFlash,notifs,pendientesCount,pro
   const setTab=(id)=>{const t=ADMIN_TABS.find(x=>x.id===id);const z=t&&!t.zonas.includes(zona)?t.zonas[0]:zona;setTabRaw(id);setZona(z);guardarNav(z,id);};
   const irZona=(z)=>{const t=ADMIN_TABS.find(x=>x.id===tab);const nuevo=(t&&t.zonas.includes(z))?tab:ADMIN_TABS.find(x=>x.zonas.includes(z)).id;setZona(z);setTabRaw(nuevo);guardarNav(z,nuevo);};
   const [verSinClase,setVerSinClase]=useState(false);
+  // Resumen de lo pendiente de cobrar para el Panel Maestro (mapa general). Solo lo escribe el superadmin.
+  const resumenPend=useMemo(()=>{
+    if(!esSuperAdmin) return null;
+    try{
+      const its=pendientesTodos(data); const por={};
+      its.forEach(x=>{ por[x.alumnoId]=(por[x.alumnoId]||0)+x.importe; });
+      const nom=id=>(data.alumnos||[]).find(a=>a.id===id)?.nombre||"—";
+      const alumnos=Object.keys(por).map(id=>({nombre:nom(id),total:Math.round(por[id]*100)/100})).sort((a,b)=>b.total-a.total);
+      return {total:Math.round(its.reduce((s,x)=>s+x.importe,0)*100)/100,nCobros:its.length,nAlumnos:alumnos.length,alumnos:alumnos.slice(0,10)};
+    }catch(e){ return null; }
+  },[data,esSuperAdmin]);
+  const claveResumen=resumenPend?JSON.stringify(resumenPend):"";
+  useEffect(()=>{
+    if(!claveResumen) return;
+    const tm=setTimeout(()=>{ setDoc(doc(db,"clubes","ciudad-real","resumenes","academia_pendientes"),{...JSON.parse(claveResumen),actualizado:Date.now()}).catch(e=>console.warn("Resumen pendientes:",e&&e.code)); },5000);
+    return ()=>clearTimeout(tm);
+  },[claveResumen]);
   const [msgAbierto,setMsgAbierto]=useState(null);
   const [msgTexto,setMsgTexto]=useState("");
   const [msgAsunto,setMsgAsunto]=useState("Recordatorio de clase");
